@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 import android.util.Base64
 
 data class ImageAttachment(val dataUrl: String, val label: String)
+data class IncomingImage(val bytes: ByteArray, val mimeType: String, val label: String)
 data class VideoAttachment(val file: File, val label: String, val sizeBytes: Long)
 data class SharedFileAttachment(val file: File, val label: String, val sizeBytes: Long, val mimeType: String)
 data class ContextReference(val id: String, val label: String, val prompt: String)
@@ -111,7 +112,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val queuedTasks = mutableStateMapOf<String, List<QueuedTask>>()
     val historyCursors = mutableStateMapOf<String, String>()
     val drafts = mutableStateMapOf<String, String>()
-    val imageAttachments = mutableStateMapOf<String, ImageAttachment>()
+    val imageAttachments = mutableStateMapOf<String, List<ImageAttachment>>()
     val videoAttachments = mutableStateMapOf<String, VideoAttachment>()
     val sharedFileAttachments = mutableStateMapOf<String, List<SharedFileAttachment>>()
     val contextReferences = mutableStateMapOf<String, List<ContextReference>>()
@@ -828,12 +829,23 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         messages[id] = upsertChat(current, chatFailure(current, value, stage, turnId, eventId))
     }
 
-    fun importImage(bytes: ByteArray, mimeType: String, label: String = "图片") {
+    fun importImages(images: List<IncomingImage>) {
         val id = activeId ?: return
-        check(bytes.isNotEmpty() && bytes.size <= 10 * 1024 * 1024) { "图片需小于 10 MB" }
-        check(mimeType.startsWith("image/")) { "请选择图片文件" }
-        val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        imageAttachments[id] = ImageAttachment("data:$mimeType;base64,$encoded", label.take(80))
+        check(images.isNotEmpty()) { "请选择图片" }
+        val current = imageAttachments[id].orEmpty()
+        check(current.size + images.size <= 10) { "一次最多添加 10 张图片" }
+        check(images.sumOf { it.bytes.size.toLong() } <= 30L * 1024 * 1024) { "本次所选图片总大小需小于 30 MB" }
+        val additions = images.map { image ->
+            check(image.bytes.isNotEmpty() && image.bytes.size <= 10 * 1024 * 1024) { "每张图片需小于 10 MB" }
+            check(image.mimeType.startsWith("image/")) { "请选择图片文件" }
+            val encoded = Base64.encodeToString(image.bytes, Base64.NO_WRAP)
+            ImageAttachment("data:${image.mimeType};base64,$encoded", image.label.take(80))
+        }
+        val estimatedTotalBytes = (current + additions).sumOf { attachment ->
+            attachment.dataUrl.substringAfter(',', "").length * 3L / 4L
+        }
+        check(estimatedTotalBytes <= 30L * 1024 * 1024) { "本次图片总大小需小于 30 MB" }
+        imageAttachments[id] = current + additions
         videoAttachments.remove(id)
         error = ""
     }
@@ -1015,7 +1027,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         downloadedWorkspaceFileName = ""
     }
 
-    fun removeImage() { activeId?.let(imageAttachments::remove) }
+    fun removeImage(index: Int? = null) {
+        val id = activeId ?: return
+        if (index == null) imageAttachments.remove(id)
+        else {
+            val remaining = imageAttachments[id].orEmpty().filterIndexed { itemIndex, _ -> itemIndex != index }
+            if (remaining.isEmpty()) imageAttachments.remove(id) else imageAttachments[id] = remaining
+        }
+    }
 
     suspend fun cacheWorkspaceImage(path: String, baseDirectory: String): String = withContext(Dispatchers.IO) {
         val connection = client ?: error("SSH 已断开，无法读取服务器图片")
@@ -1339,12 +1358,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val id = activeId ?: return
         val rawPrompt = drafts[id].orEmpty().trim()
         val prompt = rawPrompt
-        val attachment = imageAttachments[id]
+        val attachments = imageAttachments[id].orEmpty()
         val video = videoAttachments[id]
         val sharedFiles = sharedFileAttachments[id].orEmpty()
         val references = contextReferences[id].orEmpty()
         val connection = client ?: return
-        if (!connected || (rawPrompt.isBlank() && attachment == null && video == null && sharedFiles.isEmpty() && references.isEmpty()) || id in sending) return
+        if (!connected || (rawPrompt.isBlank() && attachments.isEmpty() && video == null && sharedFiles.isEmpty() && references.isEmpty()) || id in sending) return
         if (id in running) { enqueueDraft(); return }
         val selectedModel = model
         sending += id
@@ -1357,7 +1376,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     connection.uploadSharedFile(file.file, file.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd)
                 }
                 val fallback = when {
-                    attachment != null -> "请查看这张图片。"
+                    attachments.isNotEmpty() -> "请查看我发送的${attachments.size}张图片。"
                     video != null -> "请查看这个视频。"
                     sharedFiles.isNotEmpty() -> "请阅读我分享的文件并按内容处理。"
                     else -> "请根据我选定的上下文完成任务。"
@@ -1367,9 +1386,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
                 recordChatDiagnostic("composer.turn.start.request", id, "", JSONObject()
-                    .put("hasImage", attachment != null).put("hasVideo", video != null)
+                    .put("imageCount", attachments.size).put("hasVideo", video != null)
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
-                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, attachment?.dataUrl, options)
+                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, attachments.map { it.dataUrl }, options)
                 recordChatDiagnostic("composer.turn.start.accepted", id, turnId)
                 // turn/completed may arrive before the response on a very short turn; events own running state.
                 if (id in running && running[id].isNullOrBlank()) running[id] = turnId
@@ -1401,12 +1420,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     fun enqueueDraft() {
         val id = activeId ?: return
         val raw = drafts[id].orEmpty().trim()
-        val attachment = imageAttachments[id]
+        val attachments = imageAttachments[id].orEmpty()
         val video = videoAttachments[id]
         val sharedFiles = sharedFileAttachments[id].orEmpty()
         val references = contextReferences[id].orEmpty()
         val connection = client ?: return
-        if (!connected || id !in running || (raw.isBlank() && attachment == null && video == null && sharedFiles.isEmpty() && references.isEmpty()) || id in queueSubmitting) return
+        if (!connected || id !in running || (raw.isBlank() && attachments.isEmpty() && video == null && sharedFiles.isEmpty() && references.isEmpty()) || id in queueSubmitting) return
         queueSubmitting += id
         viewModelScope.launch {
             try {
@@ -1415,7 +1434,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     connection.uploadSharedFile(file.file, file.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd)
                 }
                 val fallback = when {
-                    attachment != null -> "请查看这张图片。"
+                    attachments.isNotEmpty() -> "请查看我发送的${attachments.size}张图片。"
                     video != null -> "请查看这个视频。"
                     sharedFiles.isNotEmpty() -> "请阅读我分享的文件并按内容处理。"
                     else -> "请根据我选定的上下文完成任务。"
@@ -1425,9 +1444,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
                 recordChatDiagnostic("composer.queue.add.request", id, "", JSONObject()
-                    .put("hasImage", attachment != null).put("hasVideo", video != null)
+                    .put("imageCount", attachments.size).put("hasVideo", video != null)
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
-                val added = connection.addQueuedSubmission(id, queuedPrompt, attachment?.dataUrl)
+                val added = connection.addQueuedSubmission(id, queuedPrompt, attachments.map { it.dataUrl })
                 allowQueueAutoStart(id, added.id)
                 recordChatDiagnostic("composer.queue.add.accepted", id, "", JSONObject()
                     .put("queuedSubmissionId", added.id).put("clientUserMessageId", added.clientUserMessageId))

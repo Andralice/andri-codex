@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -177,26 +178,33 @@ class MainActivity : ComponentActivity() {
                         }.onSuccess(vm::importKey).onFailure { vm.error = "私钥导入失败：" + it.message }
                     }
                 }
-                val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                    if (uri != null) lifecycleScope.launch {
+                val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+                    if (uris.isNotEmpty()) lifecycleScope.launch {
                         runCatching {
                             withContext(Dispatchers.IO) {
-                                contentResolver.openInputStream(uri)?.use { stream ->
-                                    val data = ByteArrayOutputStream()
-                                    val buffer = ByteArray(64 * 1024)
-                                    var total = 0
-                                    while (true) {
-                                        val read = stream.read(buffer)
-                                        if (read < 0) break
-                                        total += read
-                                        check(total <= 10 * 1024 * 1024) { "图片需小于 10 MB" }
-                                        data.write(buffer, 0, read)
-                                    }
-                                    val mime = contentResolver.getType(uri).orEmpty()
-                                    Triple(data.toByteArray(), mime, uri.lastPathSegment ?: "图片")
-                                } ?: error("无法读取图片")
+                                check(uris.size <= 10) { "一次最多选择 10 张图片" }
+                                var totalBytes = 0L
+                                uris.map { uri ->
+                                    val image = contentResolver.openInputStream(uri)?.use { stream ->
+                                        val data = ByteArrayOutputStream()
+                                        val buffer = ByteArray(64 * 1024)
+                                        var size = 0
+                                        while (true) {
+                                            val read = stream.read(buffer)
+                                            if (read < 0) break
+                                            size += read
+                                            totalBytes += read
+                                            check(size <= 10 * 1024 * 1024) { "每张图片需小于 10 MB" }
+                                            check(totalBytes <= 30L * 1024 * 1024) { "本次所选图片总大小需小于 30 MB" }
+                                            data.write(buffer, 0, read)
+                                        }
+                                        IncomingImage(data.toByteArray(), contentResolver.getType(uri).orEmpty(),
+                                            uri.lastPathSegment ?: "图片")
+                                    } ?: error("无法读取图片")
+                                    image
+                                }
                             }
-                        }.onSuccess { (bytes, mime, label) -> vm.importImage(bytes, mime, label) }
+                        }.onSuccess(vm::importImages)
                             .onFailure { vm.reportChatError(it.message.orEmpty(), "图片添加失败") }
                     }
                 }
@@ -311,7 +319,9 @@ class MainActivity : ComponentActivity() {
                                 screen == "thread-list" -> ThreadListScreen(vm)
                                 screen.startsWith("thread-loading:") -> ThreadLoadingScreen(vm)
                                 else -> key(vm.activeId) { ChatScreen(vm,
-                                    addImage = { imagePicker.launch(arrayOf("image/*")) },
+                                    addImage = {
+                                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                    },
                                     addVideo = { videoPicker.launch(arrayOf("video/*")) },
                                     addFiles = { filePicker.launch(arrayOf("*/*")) }) }
                             }
@@ -758,7 +768,7 @@ private fun ContextDrawer(
             }
             when (selectedTab) {
                 0 -> {
-                    if (references.isEmpty() && files.isEmpty() && vm.imageAttachments[id] == null && vm.videoAttachments[id] == null)
+                    if (references.isEmpty() && files.isEmpty() && vm.imageAttachments[id].isNullOrEmpty() && vm.videoAttachments[id] == null)
                         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp)) {
                             Text("当前没有额外上下文", Modifier.fillMaxWidth().padding(14.dp), fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -772,11 +782,13 @@ private fun ContextDrawer(
                     files.forEachIndexed { index, file ->
                         ContextRow(file.label, "手机文件 · ${formatVideoSize(file.sizeBytes)}", onRemove = { vm.removeSharedFile(index) })
                     }
-                    vm.imageAttachments[id]?.let { ContextRow(it.label, "手机图片", onRemove = vm::removeImage) }
+                    vm.imageAttachments[id].orEmpty().forEachIndexed { index, image ->
+                        ContextRow(image.label, "手机图片", onRemove = { vm.removeImage(index) })
+                    }
                     vm.videoAttachments[id]?.let { ContextRow(it.label, "手机视频 · ${formatVideoSize(it.sizeBytes)}", onRemove = vm::removeVideo) }
                     HorizontalDivider()
                     ContextAction("从手机添加文件", "支持从 QQ、微信分享文件") { onDismiss(); addFiles() }
-                    ContextAction("添加手机图片", "让 Codex 参考图片") { onDismiss(); addImage() }
+                    ContextAction("添加手机图片", "一次可多选最多 10 张") { onDismiss(); addImage() }
                     ContextAction("添加手机视频", "上传原画质视频") { onDismiss(); addVideo() }
                     ContextAction("添加网页或文字", "粘贴链接、选中文字或补充说明") { webDialog = true }
                 }
@@ -1681,7 +1693,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
     LaunchedEffect(thread.id, draft) {
         if (composerValue.text != draft) composerValue = TextFieldValue(draft, TextRange(draft.length))
     }
-    val attachment = vm.imageAttachments[thread.id]
+    val imageAttachments = vm.imageAttachments[thread.id].orEmpty()
     val videoAttachment = vm.videoAttachments[thread.id]
     val sharedFiles = vm.sharedFilesFor(thread.id)
     val references = vm.contextFor(thread.id)
@@ -1832,7 +1844,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shadowElevation = 2.dp) {
                             Box(contentAlignment = Alignment.Center) { LineIcon("edit", Modifier.size(24.dp), MaterialTheme.colorScheme.primary) }
                         }
-                        if (draft.isNotBlank() || attachment != null || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) Box(Modifier.align(Alignment.TopEnd).size(9.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                        if (draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) Box(Modifier.align(Alignment.TopEnd).size(9.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
                     }
                 }
                 }
@@ -1843,10 +1855,19 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                     color = MaterialTheme.colorScheme.surface, shadowElevation = 3.dp,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.animateContentSize(tween(180)).padding(6.dp)) {
-                        attachment?.let {
-                            Row(Modifier.padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(it.label, Modifier.weight(1f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IconButton(vm::removeImage, Modifier.size(44.dp).semantics { contentDescription = "移除图片" }) { Text("×") }
+                        if (imageAttachments.isNotEmpty()) {
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                imageAttachments.forEachIndexed { index, image ->
+                                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 9.dp)) {
+                                            Text(image.label, Modifier.widthIn(max = 140.dp), fontSize = 11.sp,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            IconButton({ vm.removeImage(index) }, Modifier.size(34.dp)
+                                                .semantics { contentDescription = "移除${image.label}" }) { Text("×") }
+                                        }
+                                    }
+                                }
                             }
                         }
                         videoAttachment?.let {
@@ -1952,7 +1973,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                     field()
                                 })
                             if (running) {
-                                val hasQueuedContent = draft.isNotBlank() || attachment != null || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()
+                                val hasQueuedContent = draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()
                                 FilledIconButton(
                                     onClick = if (hasQueuedContent) vm::enqueueDraft else vm::stop,
                                     enabled = vm.connected && (if (hasQueuedContent) thread.id !in vm.queueSubmitting && !vm.busy else !vm.busy),
@@ -1965,7 +1986,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                     else LineIcon(if (hasQueuedContent) "paperplane" else "pause", Modifier.size(21.dp))
                                 }
                             } else FilledIconButton(vm::send,
-                                enabled = vm.connected && (draft.isNotBlank() || attachment != null || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) && !sending && !vm.busy,
+                                enabled = vm.connected && (draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) && !sending && !vm.busy,
                                 modifier = Modifier.size(44.dp).semantics { contentDescription = "发送消息" }, shape = CircleShape) {
                                 if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 else LineIcon("paperplane", Modifier.size(21.dp))

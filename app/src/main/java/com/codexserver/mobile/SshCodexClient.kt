@@ -40,10 +40,12 @@ data class ChatLine(val role: String, val text: String, val id: String = "", val
     val questions: List<ChatQuestion> = emptyList(), val status: String = "", val images: List<String> = emptyList(),
     val processItems: List<ChatLine> = emptyList())
 // turn/start accepts UserInput, not the model provider's ContentItem wire format.
-internal fun userInput(prompt: String, imageDataUrl: String? = null): JSONArray =
+internal fun userInput(prompt: String, imageDataUrls: List<String> = emptyList()): JSONArray =
     JSONArray().put(JSONObject().put("type", "text").put("text", prompt)).apply {
-        imageDataUrl?.let { put(JSONObject().put("type", "image").put("url", it)) }
+        imageDataUrls.forEach { put(JSONObject().put("type", "image").put("url", it)) }
     }
+internal fun userInput(prompt: String, imageDataUrl: String?): JSONArray =
+    userInput(prompt, listOfNotNull(imageDataUrl))
 internal fun filterThreads(rows: List<CodexThread>, runningIds: Set<String>, query: String, onlyRunning: Boolean): List<CodexThread> =
     rows.filter { (!onlyRunning || it.id in runningIds) &&
         (query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) || it.model.contains(query.trim(), ignoreCase = true)) }
@@ -495,16 +497,16 @@ class SshCodexClient(
         return request("thread/turns/list", params)
     }
 
-    suspend fun sendTurn(threadId: String, model: String, prompt: String, imageDataUrl: String? = null, options: ExecutionOptions? = null): String {
-        val input = userInput(prompt, imageDataUrl)
+    suspend fun sendTurn(threadId: String, model: String, prompt: String, imageDataUrls: List<String> = emptyList(), options: ExecutionOptions? = null): String {
+        val input = userInput(prompt, imageDataUrls)
         val result = request("turn/start", (options?.params(turn = true) ?: JSONObject()).put("threadId", threadId).put("model", model).put("input", input))
         return result.optJSONObject("turn")?.text("id").orEmpty()
     }
 
-    suspend fun addQueuedSubmission(threadId: String, prompt: String, imageDataUrl: String? = null): QueuedSubmission {
+    suspend fun addQueuedSubmission(threadId: String, prompt: String, imageDataUrls: List<String> = emptyList()): QueuedSubmission {
         val userMessageId = java.util.UUID.randomUUID().toString()
         val result = request("thread/queue/add", JSONObject().put("threadId", threadId)
-            .put("clientUserMessageId", userMessageId).put("input", userInput(prompt, imageDataUrl)))
+            .put("clientUserMessageId", userMessageId).put("input", userInput(prompt, imageDataUrls)))
         return parseQueuedSubmission(result.optJSONObject("queuedSubmission")
             ?: error("Codex 没有返回排队消息"))
     }
