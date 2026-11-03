@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import android.util.Base64
 
 data class CodexThread(
     val id: String, val title: String, val model: String = "",
@@ -27,6 +28,7 @@ data class CodexThread(
 data class ChatQuestion(val title: String, val options: List<String> = emptyList())
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
 data class RemoteImage(val name: String, val bytes: ByteArray)
+data class ImageUpload(val dataUrl: String, val label: String)
 internal const val MAX_CHAT_LINES_PER_PAGE = 500
 
 internal suspend fun awaitWorkspaceSettingsUpdate(updated: Deferred<JSONObject>): JSONObject? =
@@ -734,6 +736,54 @@ class SshCodexClient(
             source.inputStream().use { sftp.put(it, remote) }
             check(sftp.stat(remote).size == source.length()) { "共享文件上传不完整" }
             remote
+        } finally { sftp.disconnect() }
+    }
+
+    suspend fun uploadImages(images: List<ImageUpload>, baseDirectory: String): List<String> = withContext(Dispatchers.IO) {
+        if (images.isEmpty()) return@withContext emptyList()
+        val decoded = images.map { image ->
+            check(image.dataUrl.startsWith("data:image/", ignoreCase = true)) { "图片数据格式无效" }
+            val mime = image.dataUrl.substringAfter("data:").substringBefore(';').lowercase()
+            val bytes = Base64.decode(image.dataUrl.substringAfter(',', ""), Base64.DEFAULT)
+            check(bytes.isNotEmpty() && bytes.size <= MAX_CHAT_IMAGE_BYTES) { "图片为空或超过 10 MB" }
+            val extension = when (mime) {
+                "image/jpeg", "image/jpg" -> "jpg"
+                "image/png" -> "png"
+                "image/gif" -> "gif"
+                "image/webp" -> "webp"
+                "image/bmp" -> "bmp"
+                "image/avif" -> "avif"
+                "image/heic" -> "heic"
+                "image/heif" -> "heif"
+                else -> "img"
+            }
+            val originalName = image.label.substringAfterLast('/').substringAfterLast('\\')
+            val stem = originalName.substringBeforeLast('.', originalName)
+                .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                .take(100).ifBlank { "image" }
+            "$stem.$extension" to bytes
+        }
+        check(decoded.sumOf { it.second.size.toLong() } <= 30L * 1024 * 1024) { "图片总大小超过 30 MB" }
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try {
+            val root = WORKSPACE_ROOT.trimEnd('/')
+            val base = sftp.realpath(baseDirectory)
+            check(base == root || base.startsWith("$root/")) { "图片只能保存到工作区目录" }
+            val codex = "$base/codex"
+            ensureSftpDirectory(sftp, codex)
+            val resolvedCodex = sftp.realpath(codex)
+            check(resolvedCodex == codex) { "项目 codex 目录不能是符号链接" }
+            val inbox = "$codex/inbox"
+            ensureSftpDirectory(sftp, inbox)
+            val resolvedInbox = sftp.realpath(inbox)
+            check(resolvedInbox == inbox && resolvedInbox.startsWith("$base/")) { "项目收件目录不能指向工作区之外" }
+            decoded.map { (name, bytes) ->
+                val remote = "$resolvedInbox/${java.util.UUID.randomUUID()}-$name"
+                ByteArrayInputStream(bytes).use { sftp.put(it, remote) }
+                check(sftp.stat(remote).size == bytes.size.toLong()) { "图片上传不完整：$name" }
+                remote
+            }
         } finally { sftp.disconnect() }
     }
 

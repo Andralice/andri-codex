@@ -1371,9 +1371,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val options = threadExecution[id] ?: savedExecution(id) ?: currentExecution
         viewModelScope.launch {
             try {
-                val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd) }
+                val baseDirectory = threads.firstOrNull { it.id == id }?.cwd?.ifBlank { cwd } ?: cwd
+                val remoteImages = connection.uploadImages(attachments.map { ImageUpload(it.dataUrl, it.label) }, baseDirectory)
+                val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, baseDirectory) }
                 val remoteFiles = sharedFiles.map { file ->
-                    connection.uploadSharedFile(file.file, file.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd)
+                    connection.uploadSharedFile(file.file, file.label, baseDirectory)
                 }
                 val fallback = when {
                     attachments.isNotEmpty() -> "请查看我发送的${attachments.size}张图片。"
@@ -1382,6 +1384,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     else -> "请根据我选定的上下文完成任务。"
                 }
                 val composedPrompt = listOf(prompt.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
+                    remoteImages.takeIf { it.isNotEmpty() }?.let { "手机图片（已保存至项目 codex/inbox）：\n" + it.joinToString("\n") },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
@@ -1429,9 +1432,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         queueSubmitting += id
         viewModelScope.launch {
             try {
-                val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd) }
+                val baseDirectory = threads.firstOrNull { it.id == id }?.cwd?.ifBlank { cwd } ?: cwd
+                val remoteImages = connection.uploadImages(attachments.map { ImageUpload(it.dataUrl, it.label) }, baseDirectory)
+                val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, baseDirectory) }
                 val remoteFiles = sharedFiles.map { file ->
-                    connection.uploadSharedFile(file.file, file.label, threads.firstOrNull { thread -> thread.id == id }?.cwd?.ifBlank { cwd } ?: cwd)
+                    connection.uploadSharedFile(file.file, file.label, baseDirectory)
                 }
                 val fallback = when {
                     attachments.isNotEmpty() -> "请查看我发送的${attachments.size}张图片。"
@@ -1440,6 +1445,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     else -> "请根据我选定的上下文完成任务。"
                 }
                 val queuedPrompt = listOf(raw.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
+                    remoteImages.takeIf { it.isNotEmpty() }?.let { "手机图片（已保存至项目 codex/inbox）：\n" + it.joinToString("\n") },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
