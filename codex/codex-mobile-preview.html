@@ -1,0 +1,203 @@
+<div id="codex-mobile-preview" class="viz-dotted-background">
+  <nav class="preview-nav" aria-label="页面预览">
+    <button type="button" data-screen="connection" aria-pressed="true">连接</button>
+    <button type="button" data-screen="threads" aria-pressed="false">对话列表</button>
+    <button type="button" data-screen="chat" aria-pressed="false">聊天</button>
+  </nav>
+  <p class="preview-label">原生界面交互预览 · 示例数据 · 不连接服务器</p>
+  <div class="mobile-product" aria-label="Andri Android 原生界面预览">
+    <section data-page="connection" class="connection-page">
+      <h2>Andri</h2>
+      <p class="secondary">Android 原生客户端 · SSH 连接 82</p>
+      <label>服务器地址<input value="82.156.142.57" inputmode="decimal" aria-label="服务器地址"></label>
+      <div class="field-row">
+        <label>SSH 端口<input value="22" inputmode="numeric" aria-label="SSH 端口"></label>
+        <label>用户名<input value="ubuntu" aria-label="用户名"></label>
+      </div>
+      <label>服务器工作目录<input value="/home/ubuntu" aria-label="服务器工作目录"></label>
+      <button class="outlined full" type="button" data-action="key">从手机导入 SSH 私钥</button>
+      <p class="secondary small">仅信任当前 82 的主机密钥。中转 Token 由服务器保存。</p>
+      <button class="filled full" type="button" data-action="connect">连接并打开对话</button>
+      <p class="secondary small" data-connection-status>通过 SSH 连接 82，管理多个 Andri 长对话</p>
+    </section>
+    <section data-page="threads" hidden>
+      <header class="row">
+        <div class="grow"><h2>你的 Andri 对话</h2><p class="small">已通过 SSH 连接到 82</p></div>
+        <button class="text-button" type="button" data-action="disconnect">断开</button>
+      </header>
+      <div class="model-row" aria-label="选择模型">
+        <button class="chip" type="button" data-model="gpt-6-luna" aria-pressed="true">gpt-6-luna</button>
+        <button class="chip" type="button" data-model="gpt-6.1-sol" aria-pressed="false">gpt-6.1-sol</button>
+      </div>
+      <button class="text-button" type="button" data-action="update">v0.1.2 · 检查更新</button>
+      <button class="filled full" type="button" data-action="new">＋ 新建长对话</button>
+      <button class="text-button" type="button" data-action="refresh">刷新列表</button>
+      <div class="thread-list">
+        <button class="thread" type="button" data-thread="糖果熊机器人维护"><span class="row"><strong class="grow">糖果熊机器人维护</strong><span class="running">运行中</span></span><span class="thread-id">019ad492-8ae</span></button>
+        <button class="thread" type="button" data-thread="检查服务器存储"><strong>检查服务器存储</strong><span class="thread-id">019ad486-4fb</span></button>
+        <button class="thread" type="button" data-thread="安卓客户端开发"><strong>安卓客户端开发</strong><span class="thread-id">019ad355-1c2</span></button>
+      </div>
+    </section>
+    <section data-page="chat" hidden>
+      <header class="row">
+        <button class="text-button" type="button" data-action="back">‹ 对话</button>
+        <strong class="grow" data-chat-title>糖果熊机器人维护</strong>
+        <button class="text-button" type="button" data-action="refresh">刷新</button>
+      </header>
+      <div class="model-row" aria-label="选择模型">
+        <button class="chip" type="button" data-model="gpt-6-luna" aria-pressed="true">gpt-6-luna</button>
+        <button class="chip" type="button" data-model="gpt-6.1-sol" aria-pressed="false">gpt-6.1-sol</button>
+      </div>
+      <button class="text-button" type="button" data-action="update">v0.1.2 · 检查更新</button>
+      <div class="messages" aria-live="polite">
+        <button class="text-button" type="button" data-action="history">加载更早的消息</button>
+        <article class="message user"><span>你</span><p>帮我检查糖果熊的运行状态，先看日志，告诉我发现了什么。</p></article>
+        <article class="message"><span>Andri</span><p>我会检查服务状态和最近日志，然后根据实际记录判断是否需要处理。</p></article>
+        <p class="secondary small" data-activity>Andri 正在处理…</p>
+      </div>
+      <label>用自然语言描述任务<textarea rows="2" placeholder="继续输入你的要求…" data-draft></textarea></label>
+      <div class="row actions"><button class="outlined" type="button" data-action="stop">停止</button><button class="filled grow" type="button" data-action="send" disabled>发送</button></div>
+    </section>
+    <div class="modal-layer" data-overlay hidden>
+      <section class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-dialog-title">
+        <h3 id="preview-dialog-title">应用更新</h3>
+        <div data-dialog-content></div>
+        <div class="dialog-actions" data-dialog-actions></div>
+      </section>
+    </div>
+  </div>
+  <div class="preview-nav" aria-label="演示弹窗">
+    <button type="button" data-demo="approval">演示审批</button>
+    <button type="button" data-demo="update">演示更新</button>
+  </div>
+  <p class="preview-label" data-preview-status aria-live="polite">连接、切换对话和弹窗均可点击体验。</p>
+</div>
+<style>
+#codex-mobile-preview { padding: 12px 0; }
+#codex-mobile-preview .preview-nav { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; padding:8px; }
+#codex-mobile-preview .preview-nav button { color:var(--foreground); background:var(--background); border:1px solid var(--border); padding:8px 14px; border-radius:20px; font:inherit; }
+#codex-mobile-preview .preview-nav button[aria-pressed="true"] { background:var(--primary); color:var(--primary-foreground); }
+#codex-mobile-preview .preview-label { margin:8px auto 12px; text-align:center; color:var(--muted-foreground); font-size:12px; }
+#codex-mobile-preview .mobile-product { --phone-bg:light-dark(#f5f6fa,#19191e); --phone-text:light-dark(#1d1b20,#e6e0e9); --phone-muted:light-dark(#596174,#b9bdce); --phone-primary:light-dark(#6750a4,#d0bcff); --phone-on-primary:light-dark(#ffffff,#381e72); --phone-border:light-dark(#79747e,#938f99); --phone-surface:light-dark(#ffffff,#2b2930); --phone-selected:light-dark(#e8def8,#4a4458); --phone-user:light-dark(#e7eeff,#263451); box-sizing:border-box; position:relative; width:100%; max-width:390px; min-height:640px; margin:auto; padding:20px 16px; background:var(--phone-bg); color:var(--phone-text); border:1px solid var(--phone-border); border-radius:20px; font-family:Roboto,"Microsoft YaHei",Arial,sans-serif; font-size:14px; line-height:1.5; }
+#codex-mobile-preview .mobile-product * { box-sizing:border-box; }
+#codex-mobile-preview [hidden] { display:none !important; }
+#codex-mobile-preview .mobile-product h2 { font-size:23px; font-weight:600; margin:0 0 4px; line-height:1.3; }
+#codex-mobile-preview .connection-page h2 { font-size:28px; }
+#codex-mobile-preview .connection-page { padding:42px 6px 24px; }
+#codex-mobile-preview .mobile-product p { margin:6px 0 14px; }
+#codex-mobile-preview .mobile-product .small { font-size:12px; }
+#codex-mobile-preview .secondary { color:var(--phone-muted); }
+#codex-mobile-preview .mobile-product label { display:block; margin:12px 0 8px; font-size:12px; color:var(--phone-muted); }
+#codex-mobile-preview .mobile-product input,#codex-mobile-preview .mobile-product textarea { display:block; width:100%; min-width:0; border:1px solid var(--phone-border); border-radius:4px; background:transparent; color:var(--phone-text); font:inherit; font-size:16px; padding:12px; margin-top:3px; }
+#codex-mobile-preview .field-row { display:flex; gap:8px; }
+#codex-mobile-preview .field-row label { flex:1; min-width:0; margin-top:0; }
+#codex-mobile-preview .mobile-product button { font:inherit; font-size:14px; min-height:40px; padding:8px 14px; border-radius:24px; border:0; color:var(--phone-primary); background:transparent; text-align:center; }
+#codex-mobile-preview .mobile-product button:disabled { opacity:0.38; cursor:default; }
+#codex-mobile-preview .mobile-product .outlined { border:1px solid var(--phone-border); }
+#codex-mobile-preview .mobile-product .filled { color:var(--phone-on-primary); background:var(--phone-primary); }
+#codex-mobile-preview .full { width:100%; margin:6px 0; }
+#codex-mobile-preview .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+#codex-mobile-preview .grow { flex:1; min-width:0; overflow-wrap:anywhere; }
+#codex-mobile-preview .model-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
+#codex-mobile-preview .mobile-product .chip { border:1px solid var(--phone-border); border-radius:8px; padding:6px 10px; min-height:34px; color:var(--phone-text); }
+#codex-mobile-preview .chip[aria-pressed="true"] { background:var(--phone-selected); }
+#codex-mobile-preview .thread-list { display:grid; gap:8px; }
+#codex-mobile-preview .mobile-product .thread { display:block; padding:16px; text-align:left; border-radius:12px; background:var(--phone-surface); color:var(--phone-text); width:100%; }
+#codex-mobile-preview .thread strong { font-weight:600; }
+#codex-mobile-preview .thread-id { display:block; font-size:11px; color:var(--phone-muted); margin-top:4px; }
+#codex-mobile-preview .running { color:var(--phone-primary); font-size:12px; }
+#codex-mobile-preview .messages { min-height:320px; padding:6px 0 12px; }
+#codex-mobile-preview .message { background:var(--phone-surface); border-radius:12px; padding:12px; margin:10px 0; }
+#codex-mobile-preview .message.user { background:var(--phone-user); }
+#codex-mobile-preview .message span { display:block; color:var(--phone-muted); font-size:12px; }
+#codex-mobile-preview .message p { white-space:pre-wrap; overflow-wrap:anywhere; margin:4px 0 0; }
+#codex-mobile-preview .actions { margin-top:8px; }
+#codex-mobile-preview .modal-layer { position:absolute; inset:0; border-radius:20px; background:light-dark(#0007,#0009); display:flex; justify-content:center; align-items:center; z-index:2; padding:18px; }
+#codex-mobile-preview .app-dialog { width:100%; padding:24px; background:var(--phone-surface); border-radius:28px; color:var(--phone-text); }
+#codex-mobile-preview .app-dialog h3 { font-size:24px; line-height:1.3; font-weight:400; margin:0 0 16px; }
+#codex-mobile-preview .app-dialog p { overflow-wrap:anywhere; }
+#codex-mobile-preview .dialog-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; margin:12px -8px -8px; }
+@media(pointer:coarse) { #codex-mobile-preview button { min-height:44px !important; } }
+</style>
+<script>
+(() => {
+  const root = document.getElementById('codex-mobile-preview');
+  const overlay = root.querySelector('[data-overlay]');
+  const dialogContent = root.querySelector('[data-dialog-content]');
+  const dialogActions = root.querySelector('[data-dialog-actions]');
+  const status = root.querySelector('[data-preview-status]');
+  const draft = root.querySelector('[data-draft]');
+  root.querySelectorAll('button').forEach(button => button.classList.add('cursor-interaction'));
+  root.querySelectorAll('[data-page="chat"] [data-model]').forEach(button => button.disabled = true);
+  let state = { screen:'connection', model:'gpt-6-luna' };
+  let previousFocus = null;
+  function apply(saved) {
+    const value = saved?.privateContent;
+    if (value && ['connection','threads','chat'].includes(value.screen)) state.screen = value.screen;
+    if (value && ['gpt-6-luna','gpt-6.1-sol'].includes(value.model)) state.model = value.model;
+    render();
+  }
+  function render() {
+    root.querySelectorAll('[data-page]').forEach(el => el.hidden = el.dataset.page !== state.screen);
+    root.querySelectorAll('[data-screen]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.screen === state.screen)));
+    root.querySelectorAll('[data-model]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.model === state.model)));
+  }
+  function save() {
+    if (window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{screen:state.screen,model:state.model},privateContent:state}).catch(() => {});
+  }
+  function screen(value) { state.screen = value; render(); save(); }
+  function close() { overlay.hidden = true; if (previousFocus) previousFocus.focus(); }
+  function modal(title, paragraphs, actions) {
+    if (overlay.hidden) previousFocus = document.activeElement;
+    root.querySelector('#preview-dialog-title').textContent = title;
+    dialogContent.replaceChildren(); dialogActions.replaceChildren();
+    paragraphs.forEach(text => { const p = document.createElement('p'); p.textContent = text; dialogContent.append(p); });
+    actions.forEach(([label, fn]) => { const b = document.createElement('button'); b.type='button'; b.textContent=label; b.addEventListener('click',fn); dialogActions.append(b); });
+    overlay.hidden = false; dialogActions.querySelector('button').focus();
+  }
+  function update() {
+    modal('应用更新', ['当前版本 0.1.2','示例：发现新版本 0.1.3','安装包约 14 MB，通过 82 的 SSH 下载。安卓系统会要求你确认安装。'], [['稍后',close],['下载更新',() => modal('应用更新',['演示下载完成。实际应用会核对 SHA-256、包名、版本和签名。','首次安装需允许此来源安装应用；授权后返回，再点「安装更新」。'],[['稍后',close],['安装更新',() => {close(); status.textContent='预览：实际应用此时打开安卓系统安装器，等待你确认。';}]])]]);
+  }
+  root.addEventListener('click', event => {
+    const b = event.target.closest('button'); if (!b) return;
+    if (b.dataset.screen) return screen(b.dataset.screen);
+    if (b.dataset.model) { state.model=b.dataset.model; render(); save(); return; }
+    if (b.dataset.thread) { root.querySelector('[data-chat-title]').textContent=b.dataset.thread; return screen('chat'); }
+    if (b.dataset.demo === 'update') return update();
+    if (b.dataset.demo === 'approval') return modal('Andri 请求批准（待处理 1）',['糖果熊机器人维护','command：systemctl status candybear.service','reason：读取服务状态以确认运行情况。'],[['拒绝',() => {close();status.textContent='预览：本次请求已拒绝。';}],['批准这一次',() => {close();status.textContent='预览：仅批准这一次请求，实际应用会将决定发送到服务器。';}]]);
+    switch(b.dataset.action) {
+      case 'key': b.textContent='SSH 私钥已导入（点此更换）'; root.querySelector('[data-connection-status]').textContent='演示：SSH 私钥已导入'; break;
+      case 'connect': screen('threads'); break;
+      case 'disconnect': screen('connection'); break;
+      case 'back': screen('threads'); break;
+      case 'new': root.querySelector('[data-chat-title]').textContent='新对话'; screen('chat'); break;
+      case 'update': update(); break;
+      case 'refresh': status.textContent='预览：列表和当前对话已刷新。'; break;
+      case 'history': b.textContent='已加载更早的消息（演示）'; break;
+      case 'stop':
+        root.querySelector('[data-activity]').textContent='已停止当前任务（演示）';
+        b.hidden=true;
+        root.querySelector('[data-action="send"]').disabled=false;
+        root.querySelectorAll('[data-page="chat"] [data-model]').forEach(button => button.disabled=false);
+        break;
+      case 'send': if (draft.value.trim()) {
+        const article=document.createElement('article'); article.className='message user';
+        const label=document.createElement('span');label.textContent='你';const text=document.createElement('p');text.textContent=draft.value;
+        article.append(label,text); root.querySelector('.messages').append(article);draft.value='';
+        root.querySelector('[data-activity]').textContent='预览模式：输入仅保留在此页面，不发送到服务器。';
+      } break;
+    }
+  });
+  overlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    if (event.key === 'Tab') {
+      const buttons = [...dialogActions.querySelectorAll('button')];
+      const first=buttons[0], last=buttons[buttons.length-1];
+      if (event.shiftKey && document.activeElement===first) {event.preventDefault();last.focus();}
+      if (!event.shiftKey && document.activeElement===last) {event.preventDefault();first.focus();}
+    }
+  });
+  apply(window.openai?.widgetState);
+  window.addEventListener('openai:set_globals', event => {if (event.detail?.globals?.widgetState) apply(event.detail.globals.widgetState);});
+})();
+</script>

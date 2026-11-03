@@ -1,0 +1,23 @@
+# Local build output, SDK settings, and signing material
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+
+# Keep reusable project checks/tools; leave local diagnostics and release artifacts out.
+/codex/*
+!/codex/checks/
+!/codex/run-checks.ps1
+!/codex/publish-update.ps1
+!/codex/build-release.sh
+!/codex/publish-server-update.sh
+!/codex/mobile-redesign-preview.html
+!/codex/preview-browser.html
+!/codex/codex-mobile-preview.html

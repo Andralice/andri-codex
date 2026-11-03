@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Mobile Redesign Preview</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+
+</head>
+<body>
+<iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="Mobile Redesign Preview" data-srcdoc="&lt;div id=&quot;codex-mobile-refined&quot; class=&quot;viz-dotted-background&quot;&gt;
+  &lt;details class=&quot;sample-tools&quot;&gt;&lt;summary&gt;预览其他页面与状态&lt;/summary&gt;
+  &lt;nav class=&quot;sample-tabs&quot; aria-label=&quot;切换预览页面&quot;&gt;
+    &lt;button type=&quot;button&quot; data-screen=&quot;connection&quot; aria-pressed=&quot;false&quot;&gt;连接工作区&lt;/button&gt;
+    &lt;button type=&quot;button&quot; data-screen=&quot;threads&quot; aria-pressed=&quot;true&quot;&gt;对话列表&lt;/button&gt;
+    &lt;button type=&quot;button&quot; data-screen=&quot;chat&quot; aria-pressed=&quot;false&quot;&gt;聊天&lt;/button&gt;
+  &lt;/nav&gt;&lt;div class=&quot;sample-controls&quot;&gt;&lt;button type=&quot;button&quot; data-demo=&quot;running&quot;&gt;演示任务执行&lt;/button&gt;&lt;button type=&quot;button&quot; data-demo=&quot;stream&quot;&gt;演示流式输出&lt;/button&gt;&lt;button type=&quot;button&quot; data-demo=&quot;questions&quot;&gt;演示选择题与工具&lt;/button&gt;&lt;button type=&quot;button&quot; data-demo=&quot;approval&quot;&gt;演示审批&lt;/button&gt;&lt;button type=&quot;button&quot; data-demo=&quot;update&quot;&gt;演示更新&lt;/button&gt;&lt;button type=&quot;button&quot; data-demo=&quot;error&quot;&gt;演示异常&lt;/button&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;div class=&quot;cs-phone&quot; aria-label=&quot;Andri 新版原生界面预览&quot;&gt;
+    &lt;section class=&quot;cs-page cs-connect&quot; data-page=&quot;connection&quot; hidden&gt;
+      &lt;header class=&quot;cs-brand-row&quot;&gt;&lt;span class=&quot;cs-brand&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;code-xml&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;strong&gt;Andri&lt;/strong&gt;&lt;/header&gt;
+      &lt;h2&gt;工作，随你而行。&lt;/h2&gt;
+      &lt;p class=&quot;cs-intro&quot;&gt;从手机继续对话，&lt;br&gt;让任务在服务器上运行。&lt;/p&gt;
+      &lt;div class=&quot;cs-server-form&quot;&gt;
+        &lt;span class=&quot;cs-small cs-muted&quot;&gt;服务器连接&lt;/span&gt;
+        &lt;label&gt;服务器地址&lt;input value=&quot;82.156.142.57&quot; aria-label=&quot;服务器地址&quot; autocomplete=&quot;off&quot;&gt;&lt;/label&gt;
+        &lt;div class=&quot;cs-field-row&quot;&gt;&lt;label&gt;端口&lt;input value=&quot;22&quot; aria-label=&quot;SSH 端口&quot; inputmode=&quot;numeric&quot;&gt;&lt;/label&gt;&lt;label&gt;用户名&lt;input value=&quot;ubuntu&quot; aria-label=&quot;SSH 用户名&quot; autocomplete=&quot;off&quot;&gt;&lt;/label&gt;&lt;/div&gt;
+        &lt;label&gt;工作目录&lt;input value=&quot;/home/ubuntu&quot; aria-label=&quot;服务器工作目录&quot; autocomplete=&quot;off&quot;&gt;&lt;/label&gt;
+      &lt;/div&gt;
+      &lt;button class=&quot;cs-key&quot; type=&quot;button&quot; data-action=&quot;key&quot;&gt;&lt;span class=&quot;cs-key-icon&quot; aria-hidden=&quot;true&quot;&gt;SSH&lt;/span&gt;&lt;span class=&quot;cs-grow&quot;&gt;&lt;strong data-key-label&gt;导入 SSH 私钥&lt;/strong&gt;&lt;small data-key-detail&gt;选择手机中的私钥文件&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;cs-chevron&quot; aria-hidden=&quot;true&quot;&gt;›&lt;/span&gt;&lt;/button&gt;
+      &lt;label class=&quot;cs-passphrase&quot; data-passphrase hidden&gt;私钥口令（如有）&lt;input type=&quot;password&quot; autocomplete=&quot;off&quot; aria-label=&quot;私钥口令（演示）&quot;&gt;&lt;/label&gt;
+      &lt;button class=&quot;cs-primary cs-full&quot; type=&quot;button&quot; data-action=&quot;connect&quot; disabled&gt;连接工作区&lt;span aria-hidden=&quot;true&quot;&gt;→&lt;/span&gt;&lt;/button&gt;
+      &lt;p class=&quot;cs-security&quot;&gt;连接前验证服务器身份 &#183; 中转密钥留在服务器&lt;/p&gt;
+    &lt;/section&gt;
+    &lt;section class=&quot;cs-page cs-threads&quot; data-page=&quot;threads&quot; hidden&gt;
+      &lt;div class=&quot;cs-workspace-head&quot;&gt;&lt;header class=&quot;cs-brand-row&quot;&gt;&lt;span class=&quot;cs-brand cs-brand-small&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;code-xml&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;strong&gt;Andri&lt;/strong&gt;&lt;span class=&quot;cs-connected&quot;&gt;&lt;b aria-hidden=&quot;true&quot;&gt;&lt;/b&gt;82 &#183; 已连接&lt;/span&gt;&lt;button class=&quot;cs-icon&quot; type=&quot;button&quot; data-action=&quot;menu&quot; aria-label=&quot;更多选项&quot; aria-expanded=&quot;false&quot;&gt;&lt;i data-lucide=&quot;ellipsis&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/header&gt;
+      &lt;div class=&quot;cs-title-row&quot;&gt;&lt;div&gt;&lt;h2&gt;对话&lt;/h2&gt;&lt;/div&gt;&lt;button class=&quot;cs-new&quot; type=&quot;button&quot; data-action=&quot;new&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;span&gt;新对话&lt;/span&gt;&lt;/button&gt;&lt;/div&gt;&lt;p class=&quot;cs-list-subtitle cs-muted&quot;&gt;从上次停下的地方，继续。&lt;/p&gt;&lt;/div&gt;
+      &lt;div class=&quot;cs-paper&quot;&gt;
+      &lt;details class=&quot;cs-thread-tools&quot;&gt;&lt;summary&gt;&lt;span&gt;搜索与筛选&lt;/span&gt;&lt;span data-result-count&gt;3 个&lt;/span&gt;&lt;/summary&gt;&lt;div class=&quot;cs-list-heading&quot;&gt;&lt;div class=&quot;cs-filters&quot; aria-label=&quot;对话状态&quot;&gt;&lt;button type=&quot;button&quot; data-filter=&quot;all&quot; aria-pressed=&quot;true&quot;&gt;全部对话&lt;/button&gt;&lt;button type=&quot;button&quot; data-filter=&quot;running&quot; aria-pressed=&quot;false&quot;&gt;进行中 &lt;span data-running-count&gt;1&lt;/span&gt;&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;&lt;label class=&quot;cs-search&quot;&gt;&lt;i data-lucide=&quot;search&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;input type=&quot;search&quot; name=&quot;thread-search&quot; aria-label=&quot;搜索对话&quot; placeholder=&quot;搜索标题或模型…&quot; data-search autocomplete=&quot;off&quot;&gt;&lt;/label&gt;&lt;/details&gt;
+      &lt;div class=&quot;cs-thread-list&quot;&gt;
+        &lt;button class=&quot;cs-thread&quot; type=&quot;button&quot; data-thread=&quot;糖果熊机器人维护&quot; data-thread-model=&quot;gpt-6-luna&quot; data-thread-running=&quot;false&quot;&gt;&lt;span class=&quot;cs-thread-mark&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;message-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;span class=&quot;cs-grow&quot;&gt;&lt;strong&gt;糖果熊机器人维护&lt;/strong&gt;&lt;small&gt;gpt-6-luna&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;cs-chevron&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;/button&gt;
+        &lt;button class=&quot;cs-thread&quot; type=&quot;button&quot; data-thread=&quot;检查服务器存储&quot; data-thread-model=&quot;gpt-6-luna&quot; data-thread-running=&quot;true&quot;&gt;&lt;span class=&quot;cs-thread-mark active&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;code-xml&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;span class=&quot;cs-grow&quot;&gt;&lt;strong&gt;检查服务器存储&lt;/strong&gt;&lt;small class=&quot;cs-live&quot;&gt;● 正在执行&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;cs-chevron&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;/button&gt;
+        &lt;button class=&quot;cs-thread&quot; type=&quot;button&quot; data-thread=&quot;安卓客户端开发&quot; data-thread-model=&quot;gpt-6.1-sol&quot; data-thread-running=&quot;false&quot;&gt;&lt;span class=&quot;cs-thread-mark&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;message-square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;span class=&quot;cs-grow&quot;&gt;&lt;strong&gt;安卓客户端开发&lt;/strong&gt;&lt;small&gt;gpt-6.1-sol&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;cs-chevron&quot; aria-hidden=&quot;true&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;/button&gt;
+      &lt;/div&gt;
+      &lt;p class=&quot;cs-empty&quot; data-empty hidden role=&quot;status&quot;&gt;没有找到匹配的对话&lt;/p&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+    &lt;section class=&quot;cs-page cs-chat&quot; data-page=&quot;chat&quot;&gt;
+      &lt;header class=&quot;cs-chat-header&quot;&gt;&lt;button class=&quot;cs-icon cs-back&quot; type=&quot;button&quot; data-action=&quot;back&quot; aria-label=&quot;返回对话列表&quot;&gt;&lt;i data-lucide=&quot;chevron-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;div class=&quot;cs-grow&quot;&gt;&lt;h2 data-chat-title&gt;糖果熊机器人维护&lt;/h2&gt;&lt;span class=&quot;cs-connected&quot; data-chat-context&gt;&lt;b aria-hidden=&quot;true&quot;&gt;&lt;/b&gt;82 &#183; ubuntu &#183; 请求审批&lt;/span&gt;&lt;/div&gt;&lt;button class=&quot;cs-icon&quot; type=&quot;button&quot; data-action=&quot;menu&quot; aria-label=&quot;更多选项&quot;&gt;&lt;i data-lucide=&quot;ellipsis&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/header&gt;
+      &lt;div class=&quot;cs-messages&quot; aria-live=&quot;polite&quot;&gt;
+        &lt;button class=&quot;cs-history&quot; type=&quot;button&quot; data-action=&quot;history&quot;&gt;查看更早的消息&lt;/button&gt;
+        &lt;article class=&quot;cs-user&quot;&gt;&lt;p&gt;帮我检查糖果熊的运行状态，先看日志，告诉我发现了什么。&lt;/p&gt;&lt;/article&gt;
+        &lt;article class=&quot;cs-assistant&quot;&gt;&lt;p&gt;我会先检查服务状态和最近日志，再根据实际记录判断是否需要处理。&lt;/p&gt;&lt;p&gt;检查完成后，我会把发现的问题和建议的下一步告诉你。&lt;/p&gt;&lt;/article&gt;
+        &lt;div class=&quot;cs-activity&quot; data-activity hidden&gt;● Andri 正在处理…&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;cs-floating-controls&quot;&gt;
+        &lt;button class=&quot;cs-composer-toggle&quot; type=&quot;button&quot; data-action=&quot;expand-composer&quot; aria-label=&quot;展开输入框&quot;&gt;&lt;svg viewBox=&quot;0 0 24 24&quot; aria-hidden=&quot;true&quot;&gt;&lt;path d=&quot;M5 19l4-1 10-10-3-3L6 15l-1 4zm9-12 3 3&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&lt;/svg&gt;&lt;b data-draft-dot hidden&gt;&lt;/b&gt;&lt;/button&gt;
+        &lt;button class=&quot;cs-send&quot; type=&quot;button&quot; data-action=&quot;stop-collapsed&quot; aria-label=&quot;停止当前任务&quot; hidden&gt;&lt;i data-lucide=&quot;square&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;cs-composer&quot; data-composer hidden&gt;
+        &lt;div class=&quot;cs-attachment&quot; data-attachment hidden&gt;&lt;img data-attachment-preview alt=&quot;已选择的图片&quot;&gt;&lt;span data-attachment-name&gt;&lt;/span&gt;&lt;button type=&quot;button&quot; data-action=&quot;remove-image&quot; aria-label=&quot;移除图片&quot;&gt;&#215;&lt;/button&gt;&lt;/div&gt;
+        &lt;div class=&quot;cs-composer-row&quot;&gt;
+          &lt;button class=&quot;cs-attach&quot; type=&quot;button&quot; data-action=&quot;compose-tools&quot; aria-label=&quot;图片与模型&quot; aria-expanded=&quot;false&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+          &lt;label class=&quot;cs-sr&quot; for=&quot;cs-refined-draft&quot;&gt;描述任务，或继续追问&lt;/label&gt;&lt;textarea id=&quot;cs-refined-draft&quot; rows=&quot;1&quot; placeholder=&quot;发消息…&quot; data-draft&gt;&lt;/textarea&gt;
+          &lt;button class=&quot;cs-send&quot; type=&quot;button&quot; data-action=&quot;send&quot; aria-label=&quot;发送消息&quot; disabled&gt;&lt;svg viewBox=&quot;0 0 24 24&quot; aria-hidden=&quot;true&quot;&gt;&lt;path d=&quot;M21 3 10 14m11-11-6 17-5-6-7-3 18-8z&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&lt;/svg&gt;&lt;/button&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+      &lt;input class=&quot;cs-sr&quot; type=&quot;file&quot; accept=&quot;image/*&quot; data-image-picker&gt;
+      &lt;div class=&quot;cs-compose-tools&quot; data-compose-tools hidden&gt;
+        &lt;button type=&quot;button&quot; data-action=&quot;add-image&quot;&gt;&lt;i data-lucide=&quot;image&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;添加图片&lt;/button&gt;
+        &lt;div class=&quot;cs-model-choices&quot; role=&quot;group&quot; aria-label=&quot;选择模型&quot;&gt;&lt;button type=&quot;button&quot; data-model-choice=&quot;gpt-6-luna&quot;&gt;gpt-6-luna&lt;/button&gt;&lt;button type=&quot;button&quot; data-model-choice=&quot;gpt-6.1-sol&quot;&gt;gpt-6.1-sol&lt;/button&gt;&lt;/div&gt;
+        &lt;div data-compose-effort&gt;&lt;/div&gt;
+        &lt;button type=&quot;button&quot; data-action=&quot;workspace&quot;&gt;&lt;i data-lucide=&quot;folder&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;工作区与权限&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+    &lt;div class=&quot;cs-menu&quot; data-menu hidden&gt;
+      &lt;button type=&quot;button&quot; data-action=&quot;workspace&quot;&gt;工作区与权限&lt;/button&gt;&lt;button type=&quot;button&quot; data-action=&quot;refresh&quot;&gt;刷新&lt;/button&gt;&lt;button type=&quot;button&quot; data-action=&quot;update&quot;&gt;检查更新 &#183; v0.1.11&lt;/button&gt;&lt;button type=&quot;button&quot; data-action=&quot;disconnect&quot;&gt;断开服务器&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;cs-overlay&quot; data-overlay hidden&gt;&lt;section class=&quot;cs-dialog&quot; role=&quot;dialog&quot; aria-modal=&quot;true&quot; aria-labelledby=&quot;cs-refined-dialog-title&quot;&gt;&lt;h3 id=&quot;cs-refined-dialog-title&quot;&gt;应用更新&lt;/h3&gt;&lt;div data-dialog-content&gt;&lt;/div&gt;&lt;div class=&quot;cs-dialog-actions&quot; data-dialog-actions&gt;&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;
+  &lt;/div&gt;
+  &lt;p class=&quot;sample-note&quot; data-preview-status aria-live=&quot;polite&quot;&gt;原生布局预览 &#183; 示例数据 &#183; 不连接服务器&lt;/p&gt;
+&lt;/div&gt;
+&lt;style&gt;
+#codex-mobile-refined { padding:12px 0; }
+#codex-mobile-refined [hidden] { display:none !important; }
+#codex-mobile-refined .sample-tools { max-width:410px; margin:0 auto 12px; border:1px solid var(--muted-border); border-radius:16px; background:var(--card-background); }
+#codex-mobile-refined .sample-tools&gt;summary { cursor:pointer; padding:10px 14px; color:var(--muted-foreground); font-size:12px; list-style:none; text-align:center; }
+#codex-mobile-refined .sample-tools&gt;summary::-webkit-details-marker,#codex-mobile-refined .cs-thread-tools&gt;summary::-webkit-details-marker { display:none; }
+#codex-mobile-refined .sample-tools&gt;summary:before,#codex-mobile-refined .cs-thread-tools&gt;summary:before { content:&quot;＋&quot;; margin-right:6px; }
+#codex-mobile-refined .sample-tools[open]&gt;summary:before,#codex-mobile-refined .cs-thread-tools[open]&gt;summary:before { content:&quot;−&quot;; }
+#codex-mobile-refined .sample-tabs,#codex-mobile-refined .sample-controls { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin:0 auto 10px; }
+#codex-mobile-refined .sample-tabs button,#codex-mobile-refined .sample-controls button { font:inherit; font-size:12px; background:transparent; color:var(--muted-foreground); padding:10px 14px; border:0; border-radius:12px; }
+#codex-mobile-refined .sample-tabs button[aria-pressed=&quot;true&quot;] { color:var(--foreground); background:var(--muted); }
+#codex-mobile-refined .sample-controls { margin:0 auto 8px; padding:0 8px 4px; }
+#codex-mobile-refined .sample-note { text-align:center; color:var(--muted-foreground); font-size:11px; margin:6px 12px; }
+#codex-mobile-refined .cs-phone { color-scheme:light; --cs-bg:#fffdfc; --cs-text:#302d2b; --cs-muted:#756d67; --cs-surface:#ffffff; --cs-soft:#faf7f4; --cs-primary:#805b48; --cs-on-primary:#ffffff; --cs-green:#397463; --cs-tint:#f8eeea; --cs-line:#ede8e3; width:100%; max-width:410px; min-height:728px; position:relative; margin:auto; border:1px solid #e1e3da; border-radius:32px; background:var(--cs-bg); color:var(--cs-text); font-family:Inter,Roboto,&quot;Microsoft YaHei&quot;,sans-serif; font-size:14px; line-height:1.6; overflow-wrap:anywhere; box-shadow:0 16px 50px #35382a0a; }
+#codex-mobile-refined .cs-phone * { box-sizing:border-box; }
+#codex-mobile-refined .cs-phone button,#codex-mobile-refined .cs-phone input,#codex-mobile-refined .cs-phone select,#codex-mobile-refined .cs-phone textarea { font:inherit; }
+#codex-mobile-refined .cs-phone button { border:0; background:transparent; color:var(--cs-text); touch-action:manipulation; -webkit-tap-highlight-color:#39746319; }
+#codex-mobile-refined .cs-phone button:hover:not(:disabled) { filter:brightness(.96); }
+#codex-mobile-refined .cs-phone button:active:not(:disabled) { transform:translateY(1px); }
+#codex-mobile-refined .cs-phone :focus-visible { outline:1px solid color-mix(in srgb,var(--cs-primary) 38%,transparent); outline-offset:2px; }
+#codex-mobile-refined .cs-phone textarea:focus,#codex-mobile-refined .cs-phone input:focus,#codex-mobile-refined .cs-phone select:focus { outline:none; box-shadow:none; }
+#codex-mobile-refined .cs-phone button:disabled { opacity:0.38; cursor:default; }
+#codex-mobile-refined .cs-phone h2,#codex-mobile-refined .cs-phone h3,#codex-mobile-refined .cs-phone p { margin:0; }
+#codex-mobile-refined .cs-phone strong { font-weight:600; }
+#codex-mobile-refined .cs-phone svg { width:20px; height:20px; stroke-width:1.65; flex-shrink:0; }
+#codex-mobile-refined .cs-muted { color:var(--cs-muted); }
+#codex-mobile-refined .cs-small { font-size:12px; }
+#codex-mobile-refined .cs-grow { flex:1; min-width:0; }
+#codex-mobile-refined .cs-brand-row { display:flex; align-items:center; gap:12px; }
+#codex-mobile-refined .cs-brand-row&gt;strong { font-size:21px; letter-spacing:-0.7px; }
+#codex-mobile-refined .cs-brand { display:inline-flex; width:40px; height:40px; flex-shrink:0; border-radius:13px; align-items:center; justify-content:center; font:600 21px/1 monospace; color:var(--cs-primary); background:var(--cs-soft); }
+#codex-mobile-refined .cs-brand-small { width:34px; height:34px; border-radius:11px; font-size:17px; }
+#codex-mobile-refined .cs-brand-tiny { width:30px; height:30px; border-radius:10px; font-size:12px; }
+#codex-mobile-refined .cs-brand-tiny svg { width:15px; height:15px; }
+#codex-mobile-refined .cs-brand svg { width:62%; height:62%; }
+#codex-mobile-refined .cs-eyebrow { margin-left:auto; color:var(--cs-muted); font-size:11px; letter-spacing:1.5px; }
+#codex-mobile-refined .cs-connect { padding:28px 24px; }
+#codex-mobile-refined .cs-connect h2 { margin:32px 0 12px; font-size:30px; line-height:1.4; letter-spacing:-0.9px; font-weight:600; text-wrap:balance; }
+#codex-mobile-refined .cs-intro { font-size:14px; line-height:22px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-server-form { padding:18px; border:1px solid var(--cs-line); border-radius:22px; background:var(--cs-surface); margin:24px 0 16px; }
+#codex-mobile-refined .cs-server-form label,#codex-mobile-refined .cs-passphrase { display:block; background:var(--cs-soft); border-radius:12px; padding:9px 12px; font-size:11px; color:var(--cs-muted); margin-top:10px; }
+#codex-mobile-refined .cs-phone input { display:block; width:100%; min-width:0; padding:0; margin:2px 0 0; border:0; background:transparent; color:var(--cs-text); font-size:14px; }
+#codex-mobile-refined .cs-field-row { display:flex; gap:10px; }
+#codex-mobile-refined .cs-field-row&gt;label:first-child { flex:1; min-width:0; }
+#codex-mobile-refined .cs-field-row&gt;label:last-child { flex:2; min-width:0; }
+#codex-mobile-refined .cs-phone .cs-key { display:flex; align-items:center; gap:12px; padding:16px; width:100%; text-align:left; border:1px solid var(--cs-line); border-radius:18px; background:var(--cs-surface); }
+#codex-mobile-refined .cs-key strong { display:block; font-size:14px; }
+#codex-mobile-refined .cs-key small { display:block; font-size:12px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-key-icon { display:grid; place-items:center; width:40px; height:40px; background:var(--cs-tint); color:var(--cs-green); font-size:11px; border-radius:12px; font-weight:600; }
+#codex-mobile-refined .cs-chevron { color:var(--cs-muted); font-size:22px; }
+#codex-mobile-refined .cs-phone .cs-primary { display:inline-flex; gap:5px; align-items:center; justify-content:center; background:var(--cs-primary); color:var(--cs-on-primary); padding:12px 14px; border-radius:14px; white-space:nowrap; font-size:14px; min-height:48px; }
+#codex-mobile-refined .cs-phone .cs-full { display:flex; width:100%; justify-content:space-between; align-items:center; margin-top:18px; min-height:54px; font-size:16px; border-radius:18px; }
+#codex-mobile-refined .cs-security { font-size:11px; color:var(--cs-muted); margin-top:16px !important; }
+#codex-mobile-refined .cs-threads { padding:0; }
+#codex-mobile-refined .cs-workspace-head { padding:20px 18px 24px 26px; }
+#codex-mobile-refined .cs-paper { padding:12px 22px 0; border-radius:0 0 31px 31px; background:var(--cs-bg); min-height:526px; display:flex; flex-direction:column; }
+#codex-mobile-refined .cs-phone .cs-new { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid var(--cs-line); border-radius:14px; padding:10px 13px; min-height:44px; gap:6px; background:var(--cs-soft); color:var(--cs-primary); font-size:13px; }
+#codex-mobile-refined .cs-new svg { width:17px; height:17px; }
+#codex-mobile-refined .cs-list-subtitle { margin-top:7px !important; font-size:14px; }
+#codex-mobile-refined .cs-threads .cs-brand-row { gap:9px; }
+#codex-mobile-refined .cs-threads .cs-brand-row&gt;strong { flex:1; font-size:19px; }
+#codex-mobile-refined .cs-connected { display:inline-flex; gap:6px; align-items:center; color:var(--cs-muted); font-size:11px; white-space:nowrap; }
+#codex-mobile-refined .cs-connected b { display:block; width:6px; height:6px; border-radius:50%; background:var(--cs-green); }
+#codex-mobile-refined .cs-phone .cs-icon { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; padding:0; font-size:26px; border-radius:12px; }
+#codex-mobile-refined .cs-title-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:20px 0 0; }
+#codex-mobile-refined .cs-title-row h2 { font-size:28px; line-height:36px; letter-spacing:-.6px; font-weight:600; }
+#codex-mobile-refined .cs-title-row p { margin-top:7px; font-size:14px; }
+#codex-mobile-refined .cs-model { display:inline-flex; min-width:0; }
+#codex-mobile-refined .cs-model select { max-width:100%; min-height:44px; padding:8px 12px; background:var(--cs-soft); border:0; border-radius:12px; color:var(--cs-text); font-size:13px; }
+#codex-mobile-refined .cs-model select:disabled { opacity:0.6; }
+#codex-mobile-refined .cs-thread-tools { margin-top:12px; border-top:1px solid var(--cs-line); border-bottom:1px solid var(--cs-line); }
+#codex-mobile-refined .cs-thread-tools&gt;summary { display:flex; justify-content:space-between; align-items:center; padding:12px 2px; cursor:pointer; color:var(--cs-muted); font-size:13px; list-style:none; }
+#codex-mobile-refined .cs-thread-tools[open]&gt;summary { color:var(--cs-text); }
+#codex-mobile-refined .cs-thread-tools .cs-list-heading { padding:4px 0 0; }
+#codex-mobile-refined .cs-search { display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:14px; background:var(--cs-soft); color:var(--cs-muted); min-height:52px; margin:8px 0 10px; }
+#codex-mobile-refined .cs-search input { font-size:14px; min-height:28px; margin:0; }
+#codex-mobile-refined .cs-search input::placeholder { color:var(--cs-muted); }
+#codex-mobile-refined .cs-list-heading { display:flex; align-items:center; justify-content:space-between; color:var(--cs-muted); font-size:12px; }
+#codex-mobile-refined .cs-filters { display:flex; gap:0; align-items:center; }
+#codex-mobile-refined .cs-filters button { color:var(--cs-muted); min-width:98px; min-height:48px; border-radius:0; padding:10px; font-size:14px; position:relative; }
+#codex-mobile-refined .cs-filters button[aria-pressed=&quot;true&quot;] { color:var(--cs-text); font-weight:600; }
+#codex-mobile-refined .cs-filters button[aria-pressed=&quot;true&quot;]:after { content:&quot;&quot;; position:absolute; width:22px; height:3px; border-radius:3px; background:var(--cs-primary); bottom:0; left:calc(50% - 11px); }
+#codex-mobile-refined .cs-empty { padding:40px 4px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-phone .cs-text { padding:8px; font-size:12px; min-height:40px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-thread-list { display:grid; gap:0; }
+#codex-mobile-refined .cs-phone .cs-thread { display:flex; align-items:center; gap:13px; width:100%; padding:15px 2px; border-radius:16px; background:transparent; text-align:left; position:relative; }
+#codex-mobile-refined .cs-thread:after { content:&quot;&quot;; position:absolute; bottom:0; left:55px; right:0; height:1px; background:var(--cs-line); }
+#codex-mobile-refined .cs-thread:hover { background:var(--cs-bg); }
+#codex-mobile-refined .cs-thread strong { display:block; font-size:15px; }
+#codex-mobile-refined .cs-thread small { display:block; color:var(--cs-muted); font-size:12px; margin-top:7px; }
+#codex-mobile-refined .cs-thread small.cs-live { color:var(--cs-green); }
+#codex-mobile-refined .cs-thread-mark { display:grid; place-items:center; flex-shrink:0; width:40px; height:40px; border-radius:13px; background:var(--cs-soft); color:var(--cs-muted); }
+#codex-mobile-refined .cs-thread-mark svg { width:18px; height:18px; }
+#codex-mobile-refined .cs-thread-mark.active { color:var(--cs-green); background:#eaf0e9; }
+#codex-mobile-refined .cs-chevron svg { width:15px; height:15px; }
+#codex-mobile-refined .cs-chat { padding:10px 0 16px; background:var(--cs-bg); border-radius:32px; min-height:728px; display:flex; flex-direction:column; }
+#codex-mobile-refined .cs-chat-header { display:flex; align-items:center; gap:12px; padding:0 12px 12px 16px; border-bottom:1px solid var(--cs-line); min-height:72px; }
+#codex-mobile-refined .cs-phone .cs-back { font-size:32px; }
+#codex-mobile-refined .cs-chat-header h2 { font-size:17px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:25px; }
+#codex-mobile-refined .cs-messages { flex:1; min-height:452px; padding:24px 18px; }
+#codex-mobile-refined .cs-empty-chat { padding:52px 0 24px; }
+#codex-mobile-refined .cs-empty-chat h3 { font-size:30px; line-height:42px; letter-spacing:-.8px; font-weight:600; margin:16px 0; }
+#codex-mobile-refined .cs-empty-chat p { color:var(--cs-muted); line-height:23px; font-size:14px; }
+#codex-mobile-refined .cs-history { display:block; margin:0 auto 20px; font-size:11px !important; color:var(--cs-muted) !important; padding:10px; min-height:40px; }
+#codex-mobile-refined .cs-user { width:fit-content; max-width:88%; margin:0 0 30px auto; background:var(--cs-tint); border-radius:22px; padding:12px 17px; color:#493a32; }
+#codex-mobile-refined .cs-user p { font-size:15px; line-height:25px; white-space:pre-wrap; }
+#codex-mobile-refined .cs-assistant { margin-bottom:30px; }
+#codex-mobile-refined .cs-assistant p { font-size:15px; line-height:26px; margin-bottom:12px; white-space:pre-wrap; }
+#codex-mobile-refined .cs-markdown h3 { margin:0 0 8px; font-size:18px; line-height:26px; }
+#codex-mobile-refined .cs-markdown p { margin:0 0 10px; }
+#codex-mobile-refined .cs-markdown ul { margin:0 0 10px; padding-left:20px; }
+#codex-mobile-refined .cs-markdown li { margin:4px 0; }
+#codex-mobile-refined .cs-markdown code { padding:2px 5px; border-radius:6px; background:var(--cs-soft); font:12px ui-monospace,SFMono-Regular,Consolas,monospace; }
+#codex-mobile-refined .cs-markdown pre { margin:4px 0 10px; padding:12px; overflow:auto; border-radius:12px; background:var(--cs-soft); font:12px/19px ui-monospace,SFMono-Regular,Consolas,monospace; }
+#codex-mobile-refined .cs-activity { display:inline-block; padding:10px 12px; font-size:12px; color:var(--cs-muted); background:var(--cs-soft); border-radius:12px; }
+#codex-mobile-refined .cs-composer { border:1px solid var(--cs-line); border-radius:24px; margin:8px 18px 0; padding:8px; background:var(--cs-surface); box-shadow:0 6px 18px #493a3210,0 2px 5px #493a3205; }
+#codex-mobile-refined .cs-composer textarea { display:block; width:100%; background:transparent; border:0; padding:12px; color:var(--cs-text); font-size:16px; line-height:25px; resize:none; }
+#codex-mobile-refined .cs-composer textarea::placeholder { color:var(--cs-muted); }
+#codex-mobile-refined .cs-attachment { display:flex; align-items:center; gap:8px; margin:0 8px 8px; padding:6px 8px; border-radius:12px; background:var(--cs-soft); color:var(--cs-primary); font-size:12px; }
+#codex-mobile-refined .cs-attachment img { width:36px; height:36px; object-fit:cover; border-radius:8px; }
+#codex-mobile-refined .cs-attachment span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#codex-mobile-refined .cs-attachment button { width:34px; height:34px; border-radius:10px; font-size:20px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-user img { display:block; max-width:100%; max-height:180px; margin-top:8px; border-radius:14px; }
+#codex-mobile-refined .cs-error { margin:0 18px; padding:6px 12px; border-radius:12px; background:var(--cs-soft); font-size:13px; }
+#codex-mobile-refined .cs-error&gt;div { display:flex; gap:8px; align-items:center; }
+#codex-mobile-refined .cs-error-mark { color:#a34d3f; font-weight:600; }
+#codex-mobile-refined .cs-error button { margin-left:auto; color:var(--cs-primary); min-height:44px; font-size:12px; }
+#codex-mobile-refined .cs-error p { color:#a34d3f; padding-bottom:8px; line-height:22px; }
+#codex-mobile-refined .cs-attach { display:grid; place-items:center; width:42px; height:42px; color:var(--cs-primary) !important; border-radius:12px; }
+#codex-mobile-refined .cs-composer-bottom { display:flex; align-items:center; justify-content:space-between; padding-left:2px; gap:10px; }
+#codex-mobile-refined .cs-phone .cs-send { display:grid; place-items:center; background:var(--cs-primary); color:var(--cs-on-primary); border-radius:50%; width:48px; height:48px; flex-shrink:0; font-size:26px; }
+#codex-mobile-refined .cs-composer-toggle { display:grid; place-items:center; margin:8px 18px 0 auto; width:54px; height:54px; border-radius:50%; background:var(--cs-primary); color:var(--cs-on-primary); box-shadow:0 6px 18px #493a3220; }
+#codex-mobile-refined .cs-composer-toggle svg { width:22px; height:22px; }
+#codex-mobile-refined .cs-messages .cs-error { margin:30px 0 0; }
+#codex-mobile-refined .cs-menu { position:absolute; top:65px; right:18px; padding:8px; border:1px solid var(--cs-line); border-radius:16px; background:var(--cs-surface); z-index:3; box-shadow:0 8px 24px light-dark(#14261c0a,#0003); }
+#codex-mobile-refined .cs-menu button { display:block; width:100%; padding:12px; text-align:left; font-size:14px; border-radius:10px; }
+#codex-mobile-refined .cs-overlay { position:absolute; inset:0; z-index:4; background:#15231c55; border-radius:30px; display:flex; justify-content:center; align-items:center; padding:20px; overscroll-behavior:contain; }
+#codex-mobile-refined .cs-dialog { width:100%; background:var(--cs-surface); padding:24px; border-radius:26px; }
+#codex-mobile-refined .cs-dialog h3 { font-size:23px; font-weight:500; margin-bottom:16px; line-height:1.4; }
+#codex-mobile-refined .cs-dialog p { margin-bottom:12px; color:var(--cs-muted); font-size:14px; }
+#codex-mobile-refined .cs-dialog-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-top:22px; }
+#codex-mobile-refined .cs-dialog-actions button { padding:11px 16px; border-radius:14px; min-height:44px; }
+#codex-mobile-refined .cs-dialog-actions button:last-child { background:var(--cs-primary); color:var(--cs-on-primary); }
+#codex-mobile-refined .cs-command { background:var(--cs-soft); color:var(--cs-text); font:12px/1.7 monospace; padding:14px; border-radius:14px; overflow-wrap:anywhere; white-space:pre-wrap; }
+#codex-mobile-refined .cs-sr { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
+@media(pointer:coarse) { #codex-mobile-refined button { min-height:44px; } #codex-mobile-refined .cs-phone input,#codex-mobile-refined .cs-phone textarea { font-size:16px; } }
+@media(max-width:350px) { #codex-mobile-refined .cs-workspace-head { padding-left:22px; } #codex-mobile-refined .cs-paper { padding-left:18px; padding-right:18px; } #codex-mobile-refined .cs-threads .cs-brand-row { gap:6px; } #codex-mobile-refined .cs-connect { padding:24px 20px; } }
+
+#codex-mobile-refined .cs-chat { position:relative; height:728px; min-height:0; padding-bottom:0; overflow:hidden; }
+#codex-mobile-refined .cs-chat .cs-messages { min-height:0; overflow:auto; padding-bottom:154px; scrollbar-width:thin; overscroll-behavior:contain; }
+#codex-mobile-refined .cs-chat-header { flex-shrink:0; min-height:66px; }
+#codex-mobile-refined .cs-floating-controls { position:absolute; bottom:72px; left:12px; display:flex; gap:8px; }
+#codex-mobile-refined .cs-floating-controls .cs-composer-toggle { position:relative; margin:0; width:58px; height:58px; color:var(--cs-primary); background:var(--cs-tint); border:1px solid var(--cs-line); box-shadow:0 5px 14px #493a3218; }
+#codex-mobile-refined .cs-floating-controls .cs-composer-toggle svg { width:24px; height:24px; }
+#codex-mobile-refined .cs-floating-controls b { position:absolute; top:1px; right:1px; width:8px; height:8px; border-radius:50%; background:var(--cs-primary); }
+#codex-mobile-refined .cs-tool { margin:0 0 24px; padding:12px; border-radius:14px; background:var(--cs-soft); }
+#codex-mobile-refined .cs-tool summary { cursor:pointer; display:flex; gap:10px; align-items:center; font-size:12px; }
+#codex-mobile-refined .cs-tool summary span { margin-left:auto; color:var(--cs-muted); white-space:nowrap; }
+#codex-mobile-refined .cs-tool pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:20px; padding-top:12px; margin:0; }
+#codex-mobile-refined .cs-question-card { padding:14px; margin:0 0 24px; border-radius:16px; background:var(--cs-soft); }
+#codex-mobile-refined .cs-question-card strong { display:block; font-size:14px; margin-bottom:10px; }
+#codex-mobile-refined .cs-question-card label { display:flex; align-items:center; gap:8px; padding:10px; margin-bottom:8px; min-height:44px; border:1px solid var(--cs-line); border-radius:12px; background:var(--cs-surface); }
+#codex-mobile-refined .cs-question-card label:has(input:checked) { background:#eaf0e9; border-color:var(--cs-green); }
+#codex-mobile-refined .cs-question-card input[type=&quot;radio&quot;] { width:16px; margin:0; accent-color:var(--cs-green); }
+#codex-mobile-refined .cs-question-card input[type=&quot;text&quot;] { width:100%; min-height:44px; border:1px solid var(--cs-line); border-radius:12px; padding:10px; margin-bottom:8px; background:var(--cs-surface); }
+#codex-mobile-refined .cs-chat .cs-composer { position:absolute; bottom:12px; left:12px; right:12px; margin:0; padding:6px; border-radius:26px; }
+#codex-mobile-refined .cs-composer-row { display:flex; gap:0; align-items:center; }
+#codex-mobile-refined .cs-composer-row textarea { flex:1; width:0; min-width:0; padding:10px 4px; line-height:24px; max-height:116px; min-height:44px; font-family:inherit; box-sizing:border-box; }
+#codex-mobile-refined .cs-chat .cs-attach { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; color:var(--cs-muted); }
+#codex-mobile-refined .cs-chat .cs-send { width:44px; height:44px; font-size:20px; }
+#codex-mobile-refined .cs-chat .cs-attachment { margin:2px 4px 6px; }
+#codex-mobile-refined .cs-compose-tools { position:absolute; bottom:88px; left:12px; width:min(300px,calc(100% - 24px)); max-height:calc(100% - 170px); overflow:auto; padding:12px; border:1px solid var(--cs-line); border-radius:24px; background:var(--cs-surface); z-index:3; box-shadow:0 6px 22px #493a3215; }
+#codex-mobile-refined .cs-compose-tools&gt;button { display:flex; align-items:center; gap:10px; padding:10px; min-height:44px; width:100%; border-radius:10px; text-align:left; }
+#codex-mobile-refined .cs-model-choices { display:flex; gap:6px; margin:6px 0 10px; }
+#codex-mobile-refined .cs-model-choices button { flex:1; min-width:0; min-height:44px; padding:8px 4px; border:1px solid var(--cs-line); border-radius:12px; background:#fff; color:var(--cs-muted); font-size:12px; }
+#codex-mobile-refined .cs-model-choices button[aria-pressed=&quot;true&quot;] { background:var(--cs-tint); color:var(--cs-primary); }
+#codex-mobile-refined .cs-model-choices button:disabled { opacity:.55; }
+#codex-mobile-refined .cs-timeline-error { margin:24px 0; width:fit-content; max-width:100%; font-size:12px; color:var(--cs-muted); }
+#codex-mobile-refined .cs-timeline-error&gt;summary { display:flex; align-items:center; gap:7px; list-style:none; padding:10px 12px; border-radius:12px; background:var(--cs-soft); min-height:44px; box-sizing:border-box; }
+#codex-mobile-refined .cs-timeline-error&gt;summary:before { content:&quot;!&quot;; color:#a34d3f; }
+#codex-mobile-refined .cs-timeline-error&gt;summary:after { content:&quot;⌄&quot;; }
+#codex-mobile-refined .cs-timeline-error[open]&gt;summary:after { content:&quot;⌃&quot;; }
+#codex-mobile-refined .cs-timeline-error&gt;summary::-webkit-details-marker { display:none; }
+#codex-mobile-refined .cs-timeline-error p { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:22px; padding:10px 4px; }
+#codex-mobile-refined .cs-dialog { max-height:620px; overflow:auto; padding:20px; }
+#codex-mobile-refined .cs-dialog h3 { font-size:20px; margin-bottom:12px; }
+#codex-mobile-refined .cs-workspace-path { display:flex; gap:6px; align-items:center; }
+#codex-mobile-refined .cs-workspace-path input { flex:1; width:0; background:var(--cs-soft); padding:12px; border-radius:12px; font-size:14px; }
+#codex-mobile-refined .cs-workspace-path button { padding:8px; min-height:44px; color:var(--cs-primary); }
+#codex-mobile-refined .cs-directory-list { display:flex; flex-direction:column; max-height:132px; overflow:auto; margin-bottom:12px; }
+#codex-mobile-refined .cs-directory-list button { text-align:left; padding:8px; min-height:40px; color:var(--cs-muted); font-size:13px; }
+#codex-mobile-refined .cs-directory-row { display:flex; align-items:center; gap:4px; border-bottom:1px solid var(--cs-line); }
+#codex-mobile-refined .cs-directory-row button:first-child { flex:1; }
+#codex-mobile-refined .cs-directory-row button:last-child { color:var(--cs-primary); font-size:12px; }
+#codex-mobile-refined .cs-mode-option { display:flex; align-items:center; gap:10px; padding:10px 8px; border-radius:12px; font-size:14px; }
+#codex-mobile-refined .cs-mode-option:has(input:checked) { background:var(--cs-soft); }
+#codex-mobile-refined .cs-mode-option input { width:16px; accent-color:var(--cs-primary); margin:0; flex-shrink:0; }
+#codex-mobile-refined .cs-mode-option small { display:block; color:var(--cs-muted); font-size:12px; line-height:18px; margin-top:3px; }
+#codex-mobile-refined .cs-effort-control { padding:8px 16px 6px; border:1px solid var(--cs-line); border-radius:20px; background:var(--cs-surface); }
+#codex-mobile-refined .cs-effort-control header { position:relative; text-align:center; padding:7px 44px; }
+#codex-mobile-refined .cs-effort-control header strong { display:block; color:var(--cs-primary); font-size:16px; line-height:22px; font-weight:500; }
+#codex-mobile-refined .cs-effort-model { display:block; color:var(--cs-muted); font-size:13px; line-height:18px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#codex-mobile-refined .cs-effort-control .cs-effort-reset { position:absolute; top:0; right:-8px; display:grid; place-items:center; width:44px; height:44px; padding:0; color:var(--cs-muted); border:0; background:transparent; }
+#codex-mobile-refined .cs-effort-reset svg { width:18px; height:18px; }
+#codex-mobile-refined .cs-effort-slider { position:relative; height:48px; }
+#codex-mobile-refined .cs-effort-track { position:absolute; left:0; right:0; top:9px; height:30px; border-radius:999px; overflow:hidden; background:#f0e8e1; pointer-events:none; }
+#codex-mobile-refined .cs-effort-fill { width:calc(17px + (100% - 34px) * var(--effort-fraction)); height:100%; border-radius:inherit; background:#b88365; transition:width .22s cubic-bezier(.4,0,.2,1); }
+#codex-mobile-refined .cs-effort-dots { position:absolute; inset:0 15px; display:flex; align-items:center; justify-content:space-between; }
+#codex-mobile-refined .cs-effort-dots i { width:5px; height:5px; flex-shrink:0; border-radius:50%; background:#c3b3a7; transition:background-color .15s ease; }
+#codex-mobile-refined .cs-effort-dots i[data-active=&quot;true&quot;] { background:#e4c8b6; }
+#codex-mobile-refined .cs-effort-control input[type=&quot;range&quot;] { position:relative; display:block; width:100%; height:48px; padding:0; margin:0; appearance:none; background:transparent; cursor:pointer; touch-action:pan-y; }
+#codex-mobile-refined .cs-effort-control input[type=&quot;range&quot;]::-webkit-slider-runnable-track { height:30px; background:transparent; border:0; }
+#codex-mobile-refined .cs-effort-control input[type=&quot;range&quot;]::-webkit-slider-thumb { width:34px; height:34px; margin-top:-2px; appearance:none; border:0; background:transparent; }
+#codex-mobile-refined .cs-effort-control input[type=&quot;range&quot;]::-moz-range-track { height:30px; background:transparent; border:0; }
+#codex-mobile-refined .cs-effort-control input[type=&quot;range&quot;]::-moz-range-thumb { width:34px; height:34px; border:0; background:transparent; }
+#codex-mobile-refined .cs-effort-thumb { position:absolute; top:7px; left:calc((100% - 34px) * var(--effort-fraction)); width:34px; height:34px; border:1px solid #eeece8; border-radius:50%; background:var(--cs-surface); box-shadow:0 1px 3px rgb(47 62 53 / 14%); pointer-events:none; transition:left .22s cubic-bezier(.4,0,.2,1),transform .12s ease,box-shadow .12s ease; }
+#codex-mobile-refined .cs-effort-slider[data-dragging=&quot;true&quot;] .cs-effort-fill { transition:none; }
+#codex-mobile-refined .cs-effort-slider[data-dragging=&quot;true&quot;] .cs-effort-thumb { transition:transform .12s ease,box-shadow .12s ease; transform:scale(1.08); box-shadow:0 2px 5px rgb(90 59 40 / 18%); }
+#codex-mobile-refined .cs-effort-slider:has(input:disabled) { opacity:.45; }
+
+/* Keep motion short and purposeful: controls settle in, content arrives, and the
+   composer can collapse without the surrounding conversation jumping. */
+#codex-mobile-refined .cs-phone button { transition:transform .18s ease, filter .18s ease, background-color .2s ease, box-shadow .2s ease, color .2s ease; }
+#codex-mobile-refined .cs-page:not([hidden]) { animation:cs-page-in .28s cubic-bezier(.22,.8,.32,1) both; }
+#codex-mobile-refined .cs-floating-controls { opacity:1; transform:translateY(0) scale(1); transition:opacity .2s ease, transform .28s cubic-bezier(.22,.8,.32,1), visibility 0s linear 0s; }
+#codex-mobile-refined .cs-floating-controls[hidden] { display:flex !important; opacity:0; transform:translateY(12px) scale(.88); visibility:hidden; pointer-events:none; transition-delay:0s,0s,.28s; }
+#codex-mobile-refined .cs-chat .cs-composer[data-composer] { display:block !important; opacity:0; visibility:hidden; transform:translateY(16px) scale(.98); transition:opacity .2s ease, transform .28s cubic-bezier(.22,.8,.32,1), visibility 0s linear .28s; }
+#codex-mobile-refined .cs-chat .cs-composer[data-composer]:not([hidden]) { opacity:1; visibility:visible; transform:translateY(0) scale(1); transition-delay:0s; }
+#codex-mobile-refined .cs-compose-tools[hidden],#codex-mobile-refined .cs-picker-menu[hidden] { display:block !important; opacity:0; visibility:hidden; transform:translateY(-5px) scale(.98); pointer-events:none; transition:opacity .16s ease, transform .2s ease, visibility 0s linear .2s; }
+#codex-mobile-refined .cs-compose-tools:not([hidden]),#codex-mobile-refined .cs-picker-menu:not([hidden]) { opacity:1; visibility:visible; transform:translateY(0) scale(1); transition-delay:0s; }
+#codex-mobile-refined .cs-user,#codex-mobile-refined .cs-assistant,#codex-mobile-refined .cs-timeline-error { animation:cs-message-in .3s cubic-bezier(.22,.8,.32,1) both; }
+#codex-mobile-refined .cs-thread:hover { transform:translateX(2px); }
+#codex-mobile-refined .cs-activity { animation:cs-pulse-in .24s ease both; }
+@keyframes cs-page-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes cs-message-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes cs-pulse-in { from { opacity:0; transform:scale(.96); } to { opacity:1; transform:scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  #codex-mobile-refined .cs-phone *,#codex-mobile-refined .cs-phone *::before,#codex-mobile-refined .cs-phone *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
+}
+&lt;/style&gt;
+&lt;script&gt;
+(() =&gt; {
+  const root=document.getElementById(&#39;codex-mobile-refined&#39;);
+  const q=selector=&gt;root.querySelector(selector);
+  const menu=q(&#39;[data-menu]&#39;),overlay=q(&#39;[data-overlay]&#39;),draft=q(&#39;[data-draft]&#39;);
+  const messages=q(&#39;.cs-messages&#39;),activity=q(&#39;[data-activity]&#39;),note=q(&#39;[data-preview-status]&#39;);
+  const content=q(&#39;[data-dialog-content]&#39;),actions=q(&#39;[data-dialog-actions]&#39;);
+  let state={revision:8,screen:&#39;chat&#39;,model:&#39;gpt-6-luna&#39;,query:&#39;&#39;,onlyRunning:false};
+  let current=&#39;糖果熊机器人维护&#39;,composerOpen=false,leftBottom=false,previousFocus=null;
+  const defaults={cwd:&#39;/home/ubuntu&#39;,mode:&#39;ASK&#39;,effort:&#39;medium&#39;};
+  const effortOptions={&#39;gpt-6-luna&#39;:[&#39;low&#39;,&#39;medium&#39;,&#39;high&#39;,&#39;xhigh&#39;,&#39;max&#39;],&#39;gpt-6.1-sol&#39;:[&#39;low&#39;,&#39;medium&#39;,&#39;high&#39;,&#39;xhigh&#39;,&#39;max&#39;,&#39;ultra&#39;]};
+  const effortLabels={low:&#39;低&#39;,medium:&#39;标准&#39;,high:&#39;高&#39;,xhigh:&#39;很高&#39;,max:&#39;极高&#39;,ultra:&#39;Ultra&#39;};
+  const effortsFor=model=&gt;effortOptions[model]||effortOptions[&#39;gpt-6-luna&#39;];
+  const modes={ASK:[&#39;请求审批&#39;,&#39;工作区内执行，需要额外权限时由你确认。&#39;],AUTO:[&#39;替我审批&#39;,&#39;由 Andri 自动审查额外权限，仍可能拒绝请求。&#39;],FULL:[&#39;完全访问&#39;,&#39;以 SSH 用户的权限执行，不限制在工作区，不请求执行审批。&#39;]};
+  const folders={&#39;/&#39;:[&#39;home&#39;,&#39;mnt&#39;],&#39;/home&#39;:[&#39;ubuntu&#39;],&#39;/home/ubuntu&#39;:[&#39;codex&#39;,&#39;projects&#39;],&#39;/home/ubuntu/codex&#39;:[&#39;mobile-client&#39;],&#39;/home/ubuntu/projects&#39;:[&#39;candybear&#39;,&#39;andri&#39;],&#39;/mnt&#39;:[&#39;storage&#39;]};
+  const files={&#39;/home/ubuntu/projects/candybear&#39;:[&#39;README.md&#39;,&#39;docker-compose.yml&#39;],&#39;/home/ubuntu/projects/andri&#39;:[&#39;README.md&#39;],&#39;/home/ubuntu/codex/mobile-client&#39;:[&#39;README.md&#39;]};
+  const threads={
+    &#39;糖果熊机器人维护&#39;:{model:&#39;gpt-6-luna&#39;,effort:&#39;medium&#39;,running:false,cwd:&#39;/home/ubuntu/projects/candybear&#39;,mode:&#39;ASK&#39;,lines:[[&#39;user&#39;,&#39;帮我检查糖果熊的运行状态，先看日志，告诉我发现了什么。&#39;],[&#39;assistant&#39;,&#39;我会先检查服务状态和最近日志，再根据实际记录判断是否需要处理。\n\n检查完成后，我会把发现的问题和建议的下一步告诉你。&#39;]]},
+    &#39;检查服务器存储&#39;:{model:&#39;gpt-6-luna&#39;,effort:&#39;high&#39;,running:true,cwd:&#39;/home/ubuntu&#39;,mode:&#39;ASK&#39;,lines:[[&#39;user&#39;,&#39;帮我查看服务器的磁盘使用情况，先不要删除文件。&#39;],[&#39;assistant&#39;,&#39;我会先列出磁盘占用和主要目录，区分项目数据、备份和缓存。&#39;]]},
+    &#39;安卓客户端开发&#39;:{model:&#39;gpt-6.1-sol&#39;,effort:&#39;xhigh&#39;,running:false,cwd:&#39;/home/ubuntu/codex/mobile-client&#39;,mode:&#39;ASK&#39;,lines:[[&#39;user&#39;,&#39;优化手机上的长对话体验，同时保留并行任务。&#39;],[&#39;assistant&#39;,&#39;先梳理列表、聊天和审批三个主要场景，再检查小屏幕布局和输入区域。&#39;]]}
+  };
+  const drafts={},attachments={};let selectedImage=null;
+  function closePickers(){root.querySelectorAll(&#39;[data-picker-menu]&#39;).forEach(menu=&gt;{menu.hidden=true;});root.querySelectorAll(&#39;[data-picker-trigger]&#39;).forEach(trigger=&gt;trigger.setAttribute(&#39;aria-expanded&#39;,&#39;false&#39;));}
+  function fallbackIcon(name){const svg=document.createElementNS(&#39;http://www.w3.org/2000/svg&#39;,&#39;svg&#39;);svg.setAttribute(&#39;viewBox&#39;,&#39;0 0 24 24&#39;);svg.setAttribute(&#39;aria-hidden&#39;,&#39;true&#39;);svg.innerHTML={send:&#39;&lt;path d=&quot;M21 3 10 14m11-11-6 17-5-6-7-3 18-8z&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,square:&#39;&lt;rect x=&quot;6&quot; y=&quot;6&quot; width=&quot;12&quot; height=&quot;12&quot; rx=&quot;2&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;/&gt;&#39;,plus:&#39;&lt;path d=&quot;M12 5v14M5 12h14&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot;/&gt;&#39;,&#39;chevron-left&#39;:&#39;&lt;path d=&quot;m15 6-6 6 6 6&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,&#39;chevron-right&#39;:&#39;&lt;path d=&quot;m9 6 6 6-6 6&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,ellipsis:&#39;&lt;circle cx=&quot;5&quot; cy=&quot;12&quot; r=&quot;1.4&quot; fill=&quot;currentColor&quot;/&gt;&lt;circle cx=&quot;12&quot; cy=&quot;12&quot; r=&quot;1.4&quot; fill=&quot;currentColor&quot;/&gt;&lt;circle cx=&quot;19&quot; cy=&quot;12&quot; r=&quot;1.4&quot; fill=&quot;currentColor&quot;/&gt;&#39;,&#39;message-square&#39;:&#39;&lt;path d=&quot;M4 5h16v11H8l-4 3V5z&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,&#39;code-xml&#39;:&#39;&lt;path d=&quot;m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,search:&#39;&lt;circle cx=&quot;10.5&quot; cy=&quot;10.5&quot; r=&quot;6&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;/&gt;&lt;path d=&quot;m15 15 5 5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot;/&gt;&#39;,image:&#39;&lt;rect x=&quot;4&quot; y=&quot;5&quot; width=&quot;16&quot; height=&quot;14&quot; rx=&quot;2&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;/&gt;&lt;circle cx=&quot;9&quot; cy=&quot;10&quot; r=&quot;1.5&quot; fill=&quot;currentColor&quot;/&gt;&lt;path d=&quot;m5 17 4-4 3 3 2-2 5 4&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,folder:&#39;&lt;path d=&quot;M3 7h6l2 2h10l-2 10H5L3 7z&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;,&#39;pen-line&#39;:&#39;&lt;path d=&quot;m5 19 4-1L19 8l-3-3L6 15l-1 4zm9-12 3 3&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&#39;}[name]||&#39;&#39;;return svg;}
+  function icons(){if(window.lucide)window.lucide.createIcons({attrs:{width:20,height:20}});else root.querySelectorAll(&#39;[data-lucide]&#39;).forEach(el=&gt;el.replaceWith(fallbackIcon(el.dataset.lucide)));}
+  function collapse(){composerOpen=false;draft.blur();q(&#39;[data-compose-tools]&#39;).hidden=true;closePickers();render();}
+  function inlineMarkdown(value){return value.replace(/&amp;/g,&#39;&amp;amp;&#39;).replace(/&lt;/g,&#39;&amp;lt;&#39;).replace(/&gt;/g,&#39;&amp;gt;&#39;).replace(/`([^`]+)`/g,&#39;&lt;code&gt;$1&lt;/code&gt;&#39;).replace(/\*\*([^*]+)\*\*/g,&#39;&lt;strong&gt;$1&lt;/strong&gt;&#39;).replace(/\[([^\]]+)\]\([^)]*\)/g,&#39;&lt;u&gt;$1&lt;/u&gt;&#39;);}
+  function markdownHtml(value){
+    const lines=value.replace(/\r\n/g,&#39;\n&#39;).split(&#39;\n&#39;),out=[];let code=false,buffer=[];
+    const flush=()=&gt;{if(!buffer.length)return;const text=buffer.join(&#39;\n&#39;);out.push(&#39;&lt;p&gt;&#39;+inlineMarkdown(text).replace(/\n/g,&#39;&lt;br&gt;&#39;)+&#39;&lt;/p&gt;&#39;);buffer=[];};
+    for(const line of lines){const trimmed=line.trim();if(trimmed.startsWith(&#39;```&#39;)){if(code){out.push(&#39;&lt;pre&gt;&#39;+inlineMarkdown(buffer.join(&#39;\n&#39;))+&#39;&lt;/pre&gt;&#39;);buffer=[];}else flush();code=!code;continue;}if(code){buffer.push(line);continue;}if(!trimmed){flush();continue;}if(/^#{1,3}\s+/.test(trimmed)){flush();out.push(&#39;&lt;h3&gt;&#39;+inlineMarkdown(trimmed.replace(/^#{1,3}\s+/,&#39;&#39;))+&#39;&lt;/h3&gt;&#39;);continue;}if(/^(?:[-*+]\s+|\d+[.)]\s+)/.test(trimmed)){flush();out.push(&#39;&lt;ul&gt;&lt;li&gt;&#39;+inlineMarkdown(trimmed.replace(/^(?:[-*+]\s+|\d+[.)]\s+)/,&#39;&#39;))+&#39;&lt;/li&gt;&lt;/ul&gt;&#39;);continue;}buffer.push(line);}if(code&amp;&amp;buffer.length)out.push(&#39;&lt;pre&gt;&#39;+inlineMarkdown(buffer.join(&#39;\n&#39;))+&#39;&lt;/pre&gt;&#39;);else flush();return out.join(&#39;&#39;);}
+  function paintMessages(){
+    messages.querySelectorAll(&#39;article,.cs-empty-chat,.cs-timeline-error&#39;).forEach(el=&gt;el.remove());
+    const thread=threads[current];q(&#39;[data-action=&quot;history&quot;]&#39;).hidden=!thread.lines.length;
+    if(!thread.lines.length){const empty=document.createElement(&#39;div&#39;);empty.className=&#39;cs-empty-chat&#39;;const h=document.createElement(&#39;h3&#39;);h.textContent=&#39;把想法，变成下一步。&#39;;const p=document.createElement(&#39;p&#39;);p.textContent=&#39;写下你想完成的事。&#39;;empty.append(h,p);activity.before(empty);}
+    thread.lines.forEach(([role,text,extra])=&gt;{
+      if(role===&#39;error&#39;){const details=document.createElement(&#39;details&#39;);details.className=&#39;cs-timeline-error&#39;;const summary=document.createElement(&#39;summary&#39;);summary.textContent=extra||&#39;任务出现异常&#39;;const p=document.createElement(&#39;p&#39;);p.textContent=text;details.append(summary,p);activity.before(details);return;}
+      if(role===&#39;tool&#39;){const article=document.createElement(&#39;article&#39;);article.className=&#39;cs-tool&#39;;const details=document.createElement(&#39;details&#39;),summary=document.createElement(&#39;summary&#39;),state=document.createElement(&#39;span&#39;),pre=document.createElement(&#39;pre&#39;);summary.textContent=extra?.title||&#39;工具输出&#39;;state.textContent=extra?.status||&#39;已完成&#39;;summary.append(state);pre.textContent=text;details.append(summary,pre);article.append(details);activity.before(article);return;}
+      if(role===&#39;question&#39;){const article=document.createElement(&#39;article&#39;);article.className=&#39;cs-question-card&#39;;const title=document.createElement(&#39;strong&#39;);title.textContent=text;article.append(title);let value=extra.answer||&#39;&#39;;const name=&#39;preview-question-&#39;+thread.lines.indexOf(thread.lines.find(row=&gt;row[1]===text));extra.options.forEach(option=&gt;{const label=document.createElement(&#39;label&#39;),radio=document.createElement(&#39;input&#39;);radio.type=&#39;radio&#39;;radio.name=name;radio.value=option;radio.checked=value===option;radio.disabled=!!extra.answer;radio.onchange=()=&gt;{value=option;custom.value=option;submit.disabled=false;};label.append(radio,document.createTextNode(option));article.append(label);});const custom=document.createElement(&#39;input&#39;);custom.type=&#39;text&#39;;custom.value=value;custom.placeholder=&#39;也可以填写自己的回答&#39;;custom.setAttribute(&#39;aria-label&#39;,&#39;选择题自定义回答&#39;);custom.disabled=!!extra.answer;const submit=document.createElement(&#39;button&#39;);submit.type=&#39;button&#39;;submit.className=&#39;cs-primary&#39;;submit.textContent=extra.answer?&#39;已回答&#39;:&#39;提交回答&#39;;submit.disabled=!!extra.answer||!value;custom.oninput=()=&gt;{value=custom.value;submit.disabled=!value.trim();article.querySelectorAll(&#39;input[type=&quot;radio&quot;]&#39;).forEach(radio=&gt;radio.checked=radio.value===value);};submit.onclick=()=&gt;{if(!value.trim())return;extra.answer=value;thread.lines.push([&#39;user&#39;,text+&#39;\n我的选择：&#39;+value]);paintMessages();messages.scrollTop=messages.scrollHeight;};article.append(custom,submit);activity.before(article);return;}
+      const article=document.createElement(&#39;article&#39;);article.className=role===&#39;user&#39;?&#39;cs-user&#39;:&#39;cs-assistant&#39;;if(role===&#39;user&#39;){const p=document.createElement(&#39;p&#39;);p.textContent=text;article.append(p);}else{const content=document.createElement(&#39;div&#39;);content.className=&#39;cs-markdown&#39;;content.innerHTML=markdownHtml(extra?.stream?extra.visible:text);if(extra?.stream)content.dataset.previewStream=extra.stream;article.append(content);}
+      if(extra?.url){const img=document.createElement(&#39;img&#39;);img.src=extra.url;img.alt=&#39;已发送图片：&#39;+extra.name;article.append(img);}activity.before(article);
+    });
+  }
+  function updateMessageInset(){
+    if(state.screen!==&#39;chat&#39;)return;
+    const following=messages.scrollHeight-messages.scrollTop-messages.clientHeight&lt;12;
+    const control=composerOpen?q(&#39;[data-composer]&#39;):q(&#39;.cs-floating-controls&#39;);
+    messages.style.paddingBottom=(control.offsetHeight+parseFloat(getComputedStyle(control).bottom)+24)+&#39;px&#39;;
+    q(&#39;[data-compose-tools]&#39;).style.bottom=(q(&#39;[data-composer]&#39;).offsetHeight+24)+&#39;px&#39;;
+    if(following)messages.scrollTop=messages.scrollHeight;
+  }
+  new ResizeObserver(updateMessageInset).observe(q(&#39;[data-composer]&#39;));
+  function streamDemo(){
+    const owner=current,thread=threads[owner],extra={stream:String(Date.now()),visible:&#39;&#39;},line=[&#39;assistant&#39;,&#39;&#39;,extra];
+    const source=&#39;流式输出演示：这里模拟服务器分段返回文本，界面将收到的内容逐字平滑展开。\n\n**完整消息会实时保留**，显示动画不会改变实际记录。你也可以上滑查看前文，新的输出不会把你强行拉回底部。&#39;;
+    thread.lines.push(line);thread.running=true;composerOpen=false;paintMessages();show(&#39;chat&#39;);messages.scrollTop=messages.scrollHeight;
+    let received=0,lastChunk=performance.now(),lastFrame=0;
+    function frame(time){if(time-lastChunk&gt;=120){received=Math.min(source.length,received+7);line[1]=source.slice(0,received);lastChunk=time;}
+      if(time-lastFrame&gt;=15&amp;&amp;extra.visible.length&lt;line[1].length){const pending=line[1].length-extra.visible.length;extra.visible=line[1].slice(0,extra.visible.length+Math.max(1,Math.ceil(pending/24)));lastFrame=time;
+        if(current===owner){const node=q(&#39;[data-preview-stream=&quot;&#39;+extra.stream+&#39;&quot;]&#39;);if(node){const following=messages.scrollHeight-messages.scrollTop-messages.clientHeight&lt;12;node.innerHTML=markdownHtml(extra.visible);if(following)messages.scrollTop=messages.scrollHeight;}}}
+      if(extra.visible===source){thread.running=false;if(current===owner)render();return;}requestAnimationFrame(frame);}
+    requestAnimationFrame(frame);
+  }
+  function render(){
+    const thread=threads[current];
+    root.querySelectorAll(&#39;[data-page]&#39;).forEach(el=&gt;el.hidden=el.dataset.page!==state.screen);
+    root.querySelectorAll(&#39;[data-screen]&#39;).forEach(el=&gt;el.setAttribute(&#39;aria-pressed&#39;,String(el.dataset.screen===state.screen)));
+    const effortOptionsForThread=effortsFor(thread.model);if(!effortOptionsForThread.includes(thread.effort))thread.effort=effortOptionsForThread.includes(&#39;medium&#39;)?&#39;medium&#39;:effortOptionsForThread[0];
+    root.querySelectorAll(&#39;[data-model-choice]&#39;).forEach(button=&gt;{button.setAttribute(&#39;aria-pressed&#39;,String(button.dataset.modelChoice===thread.model));button.disabled=thread.running;});
+    q(&#39;[data-compose-effort]&#39;).replaceChildren(createEffortControl(thread.model,thread.effort,value=&gt;{thread.effort=value;updateChatContext();save();},thread.running));
+    q(&#39;[data-chat-title]&#39;).textContent=current;updateChatContext();
+    const send=q(&#39;[data-action=&quot;send&quot;]&#39;);send.replaceChildren(fallbackIcon(thread.running?&#39;square&#39;:&#39;send&#39;));send.setAttribute(&#39;aria-label&#39;,thread.running?&#39;停止当前任务&#39;:&#39;发送消息&#39;);send.disabled=!thread.running&amp;&amp;!draft.value.trim()&amp;&amp;!selectedImage;
+    q(&#39;[data-composer]&#39;).hidden=!composerOpen;q(&#39;.cs-floating-controls&#39;).hidden=composerOpen;q(&#39;[data-action=&quot;stop-collapsed&quot;]&#39;).hidden=!thread.running;
+    q(&#39;[data-draft-dot]&#39;).hidden=!draft.value&amp;&amp;!selectedImage;
+    q(&#39;[data-attachment]&#39;).hidden=!selectedImage;if(selectedImage){q(&#39;[data-attachment-name]&#39;).textContent=selectedImage.name;q(&#39;[data-attachment-preview]&#39;).src=selectedImage.url;}
+    activity.hidden=!thread.running;
+    const rows=[...root.querySelectorAll(&#39;[data-thread]&#39;)],query=state.query.trim().toLowerCase();
+    rows.forEach(row=&gt;{const item=threads[row.dataset.thread];row.hidden=(state.onlyRunning&amp;&amp;!item.running)||!(row.dataset.thread+&#39; &#39;+item.model).toLowerCase().includes(query);row.querySelector(&#39;small&#39;).textContent=item.running?&#39;● 正在执行&#39;:item.model;row.querySelector(&#39;small&#39;).classList.toggle(&#39;cs-live&#39;,item.running);row.querySelector(&#39;.cs-thread-mark&#39;).classList.toggle(&#39;active&#39;,item.running);});
+    const count=rows.filter(row=&gt;!row.hidden).length;q(&#39;[data-result-count]&#39;).textContent=count+&#39; 个&#39;;q(&#39;[data-running-count]&#39;).textContent=rows.filter(row=&gt;threads[row.dataset.thread].running).length;q(&#39;[data-empty]&#39;).hidden=count!==0;
+    root.querySelectorAll(&#39;[data-filter]&#39;).forEach(button=&gt;button.setAttribute(&#39;aria-pressed&#39;,String((button.dataset.filter===&#39;running&#39;)===state.onlyRunning)));
+    draft.style.height=&#39;auto&#39;;draft.style.height=Math.min(116,Math.max(44,draft.scrollHeight))+&#39;px&#39;;icons();requestAnimationFrame(updateMessageInset);
+  }
+  function save(){if(window.openai?.setWidgetState)window.openai.setWidgetState({modelContent:{screen:state.screen,model:state.model},privateContent:state}).catch(()=&gt;{});}
+  function show(screen){state.screen=screen;menu.hidden=true;q(&#39;[data-compose-tools]&#39;).hidden=true;closePickers();render();save();}
+  function openChat(title){drafts[current]=draft.value;current=title;leftBottom=false;draft.value=drafts[current]||&#39;&#39;;selectedImage=attachments[current]||null;composerOpen=!threads[current].lines.length;paintMessages();show(&#39;chat&#39;);requestAnimationFrame(()=&gt;{messages.scrollTop=messages.scrollHeight;});}
+  function generateThreadTitle(prompt){const value=prompt.replace(/\s+/g,&#39; &#39;).trim();if(!value)return &#39;图片任务&#39;;return value.length&gt;18?value.slice(0,18)+&#39;…&#39;:value;}
+  function renameNewThread(prompt){if(current!==&#39;新对话&#39;)return;const old=current,base=generateThreadTitle(prompt);let title=base,index=2;while(threads[title])title=base+&#39; &#39;+index++;threads[title]=threads[old];delete threads[old];drafts[title]=drafts[old]||&#39;&#39;;delete drafts[old];if(attachments[old]){attachments[title]=attachments[old];delete attachments[old];}current=title;}
+  function close(){overlay.hidden=true;root.querySelectorAll(&#39;[data-page],.sample-tools&#39;).forEach(el=&gt;el.inert=false);if(previousFocus?.isConnected)previousFocus.focus();}
+  function modal(title,paragraphs,buttons,command){
+    menu.hidden=true;q(&#39;[data-compose-tools]&#39;).hidden=true;if(overlay.hidden)previousFocus=document.activeElement;
+    q(&#39;#cs-refined-dialog-title&#39;).textContent=title;content.replaceChildren();actions.replaceChildren();
+    paragraphs.forEach(value=&gt;{const p=document.createElement(&#39;p&#39;);p.textContent=value;content.append(p);});
+    if(command){const pre=document.createElement(&#39;pre&#39;);pre.className=&#39;cs-command&#39;;pre.textContent=command;content.append(pre);}
+    buttons.forEach(([label,callback])=&gt;{const button=document.createElement(&#39;button&#39;);button.type=&#39;button&#39;;button.className=&#39;cursor-interaction&#39;;button.textContent=label;button.addEventListener(&#39;click&#39;,callback);actions.append(button);});
+    root.querySelectorAll(&#39;[data-page],.sample-tools&#39;).forEach(el=&gt;el.inert=true);overlay.hidden=false;icons();
+  }
+  function createEffortControl(model,value,onChange,disabled=false){
+    const effortOptionsForTarget=effortsFor(model),effortControl=document.createElement(&#39;div&#39;);effortControl.className=&#39;cs-effort-control&#39;;
+    const effortHeader=document.createElement(&#39;header&#39;),effortValue=document.createElement(&#39;strong&#39;),effortModel=document.createElement(&#39;span&#39;);effortModel.className=&#39;cs-effort-model&#39;;effortModel.textContent=model;const resetEffort=document.createElement(&#39;button&#39;);resetEffort.type=&#39;button&#39;;resetEffort.className=&#39;cs-effort-reset&#39;;resetEffort.setAttribute(&#39;aria-label&#39;,&#39;恢复默认推理强度&#39;);resetEffort.innerHTML=&#39;&lt;svg viewBox=&quot;0 0 24 24&quot; aria-hidden=&quot;true&quot;&gt;&lt;path d=&quot;M4 9V4h5M4.8 7.5A8 8 0 1 1 4 15&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot;/&gt;&lt;/svg&gt;&#39;;effortHeader.append(effortValue,effortModel,resetEffort);effortControl.append(effortHeader);
+    const sliderWrap=document.createElement(&#39;div&#39;);sliderWrap.className=&#39;cs-effort-slider&#39;;const track=document.createElement(&#39;div&#39;);track.className=&#39;cs-effort-track&#39;;track.setAttribute(&#39;aria-hidden&#39;,&#39;true&#39;);const fill=document.createElement(&#39;div&#39;);fill.className=&#39;cs-effort-fill&#39;;const dots=document.createElement(&#39;div&#39;);dots.className=&#39;cs-effort-dots&#39;;effortOptionsForTarget.forEach(()=&gt;dots.append(document.createElement(&#39;i&#39;)));track.append(fill,dots);sliderWrap.append(track);
+    const slider=document.createElement(&#39;input&#39;);slider.type=&#39;range&#39;;slider.min=&#39;0&#39;;slider.max=String(effortOptionsForTarget.length-1);slider.step=&#39;any&#39;;slider.value=String(Math.max(0,effortOptionsForTarget.indexOf(value)));slider.setAttribute(&#39;aria-label&#39;,&#39;模型推理强度&#39;);const thumb=document.createElement(&#39;span&#39;);thumb.className=&#39;cs-effort-thumb&#39;;thumb.setAttribute(&#39;aria-hidden&#39;,&#39;true&#39;);sliderWrap.append(slider,thumb);effortControl.append(sliderWrap);
+    function paintEffort(){const position=Number(slider.value),index=Math.round(position);value=effortOptionsForTarget[index];effortValue.textContent=effortLabels[value]||value;slider.setAttribute(&#39;aria-valuetext&#39;,effortValue.textContent);sliderWrap.style.setProperty(&#39;--effort-fraction&#39;,position/(effortOptionsForTarget.length-1));[...dots.children].forEach((dot,i)=&gt;dot.dataset.active=String(i&lt;=position));onChange(value);}
+    slider.disabled=disabled;resetEffort.disabled=disabled;
+    let pointerStart=null;
+    function settleEffort(){pointerStart=null;sliderWrap.dataset.dragging=&#39;false&#39;;slider.value=String(Math.round(Number(slider.value)));paintEffort();}
+    slider.oninput=paintEffort;slider.onchange=settleEffort;slider.onpointerdown=event=&gt;{if(slider.disabled)return;pointerStart=event.clientX;sliderWrap.dataset.dragging=&#39;false&#39;;};slider.onpointermove=event=&gt;{if(pointerStart!==null&amp;&amp;Math.abs(event.clientX-pointerStart)&gt;3)sliderWrap.dataset.dragging=&#39;true&#39;;};slider.onpointerup=settleEffort;slider.onpointercancel=settleEffort;slider.onblur=settleEffort;
+    slider.onkeydown=event=&gt;{const index=Math.round(Number(slider.value)),last=effortOptionsForTarget.length-1;const target={ArrowRight:index+1,ArrowUp:index+1,ArrowLeft:index-1,ArrowDown:index-1,Home:0,End:last,PageUp:index+2,PageDown:index-2}[event.key];if(target===undefined)return;event.preventDefault();sliderWrap.dataset.dragging=&#39;false&#39;;slider.value=String(Math.max(0,Math.min(last,target)));paintEffort();};
+    resetEffort.onclick=()=&gt;{sliderWrap.dataset.dragging=&#39;false&#39;;slider.value=String(Math.max(0,effortOptionsForTarget.indexOf(&#39;medium&#39;)));paintEffort();};paintEffort();
+    return effortControl;
+  }
+  function updateChatContext(){const thread=threads[current];q(&#39;[data-chat-context]&#39;).textContent=&#39;82 &#183; &#39;+(thread.cwd.split(&#39;/&#39;).pop()||&#39;/&#39;)+&#39; &#183; &#39;+modes[thread.mode][0]+&#39; &#183; &#39;+(effortLabels[thread.effort]||thread.effort);}
+  function settings(){
+    const target=state.screen===&#39;chat&#39;?threads[current]:defaults;let mode=target.mode;let effort=target.effort||&#39;medium&#39;;
+    const saveSettings=()=&gt;{if(!path.value.startsWith(&#39;/&#39;)){status.textContent=&#39;请输入服务器绝对路径&#39;;return;}target.cwd=path.value.replace(/\/+$/,&#39;&#39;)||&#39;/&#39;;target.mode=mode;target.effort=effort;close();render();note.textContent=&#39;预览设置已保存；此处使用示例目录，不修改服务器。&#39;;};
+    const buttons=target.running?[[&#39;取消&#39;,close],[&#39;停止后编辑&#39;,()=&gt;{target.running=false;close();render();settings();}],[&#39;保存&#39;,saveSettings]]:[[&#39;取消&#39;,close],[&#39;保存&#39;,saveSettings]];
+    modal(&#39;工作区与权限&#39;,[state.screen===&#39;chat&#39;?&#39;只应用到当前对话，后续任务沿用。&#39;:&#39;新对话的默认设置。&#39;],buttons);
+    const pathRow=document.createElement(&#39;div&#39;);pathRow.className=&#39;cs-workspace-path&#39;;const path=document.createElement(&#39;input&#39;);path.value=target.cwd;path.setAttribute(&#39;aria-label&#39;,&#39;服务器目录&#39;);const go=document.createElement(&#39;button&#39;);go.type=&#39;button&#39;;go.textContent=&#39;前往&#39;;pathRow.append(path,go);content.append(pathRow);
+    const dirs=document.createElement(&#39;div&#39;);dirs.className=&#39;cs-directory-list&#39;;content.append(dirs);
+    function browse(value){path.value=value;dirs.replaceChildren();if(value!==&#39;/&#39;){const parent=document.createElement(&#39;button&#39;);parent.type=&#39;button&#39;;parent.textContent=&#39;↑ 上一级&#39;;parent.onclick=()=&gt;browse(value.substring(0,value.lastIndexOf(&#39;/&#39;))||&#39;/&#39;);dirs.append(parent);}const rootButton=document.createElement(&#39;button&#39;);rootButton.type=&#39;button&#39;;rootButton.textContent=&#39;✓ 使用此目录&#39;;rootButton.onclick=()=&gt;{path.value=value;status.textContent=&#39;已选择此目录作为工作区&#39;;};dirs.append(rootButton);(folders[value]||[]).forEach(name=&gt;{const row=document.createElement(&#39;div&#39;);row.className=&#39;cs-directory-row&#39;;const button=document.createElement(&#39;button&#39;);button.type=&#39;button&#39;;button.textContent=&#39;▸  &#39;+name;button.onclick=()=&gt;browse((value===&#39;/&#39;?&#39;&#39;:value)+&#39;/&#39;+name);const choose=document.createElement(&#39;button&#39;);choose.type=&#39;button&#39;;choose.textContent=&#39;选择&#39;;choose.onclick=()=&gt;{path.value=(value===&#39;/&#39;?&#39;&#39;:value)+&#39;/&#39;+name;status.textContent=&#39;已选择项目目录&#39;;};row.append(button,choose);dirs.append(row);});(files[value]||[]).forEach(name=&gt;{const button=document.createElement(&#39;button&#39;);button.type=&#39;button&#39;;button.textContent=&#39;▱  &#39;+name+&#39;  &#183; 使用所在目录&#39;;button.onclick=()=&gt;{path.value=value;status.textContent=&#39;已选择文件 &#39;+name+&#39;，将使用其所在目录作为工作区&#39;;};dirs.append(button);});}
+    go.onclick=()=&gt;browse(path.value.trim());browse(target.cwd);
+    Object.entries(modes).forEach(([key,[name,description]])=&gt;{const label=document.createElement(&#39;label&#39;);label.className=&#39;cs-mode-option&#39;;const radio=document.createElement(&#39;input&#39;);radio.type=&#39;radio&#39;;radio.name=&#39;execution-mode&#39;;radio.value=key;radio.checked=key===mode;radio.onchange=()=&gt;{mode=key;};const span=document.createElement(&#39;span&#39;);span.textContent=name;const small=document.createElement(&#39;small&#39;);small.textContent=description;span.append(small);label.append(radio,span);content.append(label);});
+    content.append(createEffortControl(target.model||state.model,effort,value=&gt;{effort=value;},!!target.running));
+    const status=document.createElement(&#39;p&#39;);status.setAttribute(&#39;role&#39;,&#39;status&#39;);content.append(status);
+    if(state.screen===&#39;chat&#39;&amp;&amp;target.running){status.textContent=&#39;任务运行中，设置已锁定；点击“停止后编辑”再修改。&#39;;actions.lastChild.disabled=true;actions.lastChild.textContent=&#39;任务运行中&#39;;content.querySelectorAll(&#39;input,button&#39;).forEach(el=&gt;el.disabled=true);}
+  }
+  function update(){modal(&#39;应用更新&#39;,[&#39;当前版本 0.1.11&#39;,&#39;本次修改仅在本地预览，尚未发布。&#39;],[[&#39;知道了&#39;,close]]);}
+  draft.addEventListener(&#39;input&#39;,()=&gt;{drafts[current]=draft.value;render();});
+  messages.addEventListener(&#39;scroll&#39;,()=&gt;{const atBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight&lt;12;if(!atBottom){leftBottom=true;if(composerOpen)collapse();}else if(leftBottom){leftBottom=false;if(!composerOpen){composerOpen=true;render();}}},{passive:true});
+  messages.addEventListener(&#39;click&#39;,()=&gt;{if(composerOpen)collapse();});
+  q(&#39;[data-search]&#39;).addEventListener(&#39;input&#39;,event=&gt;{state.query=event.target.value;render();save();});
+  q(&#39;[data-image-picker]&#39;).addEventListener(&#39;change&#39;,event=&gt;{const file=event.target.files?.[0];if(!file)return;if(!file.type.startsWith(&#39;image/&#39;)||file.size&gt;10*1024*1024){threads[current].lines.push([&#39;error&#39;,&#39;请选择 10 MB 以内的图片。&#39;,&#39;图片添加失败&#39;]);paintMessages();return;}const owner=current,reader=new FileReader();reader.onload=()=&gt;{attachments[owner]={name:file.name,url:String(reader.result)};if(current===owner){selectedImage=attachments[owner];render();}};reader.readAsDataURL(file);event.target.value=&#39;&#39;;});
+  root.addEventListener(&#39;click&#39;,event=&gt;{
+    const button=event.target.closest(&#39;button&#39;);if(!button)return;
+    if(!event.target.closest(&#39;[data-picker]&#39;))closePickers();
+    const pickerTrigger=button.closest(&#39;[data-picker-trigger]&#39;);if(pickerTrigger){const pickerMenu=q(`[data-picker-menu=&quot;${pickerTrigger.dataset.pickerTrigger}&quot;]`),opening=pickerMenu.hidden;closePickers();pickerMenu.hidden=!opening;pickerTrigger.setAttribute(&#39;aria-expanded&#39;,String(opening));return;}
+    if(button.dataset.modelChoice){threads[current].model=button.dataset.modelChoice;state.model=button.dataset.modelChoice;render();save();return;}
+    if(button.dataset.screen)return show(button.dataset.screen);
+    if(button.dataset.filter){state.onlyRunning=button.dataset.filter===&#39;running&#39;;render();save();return;}
+    if(button.dataset.thread)return openChat(button.dataset.thread);
+    if(button.dataset.demo===&#39;update&#39;)return update();
+    if(button.dataset.demo===&#39;stream&#39;)return streamDemo();
+    if(button.dataset.demo===&#39;questions&#39;){threads[current].running=false;threads[current].lines.push([&#39;tool&#39;,&#39;✓ 检查服务\n● 确认修复范围\n○ 执行与验证&#39;,{title:&#39;执行计划&#39;,status:&#39;进行中&#39;}],[&#39;tool&#39;,&#39;$ systemctl status candybear\nActive: active (running)\n退出码：0&#39;,{title:&#39;命令执行&#39;,status:&#39;已完成&#39;}],[&#39;tool&#39;,&#39;MainActivity.kt\n- 固定底部留白\n+ 按浮动控件实际高度计算留白&#39;,{title:&#39;文件变更&#39;,status:&#39;已完成&#39;}],[&#39;question&#39;,&#39;接下来先处理哪一项？&#39;,{options:[&#39;优化聊天阅读体验&#39;,&#39;检查工具执行记录&#39;]}]);composerOpen=false;paintMessages();show(&#39;chat&#39;);messages.scrollTop=messages.scrollHeight;return;}
+    if(button.dataset.demo===&#39;running&#39;){threads[&#39;检查服务器存储&#39;].running=true;return openChat(&#39;检查服务器存储&#39;);}
+    if(button.dataset.demo===&#39;error&#39;){threads[current].running=false;threads[current].lines.push([&#39;error&#39;,&#39;示例：读取服务状态时连接超时。请检查 SSH 连接后重试。&#39;,&#39;读取服务状态失败&#39;]);paintMessages();show(&#39;chat&#39;);messages.scrollTop=messages.scrollHeight;return;}
+    if(button.dataset.demo===&#39;approval&#39;)return modal(&#39;Andri 请求批准&#39;,[&#39;糖果熊机器人维护&#39;,&#39;请求审批模式 &#183; 本次读取服务状态需要确认。&#39;],[[&#39;拒绝&#39;,close],[&#39;批准这一次&#39;,close]],&#39;systemctl status candybear.service&#39;);
+    switch(button.dataset.action){
+      case &#39;expand-composer&#39;:composerOpen=true;render();draft.focus();break;
+      case &#39;collapse-composer&#39;:collapse();break;
+      case &#39;compose-tools&#39;:{const tools=q(&#39;[data-compose-tools]&#39;);tools.hidden=!tools.hidden;button.setAttribute(&#39;aria-expanded&#39;,String(!tools.hidden));break;}
+      case &#39;workspace&#39;:settings();break;
+      case &#39;add-image&#39;:q(&#39;[data-compose-tools]&#39;).hidden=true;q(&#39;[data-image-picker]&#39;).click();break;
+      case &#39;remove-image&#39;:selectedImage=null;delete attachments[current];render();break;
+      case &#39;key&#39;:q(&#39;[data-key-label]&#39;).textContent=&#39;SSH 私钥已就绪&#39;;q(&#39;[data-key-detail]&#39;).textContent=&#39;点击更换私钥&#39;;q(&#39;[data-passphrase]&#39;).hidden=false;q(&#39;[data-action=&quot;connect&quot;]&#39;).disabled=false;break;
+      case &#39;connect&#39;:show(&#39;threads&#39;);break;
+      case &#39;disconnect&#39;:show(&#39;connection&#39;);break;
+      case &#39;back&#39;:drafts[current]=draft.value;show(&#39;threads&#39;);break;
+      case &#39;new&#39;:threads[&#39;新对话&#39;]={model:state.model,effort:defaults.effort,running:false,...defaults,lines:[]};drafts[&#39;新对话&#39;]=&#39;&#39;;openChat(&#39;新对话&#39;);break;
+      case &#39;menu&#39;:menu.hidden=!menu.hidden;break;
+      case &#39;update&#39;:update();break;
+      case &#39;refresh&#39;:menu.hidden=true;note.textContent=&#39;示例对话状态已刷新。&#39;;break;
+      case &#39;history&#39;:button.textContent=&#39;已加载更早消息（演示）&#39;;break;
+      case &#39;stop-collapsed&#39;:threads[current].running=false;render();break;
+      case &#39;send&#39;:if(threads[current].running){threads[current].running=false;render();}else if(draft.value.trim()||selectedImage){const prompt=draft.value.trim()||&#39;请查看这张图片。&#39;;threads[current].lines.push([&#39;user&#39;,prompt,selectedImage]);renameNewThread(prompt);draft.value=&#39;&#39;;drafts[current]=&#39;&#39;;selectedImage=null;delete attachments[current];composerOpen=false;paintMessages();render();messages.scrollTop=messages.scrollHeight;}break;
+    }
+  });
+  root.addEventListener(&#39;keydown&#39;,event=&gt;{if(event.key===&#39;Escape&#39;){if(!overlay.hidden)close();else{menu.hidden=true;collapse();}}});
+  overlay.addEventListener(&#39;keydown&#39;,event=&gt;{if(event.key===&#39;Tab&#39;){const list=[...overlay.querySelectorAll(&#39;button,input&#39;)].filter(el=&gt;!el.disabled&amp;&amp;!el.hidden),first=list[0],last=list[list.length-1];if(event.shiftKey&amp;&amp;document.activeElement===first){event.preventDefault();last.focus();}if(!event.shiftKey&amp;&amp;document.activeElement===last){event.preventDefault();first.focus();}}});
+  function restore(saved){const value=saved?.privateContent;if(value?.revision===7||value?.revision===8){if([&#39;connection&#39;,&#39;threads&#39;,&#39;chat&#39;].includes(value.screen))state.screen=value.screen;state.query=typeof value.query===&#39;string&#39;?value.query:&#39;&#39;;state.onlyRunning=value.onlyRunning===true;}q(&#39;[data-search]&#39;).value=state.query;render();}
+  paintMessages();restore(window.openai?.widgetState);
+  window.addEventListener(&#39;openai:set_globals&#39;,event=&gt;{if(event.detail?.globals?.widgetState)restore(event.detail.globals.widgetState);});
+})();
+&lt;/script&gt;
+"></iframe>
+
+<script>(() => {
+  const frame = document.getElementById("codex-visualization");
+  if (!(frame instanceof HTMLIFrameElement)) {
+    return;
+  }
+  const isShare = document.documentElement.classList.contains(
+    "visualization-share-root",
+  );
+  let viewportHeight = globalThis.innerHeight;
+  let sizeFingerprint = null;
+  let sizeWriteTimeout;
+  let lastSize = null;
+  let pendingSize = null;
+  const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+    globalThis.location.pathname,
+    globalThis.location.search,
+  ])}`;
+  const sizeStorageKey = `${storageKey}:share-size-v1`;
+  const parseState = (serializedState) => {
+    if (
+      typeof serializedState !== "string" ||
+      new TextEncoder().encode(serializedState).length > 16 * 1024
+    ) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    /** @type {unknown} */
+    const state = JSON.parse(serializedState);
+    if (
+      state == null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      ("imageIds" in state &&
+        (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = { modelContent: null, privateContent: null, ...state };
+    const canonicalState = JSON.stringify(
+      storedState,
+      (_key, /** @type {unknown} */ value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+          throw new TypeError("Widget state must contain finite numbers");
+        }
+        return value;
+      },
+    );
+    if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    return storedState;
+  };
+  let storage = null;
+  let state = null;
+  try {
+    const localStorage = globalThis.localStorage;
+    const probeKey = `${storageKey}:probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    storage = localStorage;
+    const savedState = storage.getItem(storageKey);
+    if (savedState != null) {
+      try {
+        state = parseState(savedState);
+      } catch {
+        // Invalid saved state does not disable future writes.
+      }
+    }
+  } catch {
+    storage = null;
+  }
+  const persistSize = () => {
+    globalThis.clearTimeout(sizeWriteTimeout);
+    if (pendingSize == null) {
+      return;
+    }
+    try {
+      storage?.setItem(sizeStorageKey, pendingSize);
+    } catch {
+      // A denied or full cache must not affect the visualization.
+    }
+    pendingSize = null;
+  };
+  if (isShare) {
+    globalThis.addEventListener("pagehide", persistSize);
+  }
+  const initialGlobals = {
+    widgetState: state,
+    statePersistence: storage == null ? "none" : "local",
+  };
+
+  const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    const data = event.data;
+    if (typeof data !== "object" || data == null) {
+      return;
+    }
+    if (data.type === "widget-state-write") {
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+        return;
+      }
+      let ok = false;
+      try {
+        if (storage != null) {
+          const state = parseState(data.state);
+          storage.setItem(storageKey, JSON.stringify(state));
+          ok = true;
+        }
+      } catch {
+        // Storage denial, quota limits, and invalid state return a failed receipt.
+      }
+      channel.port1.postMessage({
+        type: "widget-state-result",
+        id: data.id,
+        ok,
+      });
+      return;
+    }
+    if (data.type === "height") {
+      const height = data.height;
+      if (
+        typeof height !== "number" ||
+        !Number.isFinite(height) ||
+        height < 0
+      ) {
+        return;
+      }
+      if (height <= 10_000) {
+        const width = isShare && storage != null ? frame.clientWidth : null;
+        frame.style.height = Math.ceil(height) + "px";
+        if (isShare && storage != null) {
+          const size = JSON.stringify({
+            fingerprint: sizeFingerprint,
+            width,
+            viewportHeight: globalThis.innerHeight,
+            dark: globalThis.matchMedia("(prefers-color-scheme: dark)").matches,
+            scale: globalThis.devicePixelRatio,
+            height: Math.ceil(height),
+          });
+          if (size !== lastSize) {
+            lastSize = size;
+            pendingSize = size;
+            globalThis.clearTimeout(sizeWriteTimeout);
+            sizeWriteTimeout = globalThis.setTimeout(persistSize, 100);
+          }
+        }
+      }
+      if (isShare) {
+        // Keep unusually tall content accessible without accepting an unbounded height.
+        if (height > 10_000 && Number.parseFloat(frame.style.height) === 0) {
+          frame.style.removeProperty("height");
+        }
+        frame.scrolling = height > 10_000 ? "auto" : "no";
+        document.documentElement.classList.add("visualization-share-ready");
+      }
+      return;
+    }
+    if (data.type === "scroll-to") {
+      const top = data.top;
+      if (
+        typeof top === "number" &&
+        Number.isFinite(top) &&
+        top >= 0 &&
+        globalThis.navigator.userActivation?.isActive === true
+      ) {
+        globalThis.scrollTo({
+          top: Math.ceil(
+            globalThis.scrollY + frame.getBoundingClientRect().top + top,
+          ),
+        });
+      }
+      return;
+    }
+    if (data.type === "open-external") {
+      const rawHref = data.href;
+      if (typeof rawHref !== "string") {
+        return;
+      }
+      let href;
+      try {
+        const url = new URL(rawHref, document.baseURI);
+        if (url.protocol !== "https:") {
+          return;
+        }
+        href = url.href;
+      } catch {
+        return;
+      }
+      if (globalThis.navigator.userActivation?.isActive === true) {
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.rel = "noopener noreferrer";
+        anchor.target = "_blank";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      return;
+    }
+    if (data.type === "follow-up") {
+      const prompt = data.prompt;
+      if (
+        typeof prompt !== "string" ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      const title = data.title;
+      globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+    }
+  });
+  channel.port1.start();
+  const srcdoc = frame.dataset.srcdoc;
+  if (srcdoc == null) {
+    return;
+  }
+  globalThis.addEventListener("resize", () => {
+    const height = Number.parseFloat(frame.style.height);
+    if (!isShare && (!Number.isFinite(height) || height <= viewportHeight)) {
+      frame.style.removeProperty("height");
+    }
+    viewportHeight = globalThis.innerHeight;
+    channel.port1.postMessage({ type: "measure" });
+  });
+  frame.addEventListener(
+    "load",
+    () => {
+      frame.contentWindow?.postMessage(
+        { type: "codex-visualization-initialize" },
+        "*",
+        [channel.port2],
+      );
+    },
+    { once: true },
+  );
+  // Match the trusted bootstrap element, not the same text in an authored title.
+  const frameHtml = srcdoc.replace(
+    '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+    () =>
+      '<script type="application/json" id="codex-visualization-widget-state">' +
+      JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+      "<\/script>",
+  );
+  if (isShare && storage != null) {
+    // Fingerprint the rendered document, including restored widget state, without
+    // storing its content. This is a layout cache, not a security identity.
+    let hash = 5381;
+    for (let index = 0; index < frameHtml.length; index += 1) {
+      hash = (hash * 33 + frameHtml.charCodeAt(index)) % 4_294_967_296;
+    }
+    sizeFingerprint = hash.toString(36);
+    try {
+      const size = JSON.parse(storage.getItem(sizeStorageKey) ?? "null");
+      if (
+        size?.fingerprint === sizeFingerprint &&
+        size.width === frame.clientWidth &&
+        size.viewportHeight === globalThis.innerHeight &&
+        size.dark ===
+          globalThis.matchMedia("(prefers-color-scheme: dark)").matches &&
+        size.scale === globalThis.devicePixelRatio &&
+        typeof size.height === "number" &&
+        Number.isFinite(size.height) &&
+        size.height >= 0 &&
+        size.height <= 10_000
+      ) {
+        frame.style.height = size.height + "px";
+      }
+    } catch {
+      // Ignore missing or invalid cache entries and measure the live frame.
+    }
+  }
+  frame.srcdoc = frameHtml;
+  delete frame.dataset.srcdoc;
+})();
+</script>
+</body>
+</html>

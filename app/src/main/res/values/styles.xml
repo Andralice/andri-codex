@@ -1,0 +1,10 @@
+<resources>
+    <style name="Base.Theme.CodexServer" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFFDFC</item>
+        <item name="android:statusBarColor">#FFFDFC</item>
+        <item name="android:navigationBarColor">#805B48</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#805B48</item>
+    </style>
+    <style name="Theme.CodexServer" parent="Base.Theme.CodexServer" />
+</resources>
