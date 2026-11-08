@@ -108,6 +108,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     var responding by mutableStateOf(false)
         private set
     val threads = mutableStateListOf<CodexThread>()
+    val syncingThreadIds = mutableStateListOf<String>()
     private val localEmptyThreads = mutableSetOf<String>()
     private val localThreadIds = mutableSetOf<String>()
     private var listedThreadIds = emptySet<String>()
@@ -115,6 +116,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val runningSince = mutableStateMapOf<String, Long>()
     private val pinnedThreadIds = mutableStateMapOf<String, Boolean>()
     val sending = mutableStateListOf<String>()
+    private val mobileTurnStartedDuringSend = mutableSetOf<String>()
     private val readyThreadIds = mutableStateListOf<String>()
     fun canSendToThread(id: String): Boolean = connected && id in readyThreadIds
     val messages = mutableStateMapOf<String, List<ChatLine>>()
@@ -778,12 +780,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             openingThreadId = null
             threadOpenError = ""
             settings.edit().putString("lastThreadId", id).apply()
-            if (connected && client?.isAlive() == true) {
-                threadOpenJob = viewModelScope.launch {
-                    runCatching { loadThread(id, selectionGeneration) }
-                        .onFailure { if (it !is CancellationException) reportChatError(it.message.orEmpty(), "同步对话失败", id) }
-                }
-            }
+            if (connected) retryThreadSync(id, selectionGeneration)
             return
         }
         if (!connected || client?.isAlive() != true) {
@@ -801,17 +798,60 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         threadOpenError = ""
         error = ""
         status = "正在加载对话…"
+        val openStartedAt = System.nanoTime()
+        recordChatDiagnostic("thread_open_started", id, "", JSONObject()
+            .put("cached", messages.containsKey(id)))
         threadOpenJob = viewModelScope.launch {
             try {
                 loadThread(id, selectionGeneration)
+                recordChatDiagnostic("thread_open_completed", id, "", JSONObject()
+                    .put("elapsedMs", (System.nanoTime() - openStartedAt) / 1_000_000))
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                val message = e.message?.takeIf { it.isNotBlank() } ?: "加载对话失败"
+                recordChatDiagnostic("thread_open_failed", id, "", JSONObject()
+                    .put("elapsedMs", (System.nanoTime() - openStartedAt) / 1_000_000)
+                    .put("reason", message.take(200)))
+                uploadChatDiagnostic("thread_open_failed", id)
                 if (openingThreadId == id && selectionGeneration == threadSelectionGeneration)
-                    threadOpenError = e.message?.takeIf { it.isNotBlank() } ?: "加载对话失败"
+                    threadOpenError = message
             } finally {
                 if (openingThreadId == id && selectionGeneration == threadSelectionGeneration) {
                     openingThreadId = null
                 }
+            }
+        }
+    }
+
+    fun retryThreadSync(id: String) {
+        retryThreadSync(id, threadSelectionGeneration)
+    }
+
+    private fun retryThreadSync(id: String, selectionGeneration: Int) {
+        if (id in syncingThreadIds || openingThreadId == id) return
+        val connection = client
+        if (!connected || connection?.isAlive() != true) {
+            recordChatDiagnostic("thread_sync_retry_reconnect", id, "")
+            status = "连接已中断，正在重新连接…"
+            connect(automatic = false)
+            return
+        }
+        threadOpenJob?.cancel()
+        syncingThreadIds += id
+        error = ""
+        status = "正在重新同步当前对话…"
+        recordChatDiagnostic("thread_sync_retry_started", id, "")
+        threadOpenJob = viewModelScope.launch {
+            try {
+                loadThread(id, selectionGeneration)
+                recordChatDiagnostic("thread_sync_retry_completed", id, "")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                val message = e.message?.takeIf { it.isNotBlank() } ?: "同步对话失败"
+                recordChatDiagnostic("thread_sync_retry_failed", id, "", JSONObject().put("reason", message.take(200)))
+                reportChatError(message, "同步对话失败", id)
+            } finally {
+                syncingThreadIds.remove(id)
             }
         }
     }
@@ -1616,6 +1656,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         if (id in running) { enqueueDraft(); return }
         val selectedModel = model
         sending += id
+        mobileTurnStartedDuringSend.remove(id)
         error = ""
         val options = threadExecution[id] ?: savedExecution(id) ?: currentExecution
         viewModelScope.launch {
@@ -1646,23 +1687,34 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 // turn/completed may arrive before the response on a very short turn; events own running state.
                 if (id in running && running[id].isNullOrBlank()) running[id] = turnId
                 promoteThread(id)
-                drafts[id] = ""
-                settings.edit().remove("draft.$id").apply()
-                localEmptyThreads.remove(id)
-                settings.edit().remove("thread.$id.localEmpty").apply()
-                imageAttachments.remove(id)
-                videoAttachments.remove(id)
-                sharedFileAttachments.remove(id)?.forEach { it.file.delete() }
-                persistSharedFiles()
-                contextReferences.remove(id)
-                persistContextReferences()
+                clearComposerAfterAcceptance(id)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                reportChatError(e.message ?: "未知错误", "发送消息失败", id)
+                if (id in mobileTurnStartedDuringSend) {
+                    recordChatDiagnostic("composer.turn.start.response_missing_but_confirmed", id, running[id].orEmpty(),
+                        JSONObject().put("reason", e.message.orEmpty().take(160)))
+                    clearComposerAfterAcceptance(id)
+                } else {
+                    reportChatError(e.message ?: "未知错误", "发送消息失败", id)
+                }
             } finally {
                 sending.remove(id)
+                mobileTurnStartedDuringSend.remove(id)
             }
         }
+    }
+
+    private fun clearComposerAfterAcceptance(id: String) {
+        drafts[id] = ""
+        settings.edit().remove("draft.$id").apply()
+        localEmptyThreads.remove(id)
+        settings.edit().remove("thread.$id.localEmpty").apply()
+        imageAttachments.remove(id)
+        videoAttachments.remove(id)
+        sharedFileAttachments.remove(id)?.forEach { it.file.delete() }
+        persistSharedFiles()
+        contextReferences.remove(id)
+        persistContextReferences()
     }
 
     fun updateDraft(id: String, value: String) {
@@ -1982,6 +2034,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val turnId = params.optJSONObject("turn")?.text("id").orEmpty().ifBlank { eventTurnId }
                 val hasRequest = hasRecentMobileTurnRequest(id)
                 recordChatDiagnostic("turn.started", id, turnId)
+                if (id in sending && hasRequest) {
+                    mobileTurnStartedDuringSend += id
+                    recordChatDiagnostic("composer.turn.start.confirmed_by_event", id, turnId)
+                    clearComposerAfterAcceptance(id)
+                }
                 running[id] = turnId
                 runningSince.putIfAbsent(id, System.currentTimeMillis())
                 if (turnId.isNotBlank()) latestTurnIds[id] = turnId

@@ -32,6 +32,22 @@ data class ChatQuestion(val title: String, val options: List<String> = emptyList
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
 data class ImageUpload(val dataUrl: String, val label: String)
 internal const val MAX_CHAT_LINES_PER_PAGE = 500
+internal const val INITIAL_THREAD_TURNS_LIMIT = 8
+internal const val THREAD_TURNS_PAGE_LIMIT = 10
+internal const val THREAD_TURNS_COMPACT_PAGE_LIMIT = 3
+
+internal fun shouldRetryCompactTurnsPage(error: Exception): Boolean =
+    error is IOException && error.message.orEmpty().startsWith("thread/turns/list 等待响应超时")
+
+internal suspend fun <T> retryCompactTurnsPage(
+    fullPage: suspend () -> T,
+    compactPage: suspend () -> T
+): T = try {
+    fullPage()
+} catch (error: Exception) {
+    if (!shouldRetryCompactTurnsPage(error)) throw error
+    compactPage()
+}
 
 internal suspend fun awaitWorkspaceSettingsUpdate(updated: Deferred<JSONObject>): JSONObject? =
     withTimeoutOrNull(5_000) { updated.await() }
@@ -525,7 +541,7 @@ class SshCodexClient(
     suspend fun resumeThread(threadId: String, options: ExecutionOptions? = null): JSONObject {
         val result = request("thread/resume", (options?.params() ?: JSONObject()).put("threadId", threadId)
             .put("excludeTurns", true).put("initialTurnsPage", JSONObject()
-                .put("limit", 30).put("itemsView", "full").put("sortDirection", "desc")))
+                .put("limit", INITIAL_THREAD_TURNS_LIMIT).put("itemsView", "full").put("sortDirection", "desc")))
         val page = result.optJSONObject("initialTurnsPage") ?: listTurns(threadId)
         return hydratePage(result, page)
     }
@@ -574,10 +590,15 @@ class SshCodexClient(
     }
 
     suspend fun listTurns(threadId: String, cursor: String = ""): JSONObject {
-        val params = JSONObject().put("threadId", threadId).put("limit", 30)
-            .put("sortDirection", "desc").put("itemsView", "full")
-        if (cursor.isNotBlank()) params.put("cursor", cursor)
-        return request("thread/turns/list", params)
+        suspend fun page(limit: Int, itemsView: String) = request("thread/turns/list", JSONObject()
+            .put("threadId", threadId).put("limit", limit)
+            .put("sortDirection", "desc").put("itemsView", itemsView).apply {
+                if (cursor.isNotBlank()) put("cursor", cursor)
+            })
+        return retryCompactTurnsPage(
+            fullPage = { page(THREAD_TURNS_PAGE_LIMIT, "full") },
+            compactPage = { page(THREAD_TURNS_COMPACT_PAGE_LIMIT, "essential") }
+        )
     }
 
     suspend fun sendTurn(threadId: String, model: String, prompt: String, imageDataUrls: List<String> = emptyList(), options: ExecutionOptions? = null): String {

@@ -1,6 +1,6 @@
 # Andri Android
 
-通过 SSH 操作 82 上 Codex 的 Andri Android 原生客户端，当前源码版本为 0.1.41（versionCode 42），最低 Android 8.0。
+通过 SSH 操作 82 上 Codex 的 Andri Android 原生客户端，当前源码版本为 0.1.43（versionCode 44），最低 Android 8.0。
 
 ## 安装和连接
 

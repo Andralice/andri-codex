@@ -1957,13 +1957,15 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
             AppMenu(vm, thread)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        val syncingThread = thread.id in vm.syncingThreadIds || vm.openingThreadId == thread.id
         if (!vm.connected || !vm.canSendToThread(thread.id)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     when {
-                        vm.connected -> "当前对话尚未同步 · 可继续编辑"
-                        vm.connecting -> "正在后台恢复连接 · 可继续编辑"
+                        syncingThread -> "正在同步当前对话… · 草稿会保留"
+                        vm.connected -> "当前对话未同步，暂不能发送 · 草稿会保留"
+                        vm.connecting -> "正在恢复连接 · 草稿会保留"
                         else -> "离线缓存 · 草稿会自动保存"
                     },
                     Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1971,8 +1973,18 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                 if (!vm.connected && !vm.connecting && vm.privateKey.isNotBlank()) {
                     TextButton(vm::connect, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连") }
                 }
-                if (vm.connected && !vm.synchronizing) {
-                    TextButton({ vm.openThread(thread.id) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重试") }
+                if (vm.connected) {
+                    TextButton(
+                        onClick = { vm.retryThreadSync(thread.id) },
+                        enabled = !syncingThread,
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        if (syncingThread) {
+                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("同步中")
+                        } else Text("重新同步")
+                    }
                 }
             }
         }

@@ -20,6 +20,8 @@ local.properties
 !/codex/publish-server-update.sh
 !/codex/build-history-index.py
 !/codex/release-notes-0.1.41.txt
+!/codex/release-notes-0.1.42.txt
+!/codex/release-notes-0.1.43.txt
 !/codex/mobile-redesign-preview.html
 !/codex/preview-browser.html
 !/codex/codex-mobile-preview.html

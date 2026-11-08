@@ -11,7 +11,7 @@ try {
     if ($SshKeyFile) { $env:CODEX_CHECK_KEY_FILE = $SshKeyFile }
     try {
         $java = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\java.exe" } else { "java" }
-        & $java "-Dfile.encoding=UTF-8" -cp $runtimeClasspath org.junit.runner.JUnitCore com.codexserver.mobile.ClientCheck com.codexserver.mobile.ComposerBehaviorCheck com.codexserver.mobile.UpdateCheck com.codexserver.mobile.ThreadFilterCheck com.codexserver.mobile.MobileRegressionCheck com.codexserver.mobile.UpdateFlowCheck com.codexserver.mobile.ConnectionRecoveryCheck com.codexserver.mobile.GlobalInstructionsCheck
+        & $java "-Dfile.encoding=UTF-8" -cp $runtimeClasspath org.junit.runner.JUnitCore com.codexserver.mobile.ClientCheck com.codexserver.mobile.ThreadHistoryPagingCheck com.codexserver.mobile.ComposerBehaviorCheck com.codexserver.mobile.UpdateCheck com.codexserver.mobile.ThreadFilterCheck com.codexserver.mobile.MobileRegressionCheck com.codexserver.mobile.UpdateFlowCheck com.codexserver.mobile.ConnectionRecoveryCheck com.codexserver.mobile.GlobalInstructionsCheck
         if ($LASTEXITCODE -ne 0) { throw "Checks failed" }
     } finally { $env:CODEX_CHECK_KEY_FILE = $previousKeyPath }
 } finally { Pop-Location }
