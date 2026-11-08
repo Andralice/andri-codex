@@ -246,6 +246,9 @@ class SshCodexClient(
     private val ephemeralTitleRuns = ConcurrentHashMap<String, EphemeralTitleRun>()
     private val closed = AtomicBoolean(false)
     internal val diagnosticId = Integer.toHexString(System.identityHashCode(this))
+    private val connectionTimings = mutableListOf<JSONObject>()
+    private val connectionTimingsLock = Any()
+    private val connectionStartedAt = System.nanoTime()
     private var session: Session? = null
     private var channel: ChannelExec? = null
     private var websocket: WebSocketClient? = null
@@ -256,6 +259,23 @@ class SshCodexClient(
         serverMessageHandler = handler
     }
 
+    internal fun recordConnectionTiming(stage: String, elapsedMillis: Long, details: JSONObject = JSONObject()) {
+        synchronized(connectionTimingsLock) {
+            connectionTimings += JSONObject().put("stage", stage).put("elapsedMs", elapsedMillis).put("detail", details)
+            if (connectionTimings.size > 32) connectionTimings.removeAt(0)
+        }
+    }
+
+    internal fun connectionTimingReport(): JSONObject = JSONObject()
+        .put("type", "connection_timing_trace")
+        .put("time", System.currentTimeMillis())
+        .put("appVersion", BuildConfig.VERSION_NAME)
+        .put("events", JSONArray().apply {
+            synchronized(connectionTimingsLock) {
+                connectionTimings.forEach { put(JSONObject(it.toString())) }
+            }
+        })
+
     suspend fun connect() = withContext(Dispatchers.IO) {
         require(host.isNotBlank() && username.isNotBlank() && port in 1..65535) { "请填写有效的服务器地址、用户名和端口" }
         require(privateKey.contains("PRIVATE KEY")) { "请选择 SSH 私钥文件，不是 .pub 公钥文件" }
@@ -263,6 +283,7 @@ class SshCodexClient(
         fun mark(stage: String) {
             val elapsed = (System.nanoTime() - startedAt) / 1_000_000
             android.util.Log.d("AndriConnection", "[$diagnosticId] $stage elapsed=${elapsed}ms")
+            recordConnectionTiming(stage, elapsed)
         }
         mark("connect-start")
         try {
@@ -658,8 +679,11 @@ class SshCodexClient(
             }
             ensureDirectory(codexDir)
             ensureDirectory(reportDir)
-            val logName = if (report.text("type") == "chat_timeline_trace")
-                "chat-timeline.jsonl" else "notification-errors.jsonl"
+            val logName = when (report.text("type")) {
+                "chat_timeline_trace" -> "chat-timeline.jsonl"
+                "connection_timing_trace" -> "connection-timing.jsonl"
+                else -> "notification-errors.jsonl"
+            }
             val logPath = "$reportDir/$logName"
             sftp.put(ByteArrayInputStream(line.toByteArray(Charsets.UTF_8)), logPath, ChannelSftp.APPEND)
             sftp.chmod(384, logPath) // 0600
@@ -1047,6 +1071,7 @@ class SshCodexClient(
         pending[id] = deferred
         val startedAt = System.nanoTime()
         var succeeded = false
+        val recordTiming = method in setOf("initialize", "thread/list", "thread/resume", "thread/read", "thread/turns/list")
         try {
             val result = withTimeout(45_000) {
                 write(JSONObject().put("id", id).put("method", method).put("params", params))
@@ -1058,9 +1083,11 @@ class SshCodexClient(
             throw IOException(method + " 等待响应超时，请刷新状态后再操作，避免重复发送", error)
         } finally {
             pending.remove(id)
-            if (method in setOf("initialize", "thread/list", "thread/resume", "thread/read", "thread/turns/list")) {
+            if (recordTiming) {
                 val elapsed = (System.nanoTime() - startedAt) / 1_000_000
                 android.util.Log.d("AndriConnection", "[$diagnosticId] rpc=$method elapsed=${elapsed}ms success=$succeeded")
+                recordConnectionTiming("rpc-$method", (System.nanoTime() - connectionStartedAt) / 1_000_000,
+                    JSONObject().put("requestMs", elapsed).put("success", succeeded))
             }
         }
     }

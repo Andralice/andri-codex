@@ -172,6 +172,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     var foregroundGeneration by mutableIntStateOf(0)
         private set
     private var foregroundStartedAt = System.nanoTime()
+    private var uploadedConnectionTimingId: String? = null
     private fun connectionTime() = System.nanoTime() / 1_000_000
     private var reconnectOnForeground = settings.getBoolean("autoReconnect", privateKey.isNotBlank())
     val queueSubmitting = mutableStateListOf<String>()
@@ -1290,8 +1291,25 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun recordScreenFrame(screen: String) {
         val elapsed = (System.nanoTime() - foregroundStartedAt) / 1_000_000
-        android.util.Log.d("AndriConnection", "[${client?.diagnosticId ?: "cache"}] screen=${screen.substringBefore(':')} " +
+        val currentClient = client
+        val screenName = screen.substringBefore(':')
+        android.util.Log.d("AndriConnection", "[${currentClient?.diagnosticId ?: "cache"}] screen=$screenName " +
             "frame-ready=${elapsed}ms connected=$connected threads=${threads.size}")
+        if (connected && currentClient != null) {
+            currentClient.recordConnectionTiming("screen-$screenName", elapsed,
+                JSONObject().put("threadCount", threads.size))
+            if (uploadedConnectionTimingId != currentClient.diagnosticId) {
+                uploadedConnectionTimingId = currentClient.diagnosticId
+                val report = currentClient.connectionTimingReport()
+                viewModelScope.launch {
+                    runCatching { currentClient.reportDiagnostic(report) }
+                        .onFailure {
+                            if (uploadedConnectionTimingId == currentClient.diagnosticId) uploadedConnectionTimingId = null
+                            android.util.Log.w("MobileDiagnostics", "Unable to upload connection timing", it)
+                        }
+                }
+            }
+        }
     }
 
     fun onBackground() {
