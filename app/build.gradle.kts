@@ -31,8 +31,8 @@ android {
         applicationId = "com.codexserver.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.1.37"
+        versionCode = 39
+        versionName = "0.1.38"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -93,6 +93,7 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")

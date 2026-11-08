@@ -10,6 +10,7 @@ import java.io.*
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.io.OutputStream
 import com.jcraft.jsch.ChannelSftp
@@ -27,7 +28,6 @@ data class CodexThread(
 )
 data class ChatQuestion(val title: String, val options: List<String> = emptyList())
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
-data class RemoteImage(val name: String, val bytes: ByteArray)
 data class ImageUpload(val dataUrl: String, val label: String)
 internal const val MAX_CHAT_LINES_PER_PAGE = 500
 
@@ -247,6 +247,11 @@ class SshCodexClient(
     suspend fun connect() = withContext(Dispatchers.IO) {
         require(host.isNotBlank() && username.isNotBlank() && port in 1..65535) { "请填写有效的服务器地址、用户名和端口" }
         require(privateKey.contains("PRIVATE KEY")) { "请选择 SSH 私钥文件，不是 .pub 公钥文件" }
+        val startedAt = System.nanoTime()
+        fun mark(stage: String) {
+            val elapsed = (System.nanoTime() - startedAt) / 1_000_000
+            android.util.Log.d("AndriConnection", "$stage ${elapsed}ms")
+        }
         try {
             val jsch = JSch()
             // Use the same Ed25519 implementation on Android and in the JVM integration check.
@@ -269,6 +274,7 @@ class SshCodexClient(
                 timeout = 45_000
                 connect(15_000)
             }
+            mark("ssh-session")
             val exec = (session!!.openChannel("exec") as ChannelExec).apply {
                 setCommand("bash -lc 'codex app-server proxy --sock /home/ubuntu/.codex/mobile-control/app-server.sock'")
             }
@@ -277,6 +283,7 @@ class SshCodexClient(
             val output = exec.outputStream
             val errorInput = exec.errStream
             exec.connect(15_000)
+            mark("ssh-exec")
             scope.launch {
                 runCatching {
                     errorInput.bufferedReader(Charsets.UTF_8).useLines { lines ->
@@ -339,22 +346,24 @@ class SshCodexClient(
                 override fun close() { exec.disconnect() }
             })
             check(ws.connectBlocking(20, TimeUnit.SECONDS)) { "Codex WebSocket 握手失败，请检查服务器 app-server" }
+            mark("websocket")
             request("initialize", JSONObject()
                 .put("clientInfo", JSONObject().put("name", "codex-server-android")
                     .put("title", "Andri Android").put("version", BuildConfig.VERSION_NAME))
                 .put("capabilities", JSONObject().put("experimentalApi", true)))
             notify("initialized", JSONObject())
+            mark("initialized")
         } catch (error: Exception) {
             disconnect(error, report = false)
             throw error
         }
     }
 
-    suspend fun listThreads(): List<CodexThread> {
+    suspend fun listThreads(firstPageOnly: Boolean = false): List<CodexThread> {
         val rows = mutableListOf<CodexThread>()
         var cursor = ""
         do {
-            val params = JSONObject().put("limit", 100).put("archived", false)
+            val params = JSONObject().put("limit", if (firstPageOnly) 50 else 100).put("archived", false)
                 .put("modelProviders", JSONArray()).put("sortKey", "updated_at").put("sortDirection", "desc")
             if (cursor.isNotEmpty()) params.put("cursor", cursor)
             val result = request("thread/list", params)
@@ -365,7 +374,7 @@ class SshCodexClient(
             val next = result.text("nextCursor")
             check(next.isBlank() || next != cursor) { "服务器返回了重复的分页游标" }
             cursor = next
-        } while (cursor.isNotBlank())
+        } while (cursor.isNotBlank() && !firstPageOnly)
         return rows.distinctBy { it.id }
     }
 
@@ -846,7 +855,7 @@ class SshCodexClient(
         } finally { channel.disconnect() }
     }
 
-    suspend fun readWorkspaceImage(path: String, baseDirectory: String): RemoteImage = withContext(Dispatchers.IO) {
+    suspend fun cacheWorkspaceImage(path: String, baseDirectory: String, cacheFolder: File): File = withContext(Dispatchers.IO) {
         require(path.isNotBlank() && '\u0000' !in path) { "图片路径无效" }
         val candidate = if (path.startsWith("/")) path else baseDirectory.trimEnd('/') + "/" + path
         val sftp = openSftp()
@@ -861,6 +870,17 @@ class SshCodexClient(
             val attrs = sftp.lstat(resolved)
             check(attrs.isReg && !attrs.isLink) { "图片路径不是普通文件" }
             check(attrs.size in 1L..MAX_CHAT_IMAGE_BYTES.toLong()) { "图片必须小于 10 MB" }
+            cacheFolder.mkdirs()
+            val extension = resolved.substringAfterLast('.', "img").lowercase()
+            val cacheKey = MessageDigest.getInstance("SHA-256")
+                .digest("$resolved\n${attrs.size}\n${attrs.getMTime()}".toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            val target = File(cacheFolder, "$cacheKey.$extension")
+            if (target.isFile && target.length() == attrs.size) {
+                target.setLastModified(System.currentTimeMillis())
+                return@withContext target
+            }
+
             val bytes = sftp.get(resolved).use { input ->
                 val output = ByteArrayOutputStream(attrs.size.toInt())
                 val buffer = ByteArray(8192)
@@ -873,8 +893,17 @@ class SshCodexClient(
                 output.toByteArray()
             }
             check(bytes.isNotEmpty()) { "图片文件为空" }
+            check(bytes.size.toLong() == attrs.size) { "图片下载不完整，请重试" }
             check(isSupportedImageBytes(bytes)) { "本地文件内容不是受支持的图片格式" }
-            RemoteImage(resolved.substringAfterLast('/'), bytes)
+            val staged = File(cacheFolder, "$cacheKey-${java.util.UUID.randomUUID()}.tmp")
+            try {
+                staged.writeBytes(bytes)
+                if (!staged.renameTo(target)) {
+                    check(target.isFile && target.length() == attrs.size) { "无法缓存服务器图片" }
+                }
+            } finally { staged.delete() }
+            CacheMaintenance.trim(cacheFolder.parentFile ?: cacheFolder)
+            target
         } finally { sftp.disconnect() }
     }
 

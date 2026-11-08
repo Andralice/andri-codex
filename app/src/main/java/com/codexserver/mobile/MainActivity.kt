@@ -462,6 +462,7 @@ private fun LineIcon(name: String, modifier: Modifier = Modifier.size(20.dp), co
             "code" -> { line(8f, 6f, 2f, 12f); line(2f, 12f, 8f, 18f); line(16f, 6f, 22f, 12f); line(22f, 12f, 16f, 18f); line(14f, 4f, 10f, 20f) }
             "chevron" -> { line(9f, 6f, 15f, 12f); line(15f, 12f, 9f, 18f) }
             "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }
+            "sidebar" -> { line(4f, 5f, 20f, 5f); line(4f, 12f, 20f, 12f); line(4f, 19f, 20f, 19f); line(8f, 4f, 8f, 20f) }
             "plus" -> { line(12f, 5f, 12f, 19f); line(5f, 12f, 19f, 12f) }
             "send" -> { line(12f, 19f, 12f, 5f); line(6f, 11f, 12f, 5f); line(12f, 5f, 18f, 11f) }
             "paperplane" -> { line(3f, 11f, 21f, 4f); line(21f, 4f, 15f, 20f); line(15f, 20f, 11f, 14f); line(11f, 14f, 3f, 11f); line(11f, 14f, 21f, 4f) }
@@ -1584,6 +1585,81 @@ private fun ThreadListScreen(vm: MobileViewModel) {
 }
 
 @Composable
+private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (String) -> Unit, onNew: () -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val matching = vm.threads.filter { thread ->
+        query.isBlank() || thread.title.contains(query.trim(), ignoreCase = true) ||
+            thread.model.contains(query.trim(), ignoreCase = true) ||
+            vm.projectFor(thread.id).contains(query.trim(), ignoreCase = true)
+    }
+    ModalDrawerSheet(
+        modifier = Modifier.fillMaxHeight().width(320.dp),
+        drawerContainerColor = Color(0xFFFAF9F7),
+        drawerContentColor = MaterialTheme.colorScheme.onSurface
+    ) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Codex", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                IconButton(onClick = onNew, enabled = vm.connected && !vm.busy,
+                    modifier = Modifier.size(44.dp).semantics { contentDescription = "新建对话" }) {
+                    LineIcon("plus", color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Surface(onClick = onNew, enabled = vm.connected && !vm.busy,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp),
+                shape = RoundedCornerShape(14.dp), color = Color.White,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LineIcon("plus", Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+                    Text("新建对话", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+            TextField(query, { query = it }, modifier = Modifier.fillMaxWidth().height(54.dp),
+                placeholder = { Text("搜索对话或项目", fontSize = 13.sp) }, singleLine = true,
+                leadingIcon = { LineIcon("search", Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant) },
+                trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { LineIcon("close", Modifier.size(16.dp)) } },
+                shape = RoundedCornerShape(14.dp), colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("最近对话", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${matching.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp),
+                contentPadding = PaddingValues(bottom = 12.dp)) {
+                items(matching, key = { "sidebar-${it.id}" }) { item ->
+                    val selected = item.id == activeId
+                    Surface(onClick = { onSelect(item.id) }, enabled = !vm.busy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selected) Color(0xFFE9E8E4) else Color.Transparent) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(item.title, fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            val status = if (item.id in vm.running) "进行中" else vm.projectFor(item.id)
+                            Text(status, fontSize = 11.sp, color = if (item.id in vm.running) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                if (matching.isEmpty()) item {
+                    Text(if (vm.threads.isEmpty()) "还没有对话" else "没有匹配的对话",
+                        Modifier.fillMaxWidth().padding(vertical = 20.dp), fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (!vm.connected) Text("离线时只能查看缓存对话", Modifier.padding(top = 6.dp), fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Boolean, modifier: Modifier = Modifier) {
     val status = vm.lastTaskStatus(thread.id)
     val idleLabel = status.ifBlank {
@@ -1665,6 +1741,8 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 @Composable
 private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
     val thread = vm.activeThread ?: return
+    val sidebarState = rememberDrawerState(DrawerValue.Closed)
+    val sidebarScope = rememberCoroutineScope()
     var serverFileLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     var serverDirectoryLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     val running = thread.id in vm.running
@@ -1724,9 +1802,30 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
             }
         }
     }
+    ModalNavigationDrawer(
+        drawerState = sidebarState,
+        gesturesEnabled = true,
+        scrimColor = Color(0x66000000),
+        drawerContent = {
+            ThreadSidebar(vm, thread.id,
+                onSelect = { id ->
+                    sidebarScope.launch {
+                        sidebarState.close()
+                        if (id != thread.id) vm.openThread(id)
+                    }
+                },
+                onNew = {
+                    sidebarScope.launch {
+                        sidebarState.close()
+                        vm.newThread()
+                    }
+                })
+        }
+    ) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(vm::back, modifier = Modifier.semantics { contentDescription = "返回对话列表" }) { LineIcon("back") }
+            IconButton(onClick = { sidebarScope.launch { sidebarState.open() } },
+                modifier = Modifier.semantics { contentDescription = "打开对话侧栏" }) { LineIcon("sidebar") }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(thread.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val options = vm.currentExecution
@@ -1997,6 +2096,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                 }
             }
         }
+    }
     }
     if (contextDrawerOpen) ContextDrawer(vm, thread.cwd.ifBlank { vm.cwd }, addImage, addVideo, addFiles,
         onDismiss = { contextDrawerOpen = false })
@@ -2447,7 +2547,10 @@ private fun loadCachedRemoteImage(url: String, cacheDir: File): ByteArray {
     val key = MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
     val cached = File(folder, "$key.img")
-    if (cached.isFile && cached.length() in 1..MAX_CHAT_IMAGE_BYTES.toLong()) return cached.readBytes()
+    if (cached.isFile && cached.length() in 1..MAX_CHAT_IMAGE_BYTES.toLong()) {
+        cached.setLastModified(System.currentTimeMillis())
+        return cached.readBytes()
+    }
 
     val connection = URL(url).openConnection().apply {
         connectTimeout = 10_000
@@ -2477,6 +2580,7 @@ private fun loadCachedRemoteImage(url: String, cacheDir: File): ByteArray {
     staged.writeBytes(bytes)
     check(staged.renameTo(cached)) { "无法缓存图片" }
     trimLinkedImageCache(folder)
+    CacheMaintenance.trim(cacheDir)
     return bytes
 }
 
