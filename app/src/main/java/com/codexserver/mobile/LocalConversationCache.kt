@@ -94,10 +94,12 @@ internal class LocalConversationCache(context: Context) {
     private fun encodeThread(thread: CodexThread) = JSONObject()
         .put("id", thread.id).put("title", thread.title).put("model", thread.model)
         .put("running", thread.running).put("turnId", thread.turnId).put("cwd", thread.cwd)
+        .put("updatedAt", thread.updatedAt)
 
     private fun decodeThread(value: JSONObject) = CodexThread(
         value.optString("id"), value.optString("title"), value.optString("model"),
-        value.optBoolean("running"), value.optString("turnId"), value.optString("cwd")
+        value.optBoolean("running"), value.optString("turnId"), value.optString("cwd"),
+        value.optLong("updatedAt")
     ).takeIf { it.id.isNotBlank() }
 
     private fun encodeLine(line: ChatLine): JSONObject = JSONObject()

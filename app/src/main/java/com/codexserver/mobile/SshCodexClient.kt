@@ -11,6 +11,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 import java.io.OutputStream
 import com.jcraft.jsch.ChannelSftp
@@ -24,7 +25,8 @@ import android.util.Base64
 
 data class CodexThread(
     val id: String, val title: String, val model: String = "",
-    val running: Boolean = false, val turnId: String = "", val cwd: String = ""
+    val running: Boolean = false, val turnId: String = "", val cwd: String = "",
+    val updatedAt: Long = 0L
 )
 data class ChatQuestion(val title: String, val options: List<String> = emptyList())
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
@@ -97,8 +99,17 @@ internal fun parseThread(row: JSONObject, model: String = ""): CodexThread {
         title.ifBlank { "新对话" }.take(120),
         model,
         row.optJSONObject("status")?.text("type") == "active" || active != null,
-        active?.text("id").orEmpty(), row.text("cwd")
+        active?.text("id").orEmpty(), row.text("cwd"),
+        threadTimestamp(row.opt("updatedAt") ?: row.opt("updated_at"))
     )
+}
+
+private fun threadTimestamp(value: Any?): Long = when (value) {
+    is Number -> value.toLong().let { if (it in 1 until 10_000_000_000L) it * 1_000 else it }
+    is String -> value.toLongOrNull()?.let { number ->
+        if (number in 1 until 10_000_000_000L) number * 1_000 else number
+    } ?: runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
+    else -> 0L
 }
 
 private fun threadPreviewTitle(preview: Any?): String = when (preview) {
@@ -234,6 +245,7 @@ class SshCodexClient(
     private val ephemeralThreadStarts = AtomicInteger(0)
     private val ephemeralTitleRuns = ConcurrentHashMap<String, EphemeralTitleRun>()
     private val closed = AtomicBoolean(false)
+    internal val diagnosticId = Integer.toHexString(System.identityHashCode(this))
     private var session: Session? = null
     private var channel: ChannelExec? = null
     private var websocket: WebSocketClient? = null
@@ -250,10 +262,27 @@ class SshCodexClient(
         val startedAt = System.nanoTime()
         fun mark(stage: String) {
             val elapsed = (System.nanoTime() - startedAt) / 1_000_000
-            android.util.Log.d("AndriConnection", "$stage ${elapsed}ms")
+            android.util.Log.d("AndriConnection", "[$diagnosticId] $stage elapsed=${elapsed}ms")
         }
+        mark("connect-start")
         try {
             val jsch = JSch()
+            val recordedStages = ConcurrentHashMap.newKeySet<String>()
+            // Only emit fixed stage names. Library messages can contain addresses and
+            // authentication details, so never forward their raw text to Android logs.
+            jsch.setInstanceLogger(object : com.jcraft.jsch.Logger {
+                override fun isEnabled(level: Int) = level == com.jcraft.jsch.Logger.INFO
+                override fun log(level: Int, message: String) {
+                    val stage = when {
+                        message == "Connection established" -> "tcp-connected"
+                        message == "SSH_MSG_KEXINIT sent" -> "ssh-key-exchange-start"
+                        message == "SSH_MSG_NEWKEYS received" -> "ssh-key-exchange-complete"
+                        message.startsWith("Authentication succeeded (") -> "ssh-authenticated"
+                        else -> return
+                    }
+                    if (recordedStages.add(stage)) mark(stage)
+                }
+            })
             // Use the same Ed25519 implementation on Android and in the JVM integration check.
             JSch.setConfig("ssh-ed25519", "com.jcraft.jsch.bc.SignatureEd25519")
             JSch.setConfig("keypairgen.eddsa", "com.jcraft.jsch.bc.KeyPairGenEdDSA")
@@ -499,6 +528,10 @@ class SshCodexClient(
 
     suspend fun renameThread(threadId: String, name: String) {
         request("thread/name/set", JSONObject().put("threadId", threadId).put("name", name))
+    }
+
+    suspend fun archiveThread(threadId: String) {
+        request("thread/archive", JSONObject().put("threadId", threadId))
     }
 
     suspend fun listTurns(threadId: String, cursor: String = ""): JSONObject {
@@ -1012,15 +1045,23 @@ class SshCodexClient(
         val id = ids.getAndIncrement()
         val deferred = CompletableDeferred<JSONObject>()
         pending[id] = deferred
+        val startedAt = System.nanoTime()
+        var succeeded = false
         try {
-            return withTimeout(45_000) {
+            val result = withTimeout(45_000) {
                 write(JSONObject().put("id", id).put("method", method).put("params", params))
                 deferred.await()
             }
+            succeeded = true
+            return result
         } catch (error: TimeoutCancellationException) {
             throw IOException(method + " 等待响应超时，请刷新状态后再操作，避免重复发送", error)
         } finally {
             pending.remove(id)
+            if (method in setOf("initialize", "thread/list", "thread/resume", "thread/read", "thread/turns/list")) {
+                val elapsed = (System.nanoTime() - startedAt) / 1_000_000
+                android.util.Log.d("AndriConnection", "[$diagnosticId] rpc=$method elapsed=${elapsed}ms success=$succeeded")
+            }
         }
     }
 

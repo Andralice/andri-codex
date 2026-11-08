@@ -61,7 +61,7 @@ class MobileRegressionCheck {
             println("Real text turn passed; model reply persisted")
             val imageData = "data:image/png;base64," + Base64.getEncoder().encodeToString(File("codex/checks/protocol-image-018.png").readBytes())
             val imageTurn = client.sendTurn(threadId, "gpt-6-luna",
-                "MOBILE_PROTOCOL_018 image check. Describe the shapes, their colors, and transcribe the text printed in the attached image. Do not use tools or access files.", imageData)
+                "MOBILE_PROTOCOL_018 image check. Describe the shapes, their colors, and transcribe the text printed in the attached image. Do not use tools or access files.", listOf(imageData))
             awaitTurn(imageTurn)
             messages = parseMessages(client.readThread(threadId).getJSONObject("thread"))
             val imageReply = messages.last { it.role == "assistant" }.text

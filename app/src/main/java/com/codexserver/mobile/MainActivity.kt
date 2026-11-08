@@ -5,6 +5,8 @@ import android.net.Uri
 import android.content.Intent
 import androidx.core.content.FileProvider
 import android.provider.OpenableColumns
+import android.provider.MediaStore
+import android.content.ContentValues
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +24,7 @@ import androidx.compose.animation.core.snap
 import androidx.compose.foundation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -45,6 +48,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -79,6 +83,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.lifecycleScope
@@ -103,6 +108,9 @@ import java.net.URL
 import java.net.URI
 import java.net.URLConnection
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import android.widget.TextView
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -178,7 +186,7 @@ class MainActivity : ComponentActivity() {
                         }.onSuccess(vm::importKey).onFailure { vm.error = "私钥导入失败：" + it.message }
                     }
                 }
-                val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+                fun importImageUris(uris: List<Uri>) {
                     if (uris.isNotEmpty()) lifecycleScope.launch {
                         runCatching {
                             withContext(Dispatchers.IO) {
@@ -207,6 +215,12 @@ class MainActivity : ComponentActivity() {
                         }.onSuccess(vm::importImages)
                             .onFailure { vm.reportChatError(it.message.orEmpty(), "图片添加失败") }
                     }
+                }
+                val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+                    importImageUris(uris)
+                }
+                val legacyImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                    result.data?.data?.let { importImageUris(listOf(it)) }
                 }
                 val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     if (uri != null) lifecycleScope.launch {
@@ -247,11 +261,15 @@ class MainActivity : ComponentActivity() {
                 }
                 BackHandler(enabled = vm.activeId != null && vm.requests.isEmpty()) { vm.back() }
                 val screenKey = when {
-                    !vm.connected && vm.busy && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
+                    !vm.connected && vm.connecting && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
                     !vm.connected && vm.activeThread == null && !vm.hasCachedSession -> "connection"
                     vm.activeThread == null -> "thread-list"
                     vm.openingThreadId != null || vm.threadOpenError.isNotBlank() -> "thread-loading:${vm.activeId}"
                     else -> "chat"
+                }
+                LaunchedEffect(screenKey, vm.foregroundGeneration, vm.connected, vm.threads.size) {
+                    withFrameNanos { }
+                    vm.recordScreenFrame(screenKey)
                 }
                 LaunchedEffect(vm.connected, vm.hasCachedSession, notificationThreadId) {
                     val threadId = notificationThreadId
@@ -320,7 +338,13 @@ class MainActivity : ComponentActivity() {
                                 screen.startsWith("thread-loading:") -> ThreadLoadingScreen(vm)
                                 else -> key(vm.activeId) { ChatScreen(vm,
                                     addImage = {
-                                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        if (Build.VERSION.SDK_INT >= 33) {
+                                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        } else {
+                                            legacyImagePicker.launch(Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                                                type = "image/*"
+                                            })
+                                        }
                                     },
                                     addVideo = { videoPicker.launch(arrayOf("video/*")) },
                                     addFiles = { filePicker.launch(arrayOf("*/*")) }) }
@@ -531,15 +555,15 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
         Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MutedText("服务器连接")
-                ConnectionField("服务器地址", vm.host, { vm.host = it }, !vm.busy)
+                ConnectionField("服务器地址", vm.host, { vm.host = it }, !vm.connecting)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ConnectionField("端口", vm.port, { vm.port = it }, !vm.busy, Modifier.weight(1f), true)
-                    ConnectionField("用户名", vm.username, { vm.username = it }, !vm.busy, Modifier.weight(2f))
+                    ConnectionField("端口", vm.port, { vm.port = it }, !vm.connecting, Modifier.weight(1f), true)
+                    ConnectionField("用户名", vm.username, { vm.username = it }, !vm.connecting, Modifier.weight(2f))
                 }
-                ConnectionField("工作目录", vm.cwd, { vm.cwd = it }, !vm.busy)
+                ConnectionField("工作目录", vm.cwd, { vm.cwd = it }, !vm.connecting)
             }
         }
-        Surface(onClick = importKey, enabled = !vm.busy, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Surface(onClick = importKey, enabled = !vm.connecting, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)),
@@ -553,15 +577,15 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
         }
         if (vm.privateKey.isNotBlank()) OutlinedTextField(vm.passphrase, { vm.passphrase = it }, label = { Text("私钥口令（如有）") },
             modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(),
-            shape = RoundedCornerShape(14.dp), enabled = !vm.busy)
-        Button(connect, enabled = vm.privateKey.isNotBlank() && !vm.busy,
+            shape = RoundedCornerShape(14.dp), enabled = !vm.connecting)
+        Button(connect, enabled = vm.privateKey.isNotBlank() && !vm.connecting,
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = RoundedCornerShape(18.dp)) {
-            if (vm.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            if (vm.connecting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             else { Text("连接工作区", fontSize = 16.sp); Spacer(Modifier.weight(1f)); Text("→", fontSize = 22.sp) }
         }
         MutedText("连接前验证服务器身份 · 中转密钥留在服务器")
         ErrorText(vm.error)
-        if (vm.busy || vm.error.isNotBlank()) MutedText(vm.status)
+        if (vm.connecting || vm.error.isNotBlank()) MutedText(vm.status)
     }
 }
 
@@ -789,7 +813,7 @@ private fun ContextDrawer(
                     vm.videoAttachments[id]?.let { ContextRow(it.label, "手机视频 · ${formatVideoSize(it.sizeBytes)}", onRemove = vm::removeVideo) }
                     HorizontalDivider()
                     ContextAction("从手机添加文件", "支持从 QQ、微信分享文件") { onDismiss(); addFiles() }
-                    ContextAction("添加手机图片", "一次可多选最多 10 张") { onDismiss(); addImage() }
+                    ContextAction("添加手机图片", "每次选 1 张，可重复添加，最多 10 张") { onDismiss(); addImage() }
                     ContextAction("添加手机视频", "上传原画质视频") { onDismiss(); addVideo() }
                     ContextAction("添加网页或文字", "粘贴链接、选中文字或补充说明") { webDialog = true }
                 }
@@ -1436,9 +1460,13 @@ private fun ThreadListScreen(vm: MobileViewModel) {
     }
     val matchingRows = vm.threads.filter { thread ->
         query.isBlank() || thread.title.contains(query, ignoreCase = true) || thread.model.contains(query, ignoreCase = true) ||
-            vm.projectFor(thread.id).contains(query, ignoreCase = true)
-    }
+            vm.projectFor(thread.id).contains(query, ignoreCase = true) ||
+            threadPreview(vm.messages[thread.id].orEmpty()).contains(query, ignoreCase = true)
+    }.sortedWith(compareByDescending<CodexThread> { vm.isPinned(it.id) }.thenByDescending { it.updatedAt })
     val rows = if (vm.onlyRunningThreads) matchingRows.filter { it.id in vm.running } else matchingRows
+    val layoutReported = remember(vm.foregroundGeneration, vm.connected, rows.size) {
+        java.util.concurrent.atomic.AtomicBoolean(false)
+    }
     val runningRows = rows.filter { it.id in vm.running }
     val recentRows = rows.filterNot { it.id in vm.running }
 
@@ -1449,20 +1477,16 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                     LineIcon("code", Modifier.size(22.dp), Color(0xFF575550))
                 }
                 Text("Andri", Modifier.padding(start = 9.dp).weight(1f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     val connectionDot by animateColorAsState(
-                        if (vm.connected) Color(0xFF6F9B7D) else if (vm.busy) Color(0xFFB18A54) else Color(0xFFB2A9B7),
+                        if (vm.connected) Color(0xFF6F9B7D) else if (vm.connecting) Color(0xFFB18A54) else Color(0xFFB2A9B7),
                         tween(220), label = "connection-indicator")
-                    Box(Modifier.size(7.dp).background(connectionDot, CircleShape))
-                    AnimatedContent(
-                        targetState = if (vm.connected) "82 · 已连接" else if (vm.busy) "正在连接" else "未连接",
-                        transitionSpec = {
-                            (fadeIn(tween(140)) + slideInVertically(tween(170)) { it / 3 }) togetherWith
-                                (fadeOut(tween(100)) + slideOutVertically(tween(130)) { -it / 3 })
-                        }, label = "connection-label") { label ->
-                        Text(label, fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1)
-                    }
+                    Box(Modifier.size(8.dp).background(connectionDot, CircleShape)
+                        .semantics { contentDescription = when {
+                            vm.connected && vm.synchronizing -> "已连接，正在同步"
+                            vm.connected -> "已连接"
+                            else -> "连接未恢复"
+                        } })
                 }
                 Surface(onClick = vm::newThread, enabled = vm.connected && !vm.busy,
                     modifier = Modifier.size(44.dp).semantics { contentDescription = "新建对话" },
@@ -1505,28 +1529,20 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                         }) {
                             LineIcon(if (searchExpanded) "close" else "search", Modifier.size(19.dp), Color(0xFF807D78))
                         }
-                        AnimatedContent(rows.size, transitionSpec = {
-                            (fadeIn(tween(120)) + slideInVertically(tween(160)) { it / 2 }) togetherWith
-                                (fadeOut(tween(90)) + slideOutVertically(tween(130)) { -it / 2 })
-                        }, label = "thread-count") { count ->
-                            Text("$count 个", Modifier.padding(start = 2.dp, end = 7.dp),
-                                fontSize = 12.sp, color = Color(0xFF85827C), maxLines = 1)
-                        }
                     }
                 }
             }
             AnimatedVisibility(!vm.connected, enter = fadeIn(tween(160)) + expandVertically(),
                 exit = fadeOut(tween(120)) + shrinkVertically()) {
-                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (vm.busy) "正在恢复连接，先显示本地内容。" else "离线缓存 · 发送和同步需要连接。",
-                        Modifier.weight(1f), fontSize = 12.sp, color = colors.onSurfaceVariant)
-                    if (!vm.busy && vm.privateKey.isNotBlank()) TextButton(vm::connect,
-                        contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连", color = neutralInk) }
+                Surface(Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFFF1EFEA),
+                    shape = RoundedCornerShape(10.dp)) {
+                    Row(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (vm.connecting) "正在后台恢复连接，可继续查看和编辑" else "离线缓存 · 可查看和编辑草稿",
+                            Modifier.weight(1f), fontSize = 12.sp, color = Color(0xFF5D5954))
+                        if (!vm.connecting && vm.privateKey.isNotBlank()) TextButton(vm::connect,
+                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连", color = neutralInk) }
+                    }
                 }
-            }
-            AnimatedVisibility(vm.busy, enter = fadeIn(tween(120)) + expandVertically(),
-                exit = fadeOut(tween(100)) + shrinkVertically()) {
-                LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF77746F), trackColor = Color(0xFFEAE9E5))
             }
             ErrorText(vm.error)
             val pendingSharedFiles = vm.sharedFilesFor(MobileViewModel.PENDING_SHARED_FILES)
@@ -1538,7 +1554,9 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp),
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned {
+                if (layoutReported.compareAndSet(false, true)) vm.recordScreenFrame("thread-list-layout")
+            }, contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item(key = "thread-empty-state") {
                     AnimatedVisibility(rows.isEmpty() && !vm.busy, enter = fadeIn(tween(180)) + expandVertically(),
@@ -1557,7 +1575,6 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                     Row(Modifier.fillMaxWidth().padding(start = 2.dp, top = 3.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         Text("正在进行", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4A4844))
-                        Text(runningRows.size.toString(), fontSize = 12.sp, color = Color(0xFF77746F))
                     }
                 }
                 items(runningRows, key = { "running-" + it.id }) { thread ->
@@ -1570,7 +1587,6 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(if (runningRows.isEmpty()) "所有对话" else "最近对话", Modifier.weight(1f),
                             fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4A4844))
-                        Text(recentRows.size.toString() + " 个", fontSize = 12.sp, color = Color(0xFF8C8984))
                     }
                 }
                 items(recentRows, key = { it.id }) { thread ->
@@ -1632,7 +1648,7 @@ private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (Stri
                 contentPadding = PaddingValues(bottom = 12.dp)) {
                 items(matching, key = { "sidebar-${it.id}" }) { item ->
                     val selected = item.id == activeId
-                    Surface(onClick = { onSelect(item.id) }, enabled = !vm.busy,
+                    Surface(onClick = { onSelect(item.id) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
                         shape = RoundedCornerShape(12.dp),
                         color = if (selected) Color(0xFFE9E8E4) else Color.Transparent) {
@@ -1661,35 +1677,125 @@ private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (Stri
 
 @Composable
 private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Boolean, modifier: Modifier = Modifier) {
-    val status = vm.lastTaskStatus(thread.id)
-    val idleLabel = status.ifBlank {
-        thread.model.ifBlank { if (thread.title == "新对话") "尚未执行" else "继续对话" }
+    var offsetPx by rememberSaveable(thread.id) { mutableFloatStateOf(0f) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val actionWidth = 204.dp
+    val actionWidthPx = with(density) { actionWidth.toPx() }
+    val project = vm.projectFor(thread.id)
+    val projectColor = projectColor(project)
+    val preview = threadPreview(vm.messages[thread.id].orEmpty())
+    val cacheLabel = !vm.connected
+    val age = relativeThreadTime(thread.updatedAt)
+    val startedAt = vm.runningSince[thread.id]
+    var now by remember(thread.id, active) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(active, startedAt) {
+        if (active && startedAt != null) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(15_000)
+            }
+        }
     }
-    val activeColor = Color(0xFF618168)
-    Column(modifier.fillMaxWidth()) {
-        Surface(onClick = { vm.openThread(thread.id) }, enabled = !vm.busy,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
-            shape = RoundedCornerShape(8.dp), color = Color.Transparent) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 11.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(thread.title, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
-                    color = Color(0xFF302F2C), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (active) {
-                        Box(Modifier.size(6.dp).background(activeColor, CircleShape))
-                        Text("正在执行", fontSize = 12.sp, color = activeColor)
-                        Text("·", fontSize = 12.sp, color = Color(0xFF8C8984))
-                        Text(vm.projectFor(thread.id), fontSize = 12.sp, color = Color(0xFF77746F),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } else {
-                        val statusColor = if ("失败" in status) MaterialTheme.colorScheme.error else Color(0xFF77746F)
-                        Text(vm.projectFor(thread.id) + "  ·  " + idleLabel, fontSize = 12.sp, color = statusColor,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val runningFor = startedAt?.let { formatElapsed(now - it) }
+    val activity = vm.activity[thread.id].orEmpty().takeIf { it.isNotBlank() }
+    val activeColor = Color(0xFF4F725B)
+
+    Box(modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))) {
+        Row(Modifier.matchParentSize().background(Color(0xFFEDE9E3)), horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { vm.togglePinned(thread.id); offsetPx = 0f }, modifier = Modifier.width(64.dp),
+                contentPadding = PaddingValues(0.dp)) { Text(if (vm.isPinned(thread.id)) "取消置顶" else "置顶", fontSize = 11.sp, color = Color(0xFF514C47)) }
+            TextButton(onClick = { vm.archiveThread(thread.id); offsetPx = 0f }, modifier = Modifier.width(64.dp),
+                contentPadding = PaddingValues(0.dp)) { Text("归档", fontSize = 11.sp, color = Color(0xFF514C47)) }
+            TextButton(onClick = { confirmDelete = true; offsetPx = 0f }, modifier = Modifier.width(64.dp),
+                contentPadding = PaddingValues(0.dp)) { Text("删除", fontSize = 11.sp, color = Color(0xFF9B4F45)) }
+        }
+        Surface(onClick = {
+            if (offsetPx != 0f) offsetPx = 0f else vm.openThread(thread.id)
+        },
+            modifier = Modifier.fillMaxWidth().offset { IntOffset(offsetPx.roundToInt(), 0) }
+                .pointerInput(actionWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { _, drag -> offsetPx = (offsetPx + drag).coerceIn(-actionWidthPx, 0f) },
+                        onDragEnd = { offsetPx = if (offsetPx <= -actionWidthPx * .45f) -actionWidthPx else 0f },
+                        onDragCancel = { offsetPx = 0f })
+                },
+            shape = RoundedCornerShape(10.dp),
+            color = if (active) Color(0xFFF4F7F2) else Color.Transparent,
+            border = if (active) BorderStroke(1.dp, Color(0xFFE0E9DF)) else null) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = if (active) 9.dp else 7.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(Modifier.size(if (active) 8.dp else 7.dp).background(projectColor, CircleShape)
+                        .semantics { contentDescription = "项目 $project" })
+                    Text(thread.title, Modifier.weight(1f), fontSize = if (active) 15.sp else 15.sp,
+                        lineHeight = 19.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        color = Color(0xFF302F2C), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (vm.isPinned(thread.id)) Text("置顶", fontSize = 10.sp, color = Color(0xFF6B625A))
+                    if (cacheLabel) Text("缓存", fontSize = 10.sp, color = Color(0xFF6B625A))
+                }
+                if (active) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(listOfNotNull(project.takeIf { it.isNotBlank() }, runningFor?.let { "已运行 $it" }, activity)
+                            .joinToString(" · ").ifBlank { "正在执行" },
+                            Modifier.weight(1f), fontSize = 11.sp, color = activeColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = activeColor, trackColor = Color(0xFFDDE8DC))
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(project, fontSize = 11.sp, color = Color(0xFF5D5954), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        age?.let {
+                            Text("·", fontSize = 11.sp, color = Color(0xFF625F5B))
+                            Text(it, fontSize = 11.sp, color = Color(0xFF5D5954), maxLines = 1)
+                        }
+                    }
+                    if (preview.isNotBlank()) Text(preview, fontSize = 11.sp, color = Color(0xFF5D5954),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
-        HorizontalDivider(color = Color(0xFFE7E5E1), thickness = 0.8.dp)
+    }
+    HorizontalDivider(color = Color(0xFFE7E5E1), thickness = 0.8.dp)
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
+        title = { Text("删除这个会话？") },
+        text = { Text("会话将从列表中移除，并在服务器上归档。") },
+        confirmButton = { TextButton(onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { Text("删除", color = Color(0xFF9B4F45)) } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } })
+}
+
+private val threadProjectColors = listOf(
+    Color(0xFF8B776A), Color(0xFF6E897B), Color(0xFF7D7895), Color(0xFF9A8060), Color(0xFF70858A)
+)
+
+private fun projectColor(project: String): Color = threadProjectColors[
+    (project.fold(17) { hash, char -> hash * 31 + char.code } and Int.MAX_VALUE) % threadProjectColors.size
+]
+
+private fun threadPreview(lines: List<ChatLine>): String = lines.asReversed()
+    .firstOrNull { it.role in setOf("user", "assistant") && it.text.isNotBlank() }
+    ?.text.orEmpty().replace(Regex("\\s+"), " ").trim()
+
+private fun relativeThreadTime(updatedAt: Long): String? {
+    if (updatedAt <= 0L) return null
+    val elapsed = (System.currentTimeMillis() - updatedAt).coerceAtLeast(0L)
+    val minutes = elapsed / 60_000L
+    return when {
+        minutes < 1 -> "刚刚"
+        minutes < 60 -> "$minutes 分钟前"
+        minutes < 24 * 60 -> "${minutes / 60} 小时前"
+        minutes < 48 * 60 -> "昨天"
+        minutes < 7 * 24 * 60 -> "${minutes / (24 * 60)} 天前"
+        else -> SimpleDateFormat("MM月dd日", Locale.CHINA).format(Date(updatedAt))
+    }
+}
+
+private fun formatElapsed(milliseconds: Long): String {
+    val seconds = (milliseconds / 1_000L).coerceAtLeast(0L)
+    return when {
+        seconds < 60 -> "${seconds}秒"
+        seconds < 3_600 -> "${seconds / 60}分"
+        else -> "${seconds / 3_600}小时${(seconds / 60) % 60}分"
     }
 }
 
@@ -1709,7 +1815,7 @@ private fun ThreadFilterChip(label: String, count: Int, selected: Boolean, selec
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, fontSize = 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 color = foreground)
-            Text(count.toString(), fontSize = 11.sp, color = if (selected) selectedText.copy(alpha = 0.78f) else Color(0xFF77746F))
+            Text(count.toString(), fontSize = 11.sp, color = if (selected) selectedText.copy(alpha = 0.78f) else Color(0xFF625F5B))
         }
     }
 }
@@ -1835,15 +1941,22 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
             AppMenu(vm, thread)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        if (!vm.connected) {
+        if (!vm.connected || !vm.canSendToThread(thread.id)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (vm.busy) "正在连接服务器 · 显示本地内容" else "离线缓存 · 连接后同步最新内容",
+                    when {
+                        vm.connected -> "当前对话尚未同步 · 可继续编辑"
+                        vm.connecting -> "正在后台恢复连接 · 可继续编辑"
+                        else -> "离线缓存 · 草稿会自动保存"
+                    },
                     Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (!vm.busy && vm.privateKey.isNotBlank()) {
+                if (!vm.connected && !vm.connecting && vm.privateKey.isNotBlank()) {
                     TextButton(vm::connect, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连") }
+                }
+                if (vm.connected && !vm.synchronizing) {
+                    TextButton({ vm.openThread(thread.id) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重试") }
                 }
             }
         }
@@ -2075,7 +2188,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                 val hasQueuedContent = draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()
                                 FilledIconButton(
                                     onClick = if (hasQueuedContent) vm::enqueueDraft else vm::stop,
-                                    enabled = vm.connected && (if (hasQueuedContent) thread.id !in vm.queueSubmitting && !vm.busy else !vm.busy),
+                                    enabled = vm.canSendToThread(thread.id) && (if (hasQueuedContent) thread.id !in vm.queueSubmitting && !vm.busy else !vm.busy),
                                     modifier = Modifier.size(44.dp).semantics {
                                         contentDescription = if (hasQueuedContent) "排队发送消息" else "暂停当前任务"
                                     },
@@ -2085,7 +2198,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                     else LineIcon(if (hasQueuedContent) "paperplane" else "pause", Modifier.size(21.dp))
                                 }
                             } else FilledIconButton(vm::send,
-                                enabled = vm.connected && (draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) && !sending && !vm.busy,
+                                enabled = vm.canSendToThread(thread.id) && (draft.isNotBlank() || imageAttachments.isNotEmpty() || videoAttachment != null || sharedFiles.isNotEmpty() || references.isNotEmpty()) && !sending && !vm.busy,
                                 modifier = Modifier.size(44.dp).semantics { contentDescription = "发送消息" }, shape = CircleShape) {
                                 if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 else LineIcon("paperplane", Modifier.size(21.dp))
@@ -2185,6 +2298,7 @@ private fun ChatImage(
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val saveScope = rememberCoroutineScope()
     var originalBytes by remember(source) { mutableStateOf<ByteArray?>(null) }
     val bitmap by produceState<android.graphics.Bitmap?>(null, source) {
         value = withContext(Dispatchers.IO) {
@@ -2236,8 +2350,19 @@ private fun ChatImage(
         }
     }
     var saveStatus by remember(source) { mutableStateOf("") }
+    var pendingLegacySave by remember(source) { mutableStateOf<Triple<ByteArray, String, String>?>(null) }
     val mimeType = remember(source, originalBytes) { imageMimeType(source, originalBytes) }
     val suggestedName = remember(source, mimeType) { imageFileName(source, mimeType) }
+    val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val pending = pendingLegacySave
+        pendingLegacySave = null
+        if (granted && pending != null) saveScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { saveImageToLegacyGallery(context, pending.first, pending.second, pending.third) }
+            }
+            saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+        } else if (!granted) saveStatus = "需要存储权限才能保存到相册"
+    }
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mimeType)) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val bytes = originalBytes
@@ -2249,7 +2374,29 @@ private fun ChatImage(
     }
     fun saveOriginal() {
         if (originalBytes == null) saveStatus = "图片尚未加载完成"
-        else saveLauncher.launch(suggestedName)
+        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val bytes = originalBytes ?: return
+            saveStatus = "正在保存到相册…"
+            saveScope.launch {
+                val result = runCatching {
+                    withContext(Dispatchers.IO) { saveImageToGallery(context, bytes, suggestedName, mimeType) }
+                }
+                saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            pendingLegacySave = Triple(originalBytes ?: return, suggestedName, mimeType)
+            legacyStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            val bytes = originalBytes ?: return
+            saveStatus = "正在保存到相册…"
+            saveScope.launch {
+                val result = runCatching {
+                    withContext(Dispatchers.IO) { saveImageToLegacyGallery(context, bytes, suggestedName, mimeType) }
+                }
+                saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+            }
+        }
     }
 
     if (bitmap != null && galleryPage) {
@@ -2323,6 +2470,33 @@ private fun ChatImage(
             }
         }
     }
+}
+
+private fun saveImageToGallery(context: android.content.Context, bytes: ByteArray, name: String, mimeType: String) {
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, name)
+        put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+        put(MediaStore.Images.Media.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_PICTURES}/Andri")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
+    }
+    val resolver = context.contentResolver
+    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: error("无法创建相册图片")
+    try {
+        resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: error("无法写入相册图片")
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+    } catch (error: Throwable) {
+        resolver.delete(uri, null, null)
+        throw error
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun saveImageToLegacyGallery(context: android.content.Context, bytes: ByteArray, name: String, mimeType: String) {
+    val directory = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Andri")
+    check(directory.exists() || directory.mkdirs()) { "无法创建相册目录" }
+    val output = File(directory, name)
+    output.outputStream().use { it.write(bytes) }
+    android.media.MediaScannerConnection.scanFile(context, arrayOf(output.absolutePath), arrayOf(mimeType), null)
 }
 
 private fun imageMimeType(source: String, bytes: ByteArray?): String {
@@ -2724,10 +2898,10 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (answered) "问题记录" else "需要你的选择", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
             line.questions.forEachIndexed { index, question ->
-                QuestionFields(question.title, question.options.map { it to "" }, answers[index].orEmpty(), !answered && vm.connected && !vm.busy && vm.activeId !in vm.sending) { answers[index] = it }
+                QuestionFields(question.title, question.options.map { it to "" }, answers[index].orEmpty(), !answered && vm.canSendToThread(vm.activeId.orEmpty()) && !vm.busy && vm.activeId !in vm.sending) { answers[index] = it }
             }
             if (!answered) Button(onClick = { vm.sendQuestionAnswers(line, line.questions.indices.map { answers[it].orEmpty() }) },
-                enabled = vm.connected && !vm.busy && vm.activeId !in vm.sending && line.questions.indices.all { !answers[it].isNullOrBlank() },
+                enabled = vm.canSendToThread(vm.activeId.orEmpty()) && !vm.busy && vm.activeId !in vm.sending && line.questions.indices.all { !answers[it].isNullOrBlank() },
                 shape = RoundedCornerShape(12.dp)) { Text("提交回答") }
         }
     }
