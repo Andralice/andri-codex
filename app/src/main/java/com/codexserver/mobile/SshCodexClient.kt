@@ -229,6 +229,7 @@ internal fun parseMessages(thread: JSONObject): List<ChatLine> {
 class SshCodexClient(
     private val host: String, private val port: Int, private val username: String,
     private val privateKey: String, private val passphrase: String,
+    private val onConnectionStage: (String) -> Unit = {},
     onServerMessage: (JSONObject) -> Unit
 ) {
     private class EphemeralTitleRun {
@@ -276,16 +277,18 @@ class SshCodexClient(
             }
         })
 
-    suspend fun connect() = withContext(Dispatchers.IO) {
+    private fun markConnection(stage: String) {
+        val elapsed = (System.nanoTime() - connectionStartedAt) / 1_000_000
+        android.util.Log.d("AndriConnection", "[$diagnosticId] $stage elapsed=${elapsed}ms")
+        recordConnectionTiming(stage, elapsed)
+        onConnectionStage(stage)
+    }
+
+    /** Also used by recovery downloads; no Codex process or WebSocket is required. */
+    suspend fun connectSshOnly() = withContext(Dispatchers.IO) {
         require(host.isNotBlank() && username.isNotBlank() && port in 1..65535) { "请填写有效的服务器地址、用户名和端口" }
         require(privateKey.contains("PRIVATE KEY")) { "请选择 SSH 私钥文件，不是 .pub 公钥文件" }
-        val startedAt = System.nanoTime()
-        fun mark(stage: String) {
-            val elapsed = (System.nanoTime() - startedAt) / 1_000_000
-            android.util.Log.d("AndriConnection", "[$diagnosticId] $stage elapsed=${elapsed}ms")
-            recordConnectionTiming(stage, elapsed)
-        }
-        mark("connect-start")
+        markConnection("connect-start")
         try {
             val jsch = JSch()
             val recordedStages = ConcurrentHashMap.newKeySet<String>()
@@ -301,7 +304,7 @@ class SshCodexClient(
                         message.startsWith("Authentication succeeded (") -> "ssh-authenticated"
                         else -> return
                     }
-                    if (recordedStages.add(stage)) mark(stage)
+                    if (recordedStages.add(stage)) markConnection(stage)
                 }
             })
             // Use the same Ed25519 implementation on Android and in the JVM integration check.
@@ -315,16 +318,31 @@ class SshCodexClient(
                 "codex-mobile", privateKey.toByteArray(Charsets.UTF_8), null,
                 passphrase.takeIf { it.isNotEmpty() }?.toByteArray(Charsets.UTF_8)
             )
-            session = jsch.getSession(username, host, port).apply {
+            val sshSession = jsch.getSession(username, host, port).apply {
                 setConfig("StrictHostKeyChecking", "yes")
                 setConfig("PreferredAuthentications", "publickey")
                 setConfig("server_host_key", "ssh-ed25519")
                 serverAliveInterval = 20_000
                 serverAliveCountMax = 3
                 timeout = 45_000
-                connect(15_000)
             }
-            mark("ssh-session")
+            session = sshSession
+            check(!closed.get()) { "连接已取消" }
+            sshSession.connect(15_000)
+            if (closed.get()) {
+                sshSession.disconnect()
+                error("连接已取消")
+            }
+            markConnection("ssh-session")
+        } catch (error: Exception) {
+            disconnect(error, report = false)
+            throw error
+        }
+    }
+
+    suspend fun connect() = withContext(Dispatchers.IO) {
+        try {
+            connectSshOnly()
             val exec = (session!!.openChannel("exec") as ChannelExec).apply {
                 setCommand("bash -lc 'codex app-server proxy --sock /home/ubuntu/.codex/mobile-control/app-server.sock'")
             }
@@ -333,7 +351,7 @@ class SshCodexClient(
             val output = exec.outputStream
             val errorInput = exec.errStream
             exec.connect(15_000)
-            mark("ssh-exec")
+            markConnection("ssh-exec")
             scope.launch {
                 runCatching {
                     errorInput.bufferedReader(Charsets.UTF_8).useLines { lines ->
@@ -396,13 +414,13 @@ class SshCodexClient(
                 override fun close() { exec.disconnect() }
             })
             check(ws.connectBlocking(20, TimeUnit.SECONDS)) { "Codex WebSocket 握手失败，请检查服务器 app-server" }
-            mark("websocket")
+            markConnection("websocket")
             request("initialize", JSONObject()
                 .put("clientInfo", JSONObject().put("name", "codex-server-android")
                     .put("title", "Andri Android").put("version", BuildConfig.VERSION_NAME))
                 .put("capabilities", JSONObject().put("experimentalApi", true)))
             notify("initialized", JSONObject())
-            mark("initialized")
+            markConnection("initialized")
         } catch (error: Exception) {
             disconnect(error, report = false)
             throw error
@@ -610,27 +628,35 @@ class SshCodexClient(
         request("turn/steer", JSONObject().put("threadId", threadId).put("expectedTurnId", turnId).put("input", userInput(prompt)))
     }
 
+    private fun readReleaseJson(sftp: ChannelSftp, path: String): String = sftp.get(path).use { input ->
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            check(out.size() + count <= 256 * 1024) { "版本清单过大" }
+            out.write(buffer, 0, count)
+        }
+        val bytes = out.toByteArray()
+        check(bytes.size <= 256 * 1024) { "版本清单过大" }
+        bytes.toString(Charsets.UTF_8)
+    }
+
     suspend fun readUpdateInfo(path: String): UpdateInfo = withContext(Dispatchers.IO) {
         val sftp = openSftp()
         sftp.connect(15_000)
         try {
-            val json = sftp.get(path).use { input ->
-                val bytes = ByteArray(64 * 1024)
-                var total = 0
-                val out = ByteArrayOutputStream()
-                while (true) {
-                    val count = input.read(bytes)
-                    if (count < 0) break
-                    total += count
-                    check(total <= 64 * 1024) { "更新清单过大" }
-                    out.write(bytes, 0, count)
-                }
-                out.toString(Charsets.UTF_8.name())
-            }
-            val info = parseUpdateInfo(JSONObject(json))
+            val info = parseUpdateInfo(JSONObject(readReleaseJson(sftp, path)))
             check(sftp.stat(info.apkPath).size == info.sizeBytes) { "更新包大小与清单不一致" }
             info
         } finally { sftp.disconnect() }
+    }
+
+    suspend fun readReleaseHistory(): List<UpdateInfo> = withContext(Dispatchers.IO) {
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try { parseReleaseHistory(JSONObject(readReleaseJson(sftp, RELEASE_ROOT + "history.json"))) }
+        finally { sftp.disconnect() }
     }
 
     suspend fun downloadUpdate(info: UpdateInfo, output: OutputStream, onBytes: (Long) -> Unit = {}) = withContext(Dispatchers.IO) {

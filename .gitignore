@@ -18,6 +18,8 @@ local.properties
 !/codex/publish-update.ps1
 !/codex/build-release.sh
 !/codex/publish-server-update.sh
+!/codex/build-history-index.py
+!/codex/release-notes-0.1.41.txt
 !/codex/mobile-redesign-preview.html
 !/codex/preview-browser.html
 !/codex/codex-mobile-preview.html

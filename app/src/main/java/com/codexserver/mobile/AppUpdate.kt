@@ -11,14 +11,14 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 @Suppress("DEPRECATION")
-internal fun verifyUpdateApk(context: Context, file: File, info: UpdateInfo) {
+internal fun verifyUpdateApk(context: Context, file: File, info: UpdateInfo, allowHistorical: Boolean = false) {
     val manager = context.packageManager
     val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
     val archive = manager.getPackageArchiveInfo(file.absolutePath, flags) ?: error("无法读取 APK 安装信息")
     val installed = manager.getPackageInfo(context.packageName, flags)
     check(archive.packageName == context.packageName) { "更新包不属于当前应用" }
     val code = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
-    check(code == info.versionCode.toLong() && code > BuildConfig.VERSION_CODE) { "更新包版本与清单不一致" }
+    check(code == info.versionCode.toLong() && (allowHistorical || code > BuildConfig.VERSION_CODE)) { "更新包版本与清单不一致" }
     check(archive.versionName == info.versionName) { "更新包版本名与清单不一致" }
     fun signatures(value: PackageInfo): Set<String> {
         val signatures = if (Build.VERSION.SDK_INT >= 28) value.signingInfo?.apkContentsSigners else value.signatures

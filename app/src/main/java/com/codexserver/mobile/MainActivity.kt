@@ -24,7 +24,6 @@ import androidx.compose.animation.core.snap
 import androidx.compose.foundation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -83,7 +82,6 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.lifecycleScope
@@ -332,6 +330,9 @@ class MainActivity : ComponentActivity() {
                                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                                     Text(vm.status, Modifier.padding(top = 16.dp), fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("连接最多等待 45 秒", Modifier.padding(top = 8.dp), fontSize = 12.sp)
+                                    TextButton(vm::cancelConnection) { Text("取消连接 / 修改配置") }
+                                    TextButton(vm::openHistory) { Text("历史版本与恢复下载") }
                                 }
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
                                 screen == "thread-list" -> ThreadListScreen(vm)
@@ -382,7 +383,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 vm.requests.firstOrNull()?.let { request -> key(request.get("id").toString()) { RequestDialog(vm, request) } }
-                if (vm.updateDialog && vm.requests.isEmpty() && vm.connected) UpdateDialog(vm) { file ->
+                if (vm.historyDialog) ReleaseHistoryDialog(vm) { file -> installUpdate(this@MainActivity, file) }
+                if (vm.updateDialog && !vm.historyDialog && vm.requests.isEmpty() && vm.connected) UpdateDialog(vm) { file ->
                     runCatching { installUpdate(this@MainActivity, file) }
                         .onFailure { vm.reportInstallError("无法打开系统安装器：" + it.message) }
                 }
@@ -583,6 +585,8 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
             if (vm.connecting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             else { Text("连接工作区", fontSize = 16.sp); Spacer(Modifier.weight(1f)); Text("→", fontSize = 22.sp) }
         }
+        if (vm.connecting) TextButton(vm::cancelConnection) { Text("取消连接") }
+        TextButton(vm::openHistory) { Text("历史版本与恢复下载 · v" + BuildConfig.VERSION_NAME) }
         MutedText("连接前验证服务器身份 · 中转密钥留在服务器")
         ErrorText(vm.error)
         if (vm.connecting || vm.error.isNotBlank()) MutedText(vm.status)
@@ -634,6 +638,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
             DropdownMenuItem(text = { Text("工作区与权限") }, enabled = !vm.busy, onClick = { expanded = false; workspaceDialog = true })
             DropdownMenuItem(text = { Text("全局指令") }, onClick = { expanded = false; globalInstructionsDialog = true; vm.loadGlobalInstructions() })
             DropdownMenuItem(text = { Text("检查更新 · v" + BuildConfig.VERSION_NAME) }, onClick = { expanded = false; vm.openUpdates() })
+            DropdownMenuItem(text = { Text("历史版本与恢复下载") }, onClick = { expanded = false; vm.openHistory() })
             DropdownMenuItem(text = { Text("断开服务器") }, enabled = !vm.busy, onClick = { expanded = false; vm.disconnect() })
         }
     }
@@ -1449,8 +1454,9 @@ private fun UpdateNotice(vm: MobileViewModel) {
 private fun ThreadListScreen(vm: MobileViewModel) {
     val colors = MaterialTheme.colorScheme
     val canvas = Color(0xFFFAF9F7)
-    val selectedFilter = Color(0xFFE9E8E4)
+    val selectedFilter = Color(0xFFF1E8E1)
     val neutralInk = Color(0xFF343330)
+    val canCreate = vm.connected && !vm.busy
     var searchExpanded by rememberSaveable { mutableStateOf(vm.threadSearch.isNotBlank()) }
     val searchFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1471,32 +1477,38 @@ private fun ThreadListScreen(vm: MobileViewModel) {
     val recentRows = rows.filterNot { it.id in vm.running }
 
     Box(Modifier.fillMaxSize().background(canvas)) {
-        Column(Modifier.fillMaxSize().padding(start = 18.dp, end = 18.dp, top = 8.dp)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 46.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).background(Color(0xFFF0EFEC), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-                    LineIcon("code", Modifier.size(22.dp), Color(0xFF575550))
+        Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 4.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).background(Color(0xFFF1E8E1), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                    LineIcon("code", Modifier.size(22.dp), colors.primary)
                 }
-                Text("Andri", Modifier.padding(start = 9.dp).weight(1f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.padding(start = 10.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Andri", fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
                     val connectionDot by animateColorAsState(
                         if (vm.connected) Color(0xFF6F9B7D) else if (vm.connecting) Color(0xFFB18A54) else Color(0xFFB2A9B7),
                         tween(220), label = "connection-indicator")
-                    Box(Modifier.size(8.dp).background(connectionDot, CircleShape)
-                        .semantics { contentDescription = when {
-                            vm.connected && vm.synchronizing -> "已连接，正在同步"
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(Modifier.size(6.dp).background(connectionDot, CircleShape))
+                        Text(when {
+                            vm.connected && vm.synchronizing -> "正在同步"
                             vm.connected -> "已连接"
-                            else -> "连接未恢复"
-                        } })
+                            vm.connecting -> "正在重连"
+                            else -> "离线缓存"
+                        }, fontSize = 11.sp, lineHeight = 14.sp, color = colors.onSurfaceVariant)
+                    }
                 }
-                Surface(onClick = vm::newThread, enabled = vm.connected && !vm.busy,
-                    modifier = Modifier.size(44.dp).semantics { contentDescription = "新建对话" },
-                    shape = CircleShape, color = Color(0xFFE9E8E4), contentColor = neutralInk) {
-                    Box(contentAlignment = Alignment.Center) { LineIcon("plus", Modifier.size(20.dp), neutralInk) }
+                Surface(onClick = vm::newThread, enabled = canCreate,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = "新建对话" },
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (canCreate) colors.primary else colors.surfaceVariant,
+                    contentColor = if (canCreate) colors.onPrimary else colors.onSurfaceVariant.copy(alpha = .45f)) {
+                    Box(contentAlignment = Alignment.Center) { LineIcon("plus", Modifier.size(22.dp)) }
                 }
-                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { AppMenu(vm) }
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { AppMenu(vm) }
             }
-            Surface(Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                shape = RoundedCornerShape(20.dp), color = Color.White) {
+            Surface(Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp), color = Color.White,
+                border = BorderStroke(1.dp, colors.outlineVariant)) {
                 Column {
                     AnimatedVisibility(searchExpanded, enter = fadeIn(tween(140)) + expandVertically(),
                         exit = fadeOut(tween(100)) + shrinkVertically()) {
@@ -1511,7 +1523,7 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
                                 focusedLeadingIconColor = Color(0xFF95899D), unfocusedLeadingIconColor = Color(0xFF95899D)))
                     }
-                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically) {
@@ -1524,7 +1536,7 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                                 vm.threadSearch = ""
                                 searchExpanded = false
                             } else searchExpanded = true
-                        }, modifier = Modifier.size(44.dp).semantics {
+                        }, modifier = Modifier.size(48.dp).semantics {
                             contentDescription = if (searchExpanded) "关闭搜索" else "搜索对话或项目"
                         }) {
                             LineIcon(if (searchExpanded) "close" else "search", Modifier.size(19.dp), Color(0xFF807D78))
@@ -1556,11 +1568,14 @@ private fun ThreadListScreen(vm: MobileViewModel) {
 
             LazyColumn(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned {
                 if (layoutReported.compareAndSet(false, true)) vm.recordScreenFrame("thread-list-layout")
-            }, contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp),
+            }, contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item(key = "thread-empty-state") {
-                    AnimatedVisibility(rows.isEmpty() && !vm.busy, enter = fadeIn(tween(180)) + expandVertically(),
-                        exit = fadeOut(tween(120)) + shrinkVertically()) {
+                if (rows.isEmpty()) item(key = "thread-empty-state") {
+                    if (vm.busy) {
+                        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                    } else {
                         Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(22.dp), color = Color.White) {
                             Column(Modifier.padding(horizontal = 20.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                 Text(if (vm.threadSearch.isNotBlank()) "没有找到匹配的对话" else if (vm.onlyRunningThreads) "目前没有进行中的任务" else "从一个想法开始",
@@ -1574,7 +1589,8 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                 if (runningRows.isNotEmpty()) item(key = "running-header") {
                     Row(Modifier.fillMaxWidth().padding(start = 2.dp, top = 3.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text("正在进行", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4A4844))
+                        Text("正在进行", Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4F725B))
+                        Text(runningRows.size.toString(), fontSize = 11.sp, color = colors.onSurfaceVariant)
                     }
                 }
                 items(runningRows, key = { "running-" + it.id }) { thread ->
@@ -1586,7 +1602,8 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                     Row(Modifier.fillMaxWidth().padding(start = 2.dp, top = if (runningRows.isEmpty()) 5.dp else 10.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(if (runningRows.isEmpty()) "所有对话" else "最近对话", Modifier.weight(1f),
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4A4844))
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurfaceVariant)
+                        Text(recentRows.size.toString(), fontSize = 11.sp, color = colors.onSurfaceVariant)
                     }
                 }
                 items(recentRows, key = { it.id }) { thread ->
@@ -1677,15 +1694,14 @@ private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (Stri
 
 @Composable
 private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Boolean, modifier: Modifier = Modifier) {
-    var offsetPx by rememberSaveable(thread.id) { mutableFloatStateOf(0f) }
+    val colors = MaterialTheme.colorScheme
+    var menuExpanded by remember(thread.id) { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
-    val actionWidth = 204.dp
-    val actionWidthPx = with(density) { actionWidth.toPx() }
     val project = vm.projectFor(thread.id)
     val projectColor = projectColor(project)
     val preview = threadPreview(vm.messages[thread.id].orEmpty())
-    val cacheLabel = !vm.connected
+    val pinned = vm.isPinned(thread.id)
+    val canArchive = vm.connected && !vm.busy && !active
     val age = relativeThreadTime(thread.updatedAt)
     val startedAt = vm.runningSince[thread.id]
     var now by remember(thread.id, active) { mutableLongStateOf(System.currentTimeMillis()) }
@@ -1701,66 +1717,68 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
     val activity = vm.activity[thread.id].orEmpty().takeIf { it.isNotBlank() }
     val activeColor = Color(0xFF4F725B)
 
-    Box(modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))) {
-        Row(Modifier.matchParentSize().background(Color(0xFFEDE9E3)), horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { vm.togglePinned(thread.id); offsetPx = 0f }, modifier = Modifier.width(64.dp),
-                contentPadding = PaddingValues(0.dp)) { Text(if (vm.isPinned(thread.id)) "取消置顶" else "置顶", fontSize = 11.sp, color = Color(0xFF514C47)) }
-            TextButton(onClick = { vm.archiveThread(thread.id); offsetPx = 0f }, modifier = Modifier.width(64.dp),
-                contentPadding = PaddingValues(0.dp)) { Text("归档", fontSize = 11.sp, color = Color(0xFF514C47)) }
-            TextButton(onClick = { confirmDelete = true; offsetPx = 0f }, modifier = Modifier.width(64.dp),
-                contentPadding = PaddingValues(0.dp)) { Text("删除", fontSize = 11.sp, color = Color(0xFF9B4F45)) }
-        }
-        Surface(onClick = {
-            if (offsetPx != 0f) offsetPx = 0f else vm.openThread(thread.id)
-        },
-            modifier = Modifier.fillMaxWidth().offset { IntOffset(offsetPx.roundToInt(), 0) }
-                .pointerInput(actionWidthPx) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { _, drag -> offsetPx = (offsetPx + drag).coerceIn(-actionWidthPx, 0f) },
-                        onDragEnd = { offsetPx = if (offsetPx <= -actionWidthPx * .45f) -actionWidthPx else 0f },
-                        onDragCancel = { offsetPx = 0f })
-                },
-            shape = RoundedCornerShape(10.dp),
-            color = if (active) Color(0xFFF4F7F2) else Color.Transparent,
-            border = if (active) BorderStroke(1.dp, Color(0xFFE0E9DF)) else null) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = if (active) 9.dp else 7.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Box(Modifier.size(if (active) 8.dp else 7.dp).background(projectColor, CircleShape)
-                        .semantics { contentDescription = "项目 $project" })
-                    Text(thread.title, Modifier.weight(1f), fontSize = if (active) 15.sp else 15.sp,
-                        lineHeight = 19.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                        color = Color(0xFF302F2C), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (vm.isPinned(thread.id)) Text("置顶", fontSize = 10.sp, color = Color(0xFF6B625A))
-                    if (cacheLabel) Text("缓存", fontSize = 10.sp, color = Color(0xFF6B625A))
+    Surface(onClick = { vm.openThread(thread.id) },
+        modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        color = if (active) Color(0xFFF4F7F2) else Color.White,
+        border = BorderStroke(1.dp, if (active) Color(0xFFDDE7DB) else colors.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(thread.title, fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF302F2C), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (active) {
+                        Text(listOfNotNull(runningFor?.let { "已运行 $it" }, activity).joinToString(" · ").ifBlank { "正在执行" },
+                            fontSize = 12.sp, lineHeight = 18.sp, color = activeColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else if (preview.isNotBlank()) {
+                        Text(preview, fontSize = 12.sp, lineHeight = 18.sp, color = colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
+                Box(Modifier.padding(start = 2.dp).size(48.dp), contentAlignment = Alignment.Center) {
+                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.semantics {
+                        contentDescription = "对话操作：${thread.title}"
+                    }) { LineIcon("more", Modifier.size(18.dp), colors.onSurfaceVariant) }
+                    DropdownMenu(menuExpanded, { menuExpanded = false }, shape = RoundedCornerShape(16.dp),
+                        containerColor = colors.surface, tonalElevation = 0.dp,
+                        border = BorderStroke(1.dp, colors.outlineVariant)) {
+                        DropdownMenuItem(text = { Text(if (pinned) "取消置顶" else "置顶") },
+                            onClick = { menuExpanded = false; vm.togglePinned(thread.id) })
+                        DropdownMenuItem(text = { Text("归档") }, enabled = canArchive,
+                            onClick = { menuExpanded = false; vm.archiveThread(thread.id) })
+                        HorizontalDivider(color = colors.outlineVariant)
+                        DropdownMenuItem(text = { Text("删除", color = if (canArchive) Color(0xFF9B4F45)
+                            else colors.onSurface.copy(alpha = .38f)) }, enabled = canArchive,
+                            onClick = { menuExpanded = false; confirmDelete = true })
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.size(6.dp).background(projectColor, CircleShape))
+                    Text(project, Modifier.weight(1f, fill = false), fontSize = 11.sp, lineHeight = 16.sp,
+                        color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (pinned) Text("置顶", fontSize = 10.sp, color = colors.primary)
                 if (active) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(listOfNotNull(project.takeIf { it.isNotBlank() }, runningFor?.let { "已运行 $it" }, activity)
-                            .joinToString(" · ").ifBlank { "正在执行" },
-                            Modifier.weight(1f), fontSize = 11.sp, color = activeColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Surface(color = Color(0xFFE4EDDF), shape = RoundedCornerShape(6.dp)) {
+                        Text("进行中", Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 10.sp, color = activeColor)
                     }
-                    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = activeColor, trackColor = Color(0xFFDDE8DC))
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(project, fontSize = 11.sp, color = Color(0xFF5D5954), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        age?.let {
-                            Text("·", fontSize = 11.sp, color = Color(0xFF625F5B))
-                            Text(it, fontSize = 11.sp, color = Color(0xFF5D5954), maxLines = 1)
-                        }
-                    }
-                    if (preview.isNotBlank()) Text(preview, fontSize = 11.sp, color = Color(0xFF5D5954),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+                } else age?.let { Text(it, fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1) }
+            }
+            if (active) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 2.dp).height(2.dp),
+                    color = activeColor, trackColor = Color(0xFFDDE8DC))
             }
         }
     }
-    HorizontalDivider(color = Color(0xFFE7E5E1), thickness = 0.8.dp)
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text("删除这个会话？") },
         text = { Text("会话将从列表中移除，并在服务器上归档。") },
-        confirmButton = { TextButton(onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { Text("删除", color = Color(0xFF9B4F45)) } },
+        confirmButton = { TextButton(enabled = canArchive,
+            onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { Text("删除") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } })
 }
 
@@ -1771,10 +1789,6 @@ private val threadProjectColors = listOf(
 private fun projectColor(project: String): Color = threadProjectColors[
     (project.fold(17) { hash, char -> hash * 31 + char.code } and Int.MAX_VALUE) % threadProjectColors.size
 ]
-
-private fun threadPreview(lines: List<ChatLine>): String = lines.asReversed()
-    .firstOrNull { it.role in setOf("user", "assistant") && it.text.isNotBlank() }
-    ?.text.orEmpty().replace(Regex("\\s+"), " ").trim()
 
 private fun relativeThreadTime(updatedAt: Long): String? {
     if (updatedAt <= 0L) return null
@@ -1805,10 +1819,12 @@ private fun ThreadFilterChip(label: String, count: Int, selected: Boolean, selec
     val background by animateColorAsState(if (selected) selectedColor else Color.Transparent, tween(200), label = "filter-chip-background")
     val foreground by animateColorAsState(if (selected) selectedText else Color(0xFF625F5B), tween(200), label = "filter-chip-foreground")
     val emphasis by animateFloatAsState(if (selected) 1f else .97f, tween(180), label = "filter-chip-emphasis")
-    Surface(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp).graphicsLayer {
+    Surface(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp).semantics {
+        this.stateDescription = if (selected) "已选中" else "未选中"
+    }.graphicsLayer {
         scaleX = emphasis
         scaleY = emphasis
-    }, shape = CircleShape,
+    }, shape = RoundedCornerShape(12.dp),
         color = background,
         border = null) {
         Row(Modifier.padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically,
@@ -3025,6 +3041,78 @@ private fun TimelineError(line: ChatLine) {
 }
 
 @Composable
+private fun ReleaseHistoryDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var exportMessage by remember { mutableStateOf("") }
+    var exportBusy by remember { mutableStateOf(false) }
+    val saveApk = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")
+    ) { uri ->
+        val downloaded = vm.historicalDownload
+        if (uri != null && downloaded != null) scope.launch {
+            exportBusy = true
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        downloaded.file.inputStream().use { it.copyTo(output) }
+                    } ?: error("无法保存到所选位置")
+                }
+                exportMessage = "安装包已保存到所选位置"
+            } catch (e: Exception) {
+                exportMessage = "保存失败：" + e.message
+            } finally { exportBusy = false }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { if (!exportBusy) vm.dismissHistory() },
+        title = { Text("历史版本与恢复下载") },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("当前版本 " + BuildConfig.VERSION_NAME)
+                Text("通过独立 SSH 下载，不依赖 Codex 连接。", fontSize = 12.sp)
+                if (vm.historyBusy || exportBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (vm.historyMessage.isNotBlank()) Text(vm.historyMessage, fontSize = 12.sp)
+                ErrorText(vm.historyError)
+                if (exportMessage.isNotBlank()) Text(exportMessage, fontSize = 12.sp)
+                vm.historicalDownload?.let { downloaded ->
+                    Text("已下载 " + downloaded.info.versionName, fontWeight = FontWeight.SemiBold)
+                    if (downloaded.info.versionCode < BuildConfig.VERSION_CODE) {
+                        Text("这是旧版原包。Android 通常禁止直接覆盖降级，系统可能拒绝安装。卸载会删除本机私钥配置和缓存；请先妥善备份，服务器对话仍会保留。", fontSize = 12.sp)
+                    }
+                    Row {
+                        TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = {
+                            saveApk.launch("Andri-Android-" + downloaded.info.versionName + ".apk")
+                        }) { Text("保存 APK") }
+                        TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = { vm.installHistory(install) }) {
+                            Text("打开系统安装器")
+                        }
+                    }
+                }
+                vm.historyReleases.forEach { info ->
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(info.versionName + if (info.versionCode == BuildConfig.VERSION_CODE) " · 当前版本" else "",
+                                fontWeight = FontWeight.Medium)
+                            Text("${info.sizeBytes / 1024 / 1024} MB", fontSize = 12.sp)
+                        }
+                        TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = {
+                            exportMessage = ""
+                            vm.downloadHistory(info)
+                        }) { Text("下载") }
+                    }
+                    if (info.notes.isNotBlank()) Text(info.notes, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = { TextButton(vm::refreshHistory, enabled = !vm.historyBusy && !exportBusy) { Text("刷新列表") } },
+        dismissButton = { TextButton(vm::dismissHistory, enabled = !exportBusy) { Text(if (vm.historyBusy) "取消" else "关闭") } }
+    )
+}
+
+@Composable
 private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
     AlertDialog(
         onDismissRequest = { if (!vm.updateBusy) vm.dismissUpdate() },
@@ -3032,6 +3120,7 @@ private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("当前版本 " + BuildConfig.VERSION_NAME)
+                TextButton(vm::openHistory, enabled = !vm.updateBusy) { Text("历史版本与恢复下载") }
                 if (vm.updateChecking) Text("正在通过 82 的 SSH 检查版本…")
                 else Text(vm.updateMessage)
                 vm.updateInfo?.let { info ->

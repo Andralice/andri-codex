@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -161,6 +162,22 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private set
     private var updateJob: Job? = null
     private var checkJob: Job? = null
+    var historyDialog by mutableStateOf(false)
+        private set
+    var historyReleases by mutableStateOf<List<UpdateInfo>>(emptyList())
+        private set
+    var historyBusy by mutableStateOf(false)
+        private set
+    var historyError by mutableStateOf("")
+        private set
+    var historyMessage by mutableStateOf("")
+        private set
+    internal var historicalDownload by mutableStateOf<DownloadedUpdate?>(null)
+        private set
+    private var historyJob: Job? = null
+    private var historyClient: SshCodexClient? = null
+    private var connectionStage = "connect-start"
+
     private var client: SshCodexClient? = null
     private val recovery = ConnectionRecovery()
     private var connectionJob: Job? = null
@@ -349,7 +366,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         runCatching { secrets?.put("passphrase", passphrase) }
         status = "正在建立 SSH 安全连接…"
         lateinit var connection: SshCodexClient
-        connection = SshCodexClient(host.trim(), validPort, username.trim(), privateKey, passphrase) { event ->
+        connectionStage = "connect-start"
+        connection = SshCodexClient(host.trim(), validPort, username.trim(), privateKey, passphrase,
+            onConnectionStage = { stage -> viewModelScope.launch {
+                if (client === connection && recovery.isCurrent(token) && connecting) {
+                    connectionStage = stage
+                    status = connectionStageLabel(stage)
+                }
+            } }) { event ->
             viewModelScope.launch {
                 if (client === connection && recovery.isCurrent(token)) {
                     if (event.has("localError")) recovery.failed(token, connectionTime())
@@ -358,10 +382,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         client = connection
-        ConnectionKeepAliveService.hold(getApplication(), connection)
         connectionJob = viewModelScope.launch {
             try {
-                connection.connect()
+                ConnectionKeepAliveService.hold(getApplication(), connection)
+                awaitConnectionAttempt(abort = connection::close) { connection.connect() }
                 if (client !== connection || !recovery.isCurrent(token)) return@launch
                 connected = true
                 connecting = false
@@ -373,21 +397,43 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 flushPendingChatDiagnostics()
                 checkForUpdate()
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                connection.close()
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                viewModelScope.launch(Dispatchers.IO) { connection.close() }
                 if (client === connection && recovery.isCurrent(token)) {
                     ConnectionKeepAliveService.clear(connection)
                     recovery.failed(token, connectionTime())
                     client = null
                     connected = false
-                    error = e.message ?: "连接失败"
-                    status = "连接失败"
-                    scheduleReconnect()
+                    error = if (e is TimeoutCancellationException)
+                        "连接超时（45 秒）：" + connectionStageLabel(connectionStage).removeSuffix("…") + "。可重试或打开历史版本。"
+                        else e.message ?: "连接失败"
+                    status = "连接失败，可重试或查看历史版本"
+                    // A failed attempt returns control to the user, rather than reopening a spinner forever.
+
                 }
             } finally {
                 if (client === connection || client == null) connecting = false
             }
         }
+    }
+
+    fun cancelConnection() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        recovery.reset()
+        connectionJob?.cancel()
+        connectionJob = null
+        val previous = client
+        client = null
+        previous?.let {
+            ConnectionKeepAliveService.clear(it)
+            viewModelScope.launch(Dispatchers.IO) { it.close() }
+        }
+        connecting = false
+        connected = false
+        reconnectOnForeground = false
+        settings.edit().putBoolean("autoReconnect", false).apply()
+        status = "连接已取消，可修改配置或查看历史版本"
     }
 
     /** Transport recovery and history synchronization never acquire the UI operation lock. */
@@ -1321,6 +1367,87 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         // Keep the existing SSH channel open and let the foreground service own it.
     }
 
+    fun openHistory() {
+        historyDialog = true
+        refreshHistory()
+    }
+
+    private fun runHistoryAction(action: suspend (SshCodexClient) -> Unit) {
+        if (historyBusy) return
+        val validPort = port.toIntOrNull()
+        if (privateKey.isBlank() || validPort == null) {
+            historyError = "请先导入 SSH 私钥并填写有效连接配置"
+            return
+        }
+        historyBusy = true
+        historyError = ""
+        historyMessage = "正在通过独立 SSH 读取版本，不需要连接 Codex…"
+        val connection = SshCodexClient(host.trim(), validPort, username.trim(), privateKey, passphrase) {}
+        historyClient = connection
+        historyJob = viewModelScope.launch {
+            try {
+                awaitConnectionAttempt(abort = connection::close) { connection.connectSshOnly() }
+                kotlinx.coroutines.withTimeout(180_000) { action(connection) }
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                historyError = if (e is TimeoutCancellationException) "版本操作超时，请检查网络后重试" else e.message ?: "版本操作失败"
+                historyMessage = ""
+            } finally {
+                if (historyClient === connection) {
+                    historyClient = null
+                    historyBusy = false
+                }
+                viewModelScope.launch(Dispatchers.IO) { connection.close() }
+            }
+        }
+    }
+
+    fun refreshHistory() = runHistoryAction { connection ->
+        historyReleases = connection.readReleaseHistory()
+        historyMessage = "共 " + historyReleases.size + " 个可下载版本"
+    }
+
+    fun downloadHistory(info: UpdateInfo) = runHistoryAction { connection ->
+        historicalDownload?.file?.delete()
+        historicalDownload = null
+        historyMessage = "正在下载 " + info.versionName + "…"
+        historicalDownload = downloadHistoricalRelease(
+            File(getApplication<Application>().cacheDir, "updates"), info,
+            readHistory = { connection.readReleaseHistory() },
+            download = { release, file -> withContext(Dispatchers.IO) {
+                file.outputStream().use { connection.downloadUpdate(release, it) }
+            } },
+            verify = { file, release -> verifyDownloadedUpdate(file, release, allowHistorical = true) }
+        )
+        historyMessage = info.versionName + " 下载完成，已验证包名、版本、大小、SHA-256 和签名"
+    }
+
+    fun installHistory(install: (File) -> Unit) {
+        if (historyBusy) return
+        val downloaded = historicalDownload ?: return
+        historyBusy = true
+        historyError = ""
+        historyJob = viewModelScope.launch {
+            try {
+                // A verified local historical package remains usable when the server is unavailable.
+                verifyDownloadedUpdate(downloaded.file, downloaded.info, allowHistorical = true)
+                install(downloaded.file)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                historyError = e.message ?: "无法打开历史包"
+            } finally { historyBusy = false }
+        }
+    }
+
+    fun dismissHistory() {
+        historyJob?.cancel()
+        historyJob = null
+        historyClient?.let { connection -> viewModelScope.launch(Dispatchers.IO) { connection.close() } }
+        historyClient = null
+        historyBusy = false
+        historyDialog = false
+    }
+
     fun openUpdates() { updateDialog = true; checkForUpdate(manual = true) }
 
     private suspend fun readLiveUpdate(connection: SshCodexClient): UpdateInfo? {
@@ -1377,7 +1504,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     download = { info, file -> withContext(Dispatchers.IO) {
                         file.outputStream().use { connection.downloadUpdate(info, it) }
                     } },
-                    verify = ::verifyDownloadedUpdate
+                    verify = { file, info -> verifyDownloadedUpdate(file, info) }
                 )
                 if (downloadedUpdate == null && updateInfo != null) updateMessage = "下载期间版本已更新，请下载最新版本 " + updateInfo!!.versionName
             } catch (e: Exception) {
@@ -1397,7 +1524,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val installed = installCurrentUpdate(downloaded,
                     readLatest = { readLiveUpdate(connection) },
-                    verify = ::verifyDownloadedUpdate, install = install)
+                    verify = { file, info -> verifyDownloadedUpdate(file, info) }, install = install)
                 if (!installed && updateInfo != null) updateMessage = "版本已更新，请先下载 " + updateInfo!!.versionName
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -1406,12 +1533,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun verifyDownloadedUpdate(file: File, info: UpdateInfo) {
+    private suspend fun verifyDownloadedUpdate(file: File, info: UpdateInfo, allowHistorical: Boolean = false) {
         withContext(Dispatchers.IO) {
             check(file.length() == info.sizeBytes) { "更新包下载不完整" }
             check(sha256(file).equals(info.sha256, ignoreCase = true)) { "更新包校验失败" }
         }
-        verifyUpdateApk(getApplication(), file, info)
+        verifyUpdateApk(getApplication(), file, info, allowHistorical)
     }
 
     fun dismissUpdate() { updateDialog = false }
@@ -2014,6 +2141,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        historyJob?.cancel()
+        historyClient?.let { connection -> kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { connection.close() } }
         reconnectJob?.cancel()
         connectionJob?.cancel()
         synchronizationJob?.cancel()

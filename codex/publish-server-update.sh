@@ -61,6 +61,28 @@ manifest = {
     'sizeBytes': target.stat().st_size,
     'notes': notes,
 }
+# Preserve immutable version records and maintain the catalog before exposing latest.
+history_path = release_root / 'history.json'
+rows = json.loads(history_path.read_text())['releases'] if history_path.exists() else []
+if manifest_path.exists():
+    rows.append(json.loads(manifest_path.read_text()))
+rows.append(manifest)
+by_code = {}
+for row in rows:
+    row_code = int(row['versionCode'])
+    previous = by_code.get(row_code)
+    if previous and previous['sha256'] != row['sha256']:
+        raise SystemExit('Conflicting historical release metadata')
+    by_code[row_code] = row
+history = {'releases': sorted(by_code.values(), key=lambda row: int(row['versionCode']), reverse=True)}
+history_stage = release_root / f".history.json.{os.getpid()}.uploading"
+history_stage.write_text(json.dumps(history, ensure_ascii=False, indent=2) + '\n')
+os.chmod(history_stage, 0o644)
+os.replace(history_stage, history_path)
+record_stage = release_root / f".release-{code}.json.{os.getpid()}.uploading"
+record_stage.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+os.chmod(record_stage, 0o644)
+os.replace(record_stage, release_root / f"release-{code}.json")
 manifest_stage = release_root / f".latest.json.{os.getpid()}.uploading"
 manifest_stage.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
 os.chmod(manifest_stage, 0o644)
