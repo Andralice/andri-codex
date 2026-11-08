@@ -3,6 +3,8 @@ package com.codexserver.mobile
 import android.os.Bundle
 import android.net.Uri
 import android.content.Intent
+import android.content.ClipboardManager
+import android.content.ClipData
 import androidx.core.content.FileProvider
 import android.provider.OpenableColumns
 import android.provider.MediaStore
@@ -13,7 +15,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -142,7 +143,7 @@ private val LightColors = lightColorScheme(
 )
 
 class MainActivity : ComponentActivity() {
-    private val vm by viewModels<MobileViewModel>()
+    private val vm by lazy { ConnectionSession.get(application) }
     private var notificationThreadId by mutableStateOf<String?>(null)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -587,6 +588,7 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
         }
         if (vm.connecting) TextButton(vm::cancelConnection) { Text("取消连接") }
         TextButton(vm::openHistory) { Text("历史版本与恢复下载 · v" + BuildConfig.VERSION_NAME) }
+        BackgroundConnectionSettingsButton()
         MutedText("连接前验证服务器身份 · 中转密钥留在服务器")
         ErrorText(vm.error)
         if (vm.connecting || vm.error.isNotBlank()) MutedText(vm.status)
@@ -619,6 +621,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
     var expanded by remember { mutableStateOf(false) }
     var workspaceDialog by remember { mutableStateOf(false) }
     var globalInstructionsDialog by remember { mutableStateOf(false) }
+    var backgroundConnectionDialog by remember { mutableStateOf(false) }
     var renameDialog by remember(thread?.id) { mutableStateOf(false) }
     var filesDialog by remember(thread?.id) { mutableStateOf(false) }
     var diffDialog by remember(thread?.id) { mutableStateOf(false) }
@@ -636,6 +639,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
                 onClick = { expanded = false; diffDialog = true; vm.loadGitDiff() })
             DropdownMenuItem(text = { Text("刷新") }, enabled = !vm.busy, onClick = { expanded = false; vm.refresh() })
             DropdownMenuItem(text = { Text("工作区与权限") }, enabled = !vm.busy, onClick = { expanded = false; workspaceDialog = true })
+            DropdownMenuItem(text = { Text("后台连接设置") }, onClick = { expanded = false; backgroundConnectionDialog = true })
             DropdownMenuItem(text = { Text("全局指令") }, onClick = { expanded = false; globalInstructionsDialog = true; vm.loadGlobalInstructions() })
             DropdownMenuItem(text = { Text("检查更新 · v" + BuildConfig.VERSION_NAME) }, onClick = { expanded = false; vm.openUpdates() })
             DropdownMenuItem(text = { Text("历史版本与恢复下载") }, onClick = { expanded = false; vm.openHistory() })
@@ -660,6 +664,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
     if (filesDialog && thread != null) WorkspaceFilesDialog(vm) { filesDialog = false }
     if (diffDialog && thread != null) GitDiffDialog(vm) { diffDialog = false }
     if (workspaceDialog) ExecutionSettingsDialog(vm) { workspaceDialog = false }
+    if (backgroundConnectionDialog) BackgroundConnectionSettingsDialog { backgroundConnectionDialog = false }
     if (globalInstructionsDialog) GlobalInstructionsDialog(vm) { globalInstructionsDialog = false }
 }
 
@@ -2257,9 +2262,11 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
 
 @Composable
 private fun SmoothAssistantMessage(line: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var visible by rememberSaveable(line.id) { mutableStateOf(if (line.streaming) "" else assistantAnswerText(line.text)) }
     var animate by remember(line.id) { mutableStateOf(line.streaming) }
     val answerText = assistantAnswerText(line.text)
+    var copied by remember(line.id) { mutableStateOf(false) }
     // The ViewModel replaces the line for each delta. Keying by the actual target
     // makes each replacement observable while keeping the already revealed prefix.
     LaunchedEffect(line.id, answerText, line.streaming) {
@@ -2276,6 +2283,15 @@ private fun SmoothAssistantMessage(line: ChatLine, vm: MobileViewModel, onOpenLi
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (visible.isNotEmpty()) ChatMarkdown(visible, vm, vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd, onOpenLink)
         if (line.images.isNotEmpty()) ChatImageGallery(line.images, vm, vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd)
+        if (!line.streaming && answerText.isNotBlank()) {
+            TextButton(onClick = {
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Andri 生成文字", answerText))
+                copied = true
+            }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                Text(if (copied) "已复制" else "复制文字", fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -2518,6 +2534,45 @@ private fun saveImageToGallery(context: android.content.Context, bytes: ByteArra
     }
 }
 
+private fun saveVideoToGallery(context: android.content.Context, source: File, name: String) {
+    val mimeType = videoMimeType(name)
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, name)
+        put(MediaStore.Video.Media.MIME_TYPE, mimeType)
+        put(MediaStore.Video.Media.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_MOVIES}/Andri")
+        put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    val resolver = context.contentResolver
+    val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: error("无法创建相册视频")
+    try {
+        resolver.openOutputStream(uri, "w")?.use { output -> source.inputStream().use { it.copyTo(output, 128 * 1024) } }
+            ?: error("无法写入相册视频")
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+    } catch (error: Throwable) {
+        resolver.delete(uri, null, null)
+        throw error
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun saveVideoToLegacyGallery(context: android.content.Context, source: File, name: String) {
+    val directory = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES), "Andri")
+    check(directory.exists() || directory.mkdirs()) { "无法创建相册目录" }
+    val output = File(directory, name)
+    source.inputStream().use { input -> output.outputStream().use { input.copyTo(it, 128 * 1024) } }
+    android.media.MediaScannerConnection.scanFile(context, arrayOf(output.absolutePath), arrayOf(videoMimeType(name)), null)
+}
+
+private fun videoMimeType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+    "m4v" -> "video/x-m4v"
+    "mov" -> "video/quicktime"
+    "3gp" -> "video/3gpp"
+    "webm" -> "video/webm"
+    "mkv" -> "video/x-matroska"
+    "avi" -> "video/x-msvideo"
+    else -> "video/mp4"
+}
+
 @Suppress("DEPRECATION")
 private fun saveImageToLegacyGallery(context: android.content.Context, bytes: ByteArray, name: String, mimeType: String) {
     val directory = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Andri")
@@ -2636,6 +2691,7 @@ private fun videoAttachmentPaths(text: String): List<String> {
 @Composable
 private fun ChatVideoSource(path: String, vm: MobileViewModel, baseDirectory: String) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     val videoResult by produceState<Result<File>?>(null, path, baseDirectory, vm.connected) {
         value = try {
             Result.success(vm.cacheWorkspaceVideo(path, baseDirectory))
@@ -2666,14 +2722,33 @@ private fun ChatVideoSource(path: String, vm: MobileViewModel, baseDirectory: St
     }
     var status by remember(path) { mutableStateOf("") }
     val name = path.substringAfterLast('/').substringAfterLast('\\').take(100).ifBlank { "andri-video.mp4" }
-    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/*")) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val file = videoFile
-        status = runCatching {
-            check(file?.isFile == true) { "视频尚未下载完成" }
-            context.contentResolver.openOutputStream(uri, "w")!!.use { output -> file.inputStream().use { it.copyTo(output, 128 * 1024) } }
-            "原画质视频已保存"
-        }.getOrElse { "保存失败：${it.message ?: "无法写入文件"}" }
+        if (granted && file?.isFile == true) scope.launch {
+            status = "正在保存到相册…"
+            val result = runCatching { withContext(Dispatchers.IO) { saveVideoToLegacyGallery(context, file, name) } }
+            status = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+        } else if (!granted) status = "需要存储权限才能保存到相册"
+    }
+    fun saveVideo() {
+        val file = videoFile
+        if (file?.isFile != true) { status = "视频尚未下载完成"; return }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            status = "正在保存到相册…"
+            scope.launch {
+                val result = runCatching { withContext(Dispatchers.IO) { saveVideoToGallery(context, file, name) } }
+                status = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            legacyStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            status = "正在保存到相册…"
+            scope.launch {
+                val result = runCatching { withContext(Dispatchers.IO) { saveVideoToLegacyGallery(context, file, name) } }
+                status = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
+            }
+        }
     }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2695,8 +2770,8 @@ private fun ChatVideoSource(path: String, vm: MobileViewModel, baseDirectory: St
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { if (videoFile?.isFile == true) saveLauncher.launch(name) }) {
-                Text("下载原画质视频", color = MaterialTheme.colorScheme.primary)
+            TextButton(onClick = ::saveVideo, enabled = videoFile?.isFile == true) {
+                Text("保存视频到相册", color = MaterialTheme.colorScheme.primary)
             }
             if (status.isNotBlank()) Text(status, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

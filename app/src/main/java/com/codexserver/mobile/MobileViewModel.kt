@@ -187,7 +187,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private var lastForegroundSyncAt = Long.MIN_VALUE
     private var threadOpenJob: Job? = null
     private var reconnectJob: Job? = null
-    private var inForeground = true
+    private var inForeground = false
     var foregroundGeneration by mutableIntStateOf(0)
         private set
     private var foregroundStartedAt = System.nanoTime()
@@ -347,7 +347,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         val token = recovery.begin(connectionTime(), automatic) ?: return
-        reconnectJob?.cancel()
+        if (!automatic) reconnectJob?.cancel()
         connecting = true
         synchronizationJob?.cancel()
         synchronizing = false
@@ -410,11 +410,16 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                         "连接超时（45 秒）：" + connectionStageLabel(connectionStage).removeSuffix("…") + "。可重试或打开历史版本。"
                         else e.message ?: "连接失败"
                     status = "连接失败，可重试或查看历史版本"
-                    // A failed attempt returns control to the user, rather than reopening a spinner forever.
-
                 }
             } finally {
-                if (client === connection || client == null) connecting = false
+                if (client === connection || client == null) {
+                    connecting = false
+                    connectionJob = null
+                    if (!connected) {
+                        if (reconnectOnForeground) scheduleReconnect()
+                        else ConnectionKeepAliveService.release(getApplication())
+                    }
+                }
             }
         }
     }
@@ -435,6 +440,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         connected = false
         reconnectOnForeground = false
         settings.edit().putBoolean("autoReconnect", false).apply()
+        ConnectionKeepAliveService.release(getApplication())
         status = "连接已取消，可修改配置或查看历史版本"
     }
 
@@ -454,7 +460,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                             // A first page is partial: keep older cached conversations available.
                             replaceThreads(rows, partial = true)
                             updateRunningThreads(rows)
-                            if (restoreSubscription) refreshThreadListInBackground(connection)
+                            // The first page keeps the sidebar responsive. Reconcile the full
+                            // list in the background and hydrate every active task there.
+                            refreshThreadListInBackground(connection, skipHydration = setOfNotNull(restore))
                         }
                     },
                     syncThread = {
@@ -489,7 +497,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun refreshThreadListInBackground(connection: SshCodexClient) {
+    private fun refreshThreadListInBackground(connection: SshCodexClient, skipHydration: Set<String> = emptySet()) {
         viewModelScope.launch {
             runCatching { connection.listThreads() }
                 .onSuccess { rows ->
@@ -505,23 +513,64 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                                 runningSince.remove(it.id)
                             }
                         }
+                        preloadRunningThreads(connection, rows.mapNotNull { row ->
+                            row.id.takeIf { row.running && it !in skipHydration }
+                        })
                     }
                 }
                 .onFailure { if (it !is CancellationException) android.util.Log.w("MobileSync", "后台刷新对话列表失败", it) }
         }
     }
 
+    /** Hydrate active task windows serially so a busy app-server is not flooded with resumes. */
+    private suspend fun preloadRunningThreads(connection: SshCodexClient, ids: List<String>) {
+        ids.distinct().forEach { id ->
+            if (client !== connection || !connected || !connection.isAlive()) return
+            if (id in readyThreadIds || openingThreadId == id) return@forEach
+            try {
+                val saved = savedExecution(id)
+                val result = connection.resumeThread(id, saved)
+                if (client !== connection || !connected) return
+                if (id !in readyThreadIds) readyThreadIds += id
+                val fallback = saved ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
+                threadExecution[id] = executionOptions(result, fallback)
+                applySnapshot(result)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                android.util.Log.w("MobileSync", "后台预加载进行中任务失败", e)
+            }
+        }
+    }
+
     private fun scheduleReconnect() {
         if ((!inForeground && !ConnectionKeepAliveService.isActive()) || !reconnectOnForeground || reconnectJob?.isActive == true) return
         reconnectJob = viewModelScope.launch {
-            val wait = recovery.delayMillis(connectionTime()).coerceAtLeast(2_000)
-            status = "连接中断，${wait / 1000} 秒后自动重连"
-            delay(wait)
+            retryConnection(
+                shouldRetry = { (inForeground || ConnectionKeepAliveService.isActive()) && reconnectOnForeground && !connected },
+                delayMillis = { recovery.delayMillis(connectionTime()).coerceAtLeast(2_000) },
+                onWaiting = { wait -> status = "连接中断，${wait / 1000} 秒后自动重连" },
+                attempt = {
+                    if (!busy && connectionJob?.isActive != true) {
+                        connect(preserveUpdateState = true, automatic = true)
+                    }
+                    connectionJob?.join()
+                }
+            )
+        }
+    }
+
+    /** Called on the main thread by the service, including after process recreation. */
+    fun maintainBackgroundConnection(networkChanged: Boolean = false) {
+        if (!reconnectOnForeground) return
+        if (networkChanged || connected && client?.isAlive() != true) {
+            reconnectJob?.cancel()
             reconnectJob = null
-            if ((inForeground || ConnectionKeepAliveService.isActive()) && reconnectOnForeground && !connected) {
-                if (busy || connectionJob?.isActive == true) scheduleReconnect()
-                else connect(preserveUpdateState = true, automatic = true)
-            }
+            recovery.reset() // Reject events from the socket tied to the previous network.
+            connectionJob?.cancel()
+            connectionJob = null
+            handleEvent(JSONObject().put("localError", if (networkChanged) "网络已切换，正在恢复连接" else "连接已失效，正在恢复连接"))
+        } else if (!connected && connectionJob?.isActive != true) {
+            scheduleReconnect()
         }
     }
 
@@ -1404,7 +1453,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             reconnectJob?.cancel()
             reconnectJob = null
         }
-        // Keep the existing SSH channel open and let the foreground service own it.
+        // The process session and foreground service continue recovery after the UI stops.
     }
 
     fun openHistory() {
@@ -1901,7 +1950,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             runningSince.clear()
             sending.clear()
             requests.clear()
-            status = "SSH 已断开；返回应用时会尝试重新连接"
+            status = "SSH 已断开，正在自动恢复连接"
             error = event.text("localError")
             scheduleReconnect()
             return
