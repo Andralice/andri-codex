@@ -332,8 +332,8 @@ class MainActivity : ComponentActivity() {
                                     Text(vm.status, Modifier.padding(top = 16.dp), fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("连接最多等待 45 秒", Modifier.padding(top = 8.dp), fontSize = 12.sp)
-                                    TextButton(vm::cancelConnection) { Text("取消连接 / 修改配置") }
-                                    TextButton(vm::openHistory) { Text("历史版本与恢复下载") }
+                                    TextButton(vm::cancelConnection) { ActionLabel("close", "取消连接 / 修改配置") }
+                                    TextButton(vm::openHistory) { ActionLabel("history", "历史版本与恢复下载") }
                                 }
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
                                 screen == "thread-list" -> ThreadListScreen(vm)
@@ -510,7 +510,34 @@ private fun LineIcon(name: String, modifier: Modifier = Modifier.size(20.dp), co
                 drawPath(path, color, style = Stroke(stroke))
                 line(7f, 9f, 17f, 9f); line(7f, 13f, 14f, 13f)
             }
+            "history" -> { drawCircle(color, 8f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); line(12f, 8f, 12f, 12f); line(12f, 12f, 15f, 14f); line(4f, 8f, 4f, 4f); line(4f, 4f, 8f, 4f); line(4f, 4f, 7f, 7f) }
+            "refresh" -> { line(19f, 8f, 19f, 4f); line(19f, 4f, 15f, 4f); drawArc(color, -45f, 250f, false, topLeft = Offset(4f * unit, 4f * unit), size = androidx.compose.ui.geometry.Size(16f * unit, 16f * unit), style = Stroke(stroke)); line(5f, 16f, 5f, 20f); line(5f, 20f, 9f, 20f) }
+            "download" -> { line(12f, 4f, 12f, 15f); line(7f, 11f, 12f, 16f); line(12f, 16f, 17f, 11f); line(5f, 20f, 19f, 20f) }
+            "upload" -> { line(12f, 20f, 12f, 9f); line(7f, 13f, 12f, 8f); line(12f, 8f, 17f, 13f); line(5f, 4f, 19f, 4f) }
+            "share" -> { drawCircle(color, 2.2f * unit, Offset(18f * unit, 5f * unit)); drawCircle(color, 2.2f * unit, Offset(6f * unit, 12f * unit)); drawCircle(color, 2.2f * unit, Offset(18f * unit, 19f * unit)); line(8f, 11f, 16f, 6f); line(8f, 13f, 16f, 18f) }
+            "check" -> { line(5f, 12f, 10f, 17f); line(10f, 17f, 19f, 7f) }
+            "pin" -> { line(8f, 4f, 16f, 4f); line(9f, 4f, 9f, 10f); line(15f, 4f, 15f, 10f); line(6f, 10f, 18f, 10f); line(12f, 10f, 12f, 20f) }
+            "archive" -> { line(4f, 7f, 20f, 7f); line(5f, 7f, 6f, 20f); line(18f, 7f, 19f, 20f); line(6f, 20f, 18f, 20f); line(8f, 4f, 16f, 4f); line(9f, 13f, 15f, 13f) }
+            "trash" -> { line(5f, 7f, 19f, 7f); line(9f, 4f, 15f, 4f); line(8f, 7f, 9f, 20f); line(16f, 7f, 15f, 20f); line(9f, 20f, 15f, 20f) }
+            "settings" -> { drawCircle(color, 4f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); listOf(0f, 60f, 120f, 180f, 240f, 300f).forEach { angle -> val radians = Math.toRadians(angle.toDouble()); val x1 = (12f + kotlin.math.cos(radians).toFloat() * 7f); val y1 = (12f + kotlin.math.sin(radians).toFloat() * 7f); val x2 = (12f + kotlin.math.cos(radians).toFloat() * 9f); val y2 = (12f + kotlin.math.sin(radians).toFloat() * 9f); line(x1, y1, x2, y2) } }
+            "folder-plus" -> { line(3f, 8f, 9f, 8f); line(9f, 8f, 11f, 10f); line(11f, 10f, 21f, 10f); line(19f, 19f, 5f, 19f); line(5f, 19f, 3f, 8f); line(16f, 12f, 16f, 18f); line(13f, 15f, 19f, 15f) }
+            "arrow-up" -> { line(12f, 19f, 12f, 5f); line(6f, 11f, 12f, 5f); line(12f, 5f, 18f, 11f) }
+            "arrow-right" -> { line(4f, 12f, 19f, 12f); line(13f, 6f, 19f, 12f); line(19f, 12f, 13f, 18f) }
+            "save" -> { line(5f, 4f, 19f, 4f); line(5f, 4f, 5f, 20f); line(19f, 4f, 19f, 20f); line(5f, 20f, 19f, 20f); line(8f, 4f, 8f, 10f); line(16f, 4f, 16f, 10f); line(8f, 15f, 16f, 15f); line(8f, 15f, 8f, 20f); line(16f, 15f, 16f, 20f) }
+            "bolt" -> { line(13f, 3f, 6f, 13f); line(6f, 13f, 12f, 13f); line(12f, 13f, 10f, 21f); line(10f, 21f, 18f, 10f); line(18f, 10f, 12f, 10f) }
+            "info" -> { drawCircle(color, 9f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); drawCircle(color, 1.2f * unit, Offset(12f * unit, 8f * unit)); line(12f, 11f, 12f, 17f) }
         }
+    }
+}
+
+@Composable
+internal fun ActionLabel(icon: String, label: String, color: Color = Color.Unspecified, iconSize: androidx.compose.ui.unit.Dp = 16.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    modifier: Modifier = Modifier) {
+    val contentColor = if (color == Color.Unspecified) LocalContentColor.current else color
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        LineIcon(icon, Modifier.size(iconSize), contentColor)
+        Text(label, color = contentColor, fontSize = fontSize)
     }
 }
 
@@ -530,7 +557,9 @@ private fun ErrorText(error: String) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("!", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
                     Text("操作未完成", Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                    TextButton({ expanded = !expanded }) { Text(if (expanded) "收起" else "查看详情", fontSize = 12.sp) }
+                    TextButton({ expanded = !expanded }) {
+                        ActionLabel(if (expanded) "chevron-up" else "chevron", if (expanded) "收起" else "查看详情", iconSize = 14.dp, fontSize = 12.sp)
+                    }
                 }
                 AnimatedVisibility(expanded, enter = fadeIn(tween(140)) + expandVertically(),
                     exit = fadeOut(tween(100)) + shrinkVertically()) {
@@ -586,8 +615,8 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
             if (vm.connecting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             else { Text("连接工作区", fontSize = 16.sp); Spacer(Modifier.weight(1f)); Text("→", fontSize = 22.sp) }
         }
-        if (vm.connecting) TextButton(vm::cancelConnection) { Text("取消连接") }
-        TextButton(vm::openHistory) { Text("历史版本与恢复下载 · v" + BuildConfig.VERSION_NAME) }
+        if (vm.connecting) TextButton(vm::cancelConnection) { ActionLabel("close", "取消连接") }
+        TextButton(vm::openHistory) { ActionLabel("history", "历史版本与恢复下载 · v" + BuildConfig.VERSION_NAME) }
         BackgroundConnectionSettingsButton()
         MutedText("连接前验证服务器身份 · 中转密钥留在服务器")
         ErrorText(vm.error)
@@ -631,19 +660,19 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
         DropdownMenu(expanded, { expanded = false }, shape = RoundedCornerShape(18.dp),
             containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp,
             shadowElevation = 8.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            if (thread != null) DropdownMenuItem(text = { Text("修改对话名称") }, enabled = !vm.busy,
+            if (thread != null) DropdownMenuItem(leadingIcon = { LineIcon("edit") }, text = { Text("修改对话名称") }, enabled = !vm.busy,
                 onClick = { expanded = false; titleDraft = thread.title; renameDialog = true })
-            if (thread != null) DropdownMenuItem(text = { Text("项目文件") }, enabled = vm.connected && !vm.busy,
+            if (thread != null) DropdownMenuItem(leadingIcon = { LineIcon("folder") }, text = { Text("项目文件") }, enabled = vm.connected && !vm.busy,
                 onClick = { expanded = false; filesDialog = true; vm.loadProjectFiles(thread.cwd.ifBlank { vm.cwd }) })
-            if (thread != null) DropdownMenuItem(text = { Text("审阅代码改动") }, enabled = vm.connected && !vm.busy,
+            if (thread != null) DropdownMenuItem(leadingIcon = { LineIcon("code") }, text = { Text("审阅代码改动") }, enabled = vm.connected && !vm.busy,
                 onClick = { expanded = false; diffDialog = true; vm.loadGitDiff() })
-            DropdownMenuItem(text = { Text("刷新") }, enabled = !vm.busy, onClick = { expanded = false; vm.refresh() })
-            DropdownMenuItem(text = { Text("工作区与权限") }, enabled = !vm.busy, onClick = { expanded = false; workspaceDialog = true })
-            DropdownMenuItem(text = { Text("后台连接设置") }, onClick = { expanded = false; backgroundConnectionDialog = true })
-            DropdownMenuItem(text = { Text("全局指令") }, onClick = { expanded = false; globalInstructionsDialog = true; vm.loadGlobalInstructions() })
-            DropdownMenuItem(text = { Text("检查更新 · v" + BuildConfig.VERSION_NAME) }, onClick = { expanded = false; vm.openUpdates() })
-            DropdownMenuItem(text = { Text("历史版本与恢复下载") }, onClick = { expanded = false; vm.openHistory() })
-            DropdownMenuItem(text = { Text("断开服务器") }, enabled = !vm.busy, onClick = { expanded = false; vm.disconnect() })
+            DropdownMenuItem(leadingIcon = { LineIcon("refresh") }, text = { Text("刷新") }, enabled = !vm.busy, onClick = { expanded = false; vm.refresh() })
+            DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("工作区与权限") }, enabled = !vm.busy, onClick = { expanded = false; workspaceDialog = true })
+            DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("后台连接设置") }, onClick = { expanded = false; backgroundConnectionDialog = true })
+            DropdownMenuItem(leadingIcon = { LineIcon("file") }, text = { Text("全局指令") }, onClick = { expanded = false; globalInstructionsDialog = true; vm.loadGlobalInstructions() })
+            DropdownMenuItem(leadingIcon = { LineIcon("download") }, text = { Text("检查更新 · v" + BuildConfig.VERSION_NAME) }, onClick = { expanded = false; vm.openUpdates() })
+            DropdownMenuItem(leadingIcon = { LineIcon("history") }, text = { Text("历史版本与恢复下载") }, onClick = { expanded = false; vm.openHistory() })
+            DropdownMenuItem(leadingIcon = { LineIcon("close") }, text = { Text("断开服务器") }, enabled = !vm.busy, onClick = { expanded = false; vm.disconnect() })
         }
     }
     if (renameDialog && thread != null) AlertDialog(
@@ -657,9 +686,9 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
         },
         confirmButton = {
             TextButton(onClick = { vm.renameActiveThread(titleDraft); renameDialog = false },
-                enabled = !vm.busy && titleDraft.isNotBlank() && titleDraft.trim() != thread.title) { Text("保存") }
+                enabled = !vm.busy && titleDraft.isNotBlank() && titleDraft.trim() != thread.title) { ActionLabel("save", "保存") }
         },
-        dismissButton = { TextButton(onClick = { renameDialog = false }, enabled = !vm.busy) { Text("取消") } }
+        dismissButton = { TextButton(onClick = { renameDialog = false }, enabled = !vm.busy) { ActionLabel("close", "取消") } }
     )
     if (filesDialog && thread != null) WorkspaceFilesDialog(vm) { filesDialog = false }
     if (diffDialog && thread != null) GitDiffDialog(vm) { diffDialog = false }
@@ -692,9 +721,9 @@ private fun WorkspaceFilesDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 Text(vm.fileBrowserPath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { vm.loadProjectFiles(WORKSPACE_ROOT) }, enabled = !vm.workspaceBusy) { Text("项目根目录") }
+                    TextButton(onClick = { vm.loadProjectFiles(WORKSPACE_ROOT) }, enabled = !vm.workspaceBusy) { ActionLabel("folder", "项目根目录") }
                     TextButton(onClick = { vm.loadProjectFiles(vm.fileBrowserPath.substringBeforeLast('/').ifBlank { WORKSPACE_ROOT }) },
-                        enabled = !vm.workspaceBusy && vm.fileBrowserPath != WORKSPACE_ROOT) { Text("上一级") }
+                        enabled = !vm.workspaceBusy && vm.fileBrowserPath != WORKSPACE_ROOT) { ActionLabel("arrow-up", "上一级") }
                 }
                 if (vm.workspaceBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (vm.workspaceError.isNotBlank()) Text(vm.workspaceError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -723,7 +752,7 @@ private fun WorkspaceFilesDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(dismiss) { Text("完成") } })
+        confirmButton = { TextButton(dismiss) { ActionLabel("check", "完成") } })
 
     previewFile?.let { file -> WorkspaceFilePreview(file, previewName,
         onDismiss = { previewFile = null },
@@ -831,9 +860,9 @@ private fun ContextDrawer(
                     Text(vm.fileBrowserPath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton({ vm.loadProjectFiles(WORKSPACE_ROOT) }, enabled = !vm.workspaceBusy) { Text("项目根目录") }
+                        TextButton({ vm.loadProjectFiles(WORKSPACE_ROOT) }, enabled = !vm.workspaceBusy) { ActionLabel("folder", "项目根目录") }
                         TextButton({ vm.loadProjectFiles(vm.fileBrowserPath.substringBeforeLast('/').ifBlank { WORKSPACE_ROOT }) },
-                            enabled = !vm.workspaceBusy && vm.fileBrowserPath != WORKSPACE_ROOT) { Text("上一级") }
+                            enabled = !vm.workspaceBusy && vm.fileBrowserPath != WORKSPACE_ROOT) { ActionLabel("arrow-up", "上一级") }
                     }
                     if (vm.workspaceBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (vm.workspaceError.isNotBlank()) Text(vm.workspaceError, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -883,7 +912,7 @@ private fun ContextDrawer(
                 else -> {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("当前工作区的 Git 差异", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        TextButton({ vm.loadGitDiff() }, enabled = !vm.gitDiffBusy) { Text("刷新") }
+                        TextButton({ vm.loadGitDiff() }, enabled = !vm.gitDiffBusy) { ActionLabel("refresh", "刷新") }
                     }
                     if (!vm.connected) Text("连接服务器后可查看改动。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (vm.gitDiffBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -898,7 +927,7 @@ private fun ContextDrawer(
                     }
                 }
             }
-            TextButton(onDismiss, modifier = Modifier.align(Alignment.End)) { Text("完成") }
+            TextButton(onDismiss, modifier = Modifier.align(Alignment.End)) { ActionLabel("check", "完成") }
         }
     }
     if (webDialog) AlertDialog(onDismissRequest = { webDialog = false },
@@ -914,8 +943,8 @@ private fun ContextDrawer(
             runCatching { vm.importSharedText(sharedText, sharedTitle) }
                 .onFailure { vm.showWorkspaceError(it.message.orEmpty()) }
             sharedText = ""; sharedTitle = ""; webDialog = false
-        }, enabled = sharedText.isNotBlank()) { Text("添加") } },
-        dismissButton = { TextButton({ webDialog = false }) { Text("取消") } })
+        }, enabled = sharedText.isNotBlank()) { ActionLabel("plus", "添加") } },
+        dismissButton = { TextButton({ webDialog = false }) { ActionLabel("close", "取消") } })
     if (browserDialog) WebPageContextDialog(webAddress.ifBlank { sharedUrl }, onDismiss = { browserDialog = false }, onAdd = { title, prompt ->
         vm.addContextReference(title, prompt)
         browserDialog = false
@@ -993,7 +1022,7 @@ private fun WebPageContextDialog(
             Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (allowContextImport) "网页上下文" else "网页预览", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    TextButton(onDismiss) { Text("关闭") }
+                    TextButton(onDismiss) { ActionLabel("close", "关闭") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(address, { address = it }, Modifier.weight(1f), singleLine = true,
@@ -1003,7 +1032,7 @@ private fun WebPageContextDialog(
                         val scheme = runCatching { URI(url).scheme?.lowercase() }.getOrNull()
                         if (scheme != "https") error = "网页上下文仅支持 HTTPS 地址"
                         else { error = ""; extractedPage = ""; currentUrl = url; pageView.loadUrl(url) }
-                    }) { Text("打开") }
+                    }) { ActionLabel("link", "打开") }
                 }
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 AndroidView(factory = { pageView }, modifier = Modifier.weight(1f).fillMaxWidth())
@@ -1028,11 +1057,11 @@ private fun WebPageContextDialog(
                             }.onFailure { error = "读取页面失败：${it.message}" }
                         }
                     }, enabled = !extracting && currentUrl.isNotBlank() && extractedPage.isBlank()) {
-                        Text(if (extracting) "读取中…" else "读取当前页面")
+                        ActionLabel("download", if (extracting) "读取中…" else "读取当前页面")
                     }
                     if (extractedPage.isNotBlank()) Button(onClick = {
                         onAdd(title.ifBlank { currentUrl }, extractedPage)
-                    }) { Text("加入任务") }
+                    }) { ActionLabel("plus", "加入任务") }
                 } else Text(title.ifBlank { currentUrl }, Modifier.fillMaxWidth(), fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -1051,7 +1080,7 @@ private fun ContextRow(title: String, detail: String, onRemove: () -> Unit, onOp
                 Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (onOpen != null) IconButton(onOpen, Modifier.size(40.dp)) { LineIcon("link", Modifier.size(17.dp), MaterialTheme.colorScheme.primary) }
-            IconButton(onRemove, Modifier.size(40.dp)) { Text("×") }
+            IconButton(onRemove, Modifier.size(40.dp)) { LineIcon("close") }
         }
     }
 }
@@ -1097,8 +1126,8 @@ private fun WorkspaceFilePreview(file: File, name: String, onDismiss: () -> Unit
             }
         },
         confirmButton = { Row {
-            TextButton(onShare) { Text("分享") }
-            TextButton(onSave) { Text("保存到手机") }
+            TextButton(onShare) { ActionLabel("share", "分享") }
+            TextButton(onSave) { ActionLabel("download", "保存到手机") }
             if (imageBitmap == null && !isText) TextButton(onClick = {
                 runCatching {
                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
@@ -1107,8 +1136,8 @@ private fun WorkspaceFilePreview(file: File, name: String, onDismiss: () -> Unit
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     })
                 }
-            }) { Text("打开") }
-        } }, dismissButton = { TextButton(onDismiss) { Text("关闭") } })
+            }) { ActionLabel("link", "打开") }
+        } }, dismissButton = { TextButton(onDismiss) { ActionLabel("close", "关闭") } })
 }
 
 @Composable
@@ -1145,8 +1174,8 @@ private fun ServerWorkspaceFileLinkDialog(vm: MobileViewModel, path: String, onD
                 else Text(error, color = MaterialTheme.colorScheme.error)
             }
         },
-        confirmButton = { if (error.isNotBlank()) TextButton(onClick = { attempt++ }) { Text("重试") } },
-        dismissButton = { TextButton(onDismiss) { Text("关闭") } })
+        confirmButton = { if (error.isNotBlank()) TextButton(onClick = { attempt++ }) { ActionLabel("refresh", "重试") } },
+        dismissButton = { TextButton(onDismiss) { ActionLabel("close", "关闭") } })
     fileToShare?.let { shared -> LaunchedEffect(shared) {
         runCatching {
             val uri = FileProvider.getUriForFile(context, context.packageName + ".files", shared)
@@ -1198,8 +1227,8 @@ private fun GitDiffDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                     }
                 }
             }
-        }, confirmButton = { TextButton({ vm.loadGitDiff() }, enabled = !vm.gitDiffBusy) { Text("刷新") } },
-        dismissButton = { TextButton(dismiss) { Text("关闭") } })
+        }, confirmButton = { TextButton({ vm.loadGitDiff() }, enabled = !vm.gitDiffBusy) { ActionLabel("refresh", "刷新") } },
+        dismissButton = { TextButton(dismiss) { ActionLabel("close", "关闭") } })
 }
 
 @Composable
@@ -1224,14 +1253,14 @@ private fun GlobalInstructionsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 }
                 if (vm.globalInstructionsError.isNotBlank()) {
                     Text(vm.globalInstructionsError, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                    TextButton(vm::loadGlobalInstructions, enabled = !vm.globalInstructionsBusy) { Text("重新读取服务器内容") }
+                    TextButton(vm::loadGlobalInstructions, enabled = !vm.globalInstructionsBusy) { ActionLabel("refresh", "重新读取服务器内容") }
                 }
                 if (vm.globalInstructionsMessage.isNotBlank()) Text(vm.globalInstructionsMessage, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
             }
         },
         confirmButton = { TextButton(vm::saveGlobalInstructions, enabled = !vm.globalInstructionsBusy && document != null &&
-            vm.globalInstructionsDraft != document.content) { Text(if (vm.globalInstructionsBusy) "处理中…" else "保存") } },
-        dismissButton = { TextButton(dismiss, enabled = !vm.globalInstructionsBusy) { Text("关闭") } })
+            vm.globalInstructionsDraft != document.content) { ActionLabel("save", if (vm.globalInstructionsBusy) "处理中…" else "保存") } },
+        dismissButton = { TextButton(dismiss, enabled = !vm.globalInstructionsBusy) { ActionLabel("close", "关闭") } })
 }
 
 @Composable
@@ -1260,23 +1289,23 @@ private fun ExecutionSettingsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LineIcon("folder", Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
                         Text(vm.workspaceListing?.path ?: root, Modifier.weight(1f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TextButton({ vm.browseWorkspace(root) }, enabled = !vm.workspaceBusy && root != (vm.workspaceListing?.path ?: root), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("根目录") }
+                        TextButton({ vm.browseWorkspace(root) }, enabled = !vm.workspaceBusy && root != (vm.workspaceListing?.path ?: root), contentPadding = PaddingValues(horizontal = 6.dp)) { ActionLabel("folder", "根目录") }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton({ path = vm.workspaceListing?.path ?: path; selectedFile = null }, enabled = vm.workspaceListing != null && !vm.workspaceBusy && !locked) { Text("选择此目录") }
-                    TextButton({ creatingFolder = !creatingFolder; folderName = "" }, enabled = !vm.workspaceBusy && !locked) { Text(if (creatingFolder) "取消新建" else "新建项目") }
+                    TextButton({ path = vm.workspaceListing?.path ?: path; selectedFile = null }, enabled = vm.workspaceListing != null && !vm.workspaceBusy && !locked) { ActionLabel("check", "选择此目录") }
+                    TextButton({ creatingFolder = !creatingFolder; folderName = "" }, enabled = !vm.workspaceBusy && !locked) { ActionLabel(if (creatingFolder) "close" else "folder-plus", if (creatingFolder) "取消新建" else "新建项目") }
                 }
                 if (creatingFolder) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(folderName, { folderName = it }, Modifier.weight(1f), singleLine = true, enabled = !vm.workspaceBusy,
                         label = { Text("新项目文件夹名称") }, textStyle = MaterialTheme.typography.bodySmall)
                     TextButton({ vm.createWorkspaceFolder(folderName) { path = it; selectedFile = null; creatingFolder = false } },
-                        enabled = !vm.workspaceBusy && folderName.isNotBlank()) { Text("创建") }
+                        enabled = !vm.workspaceBusy && folderName.isNotBlank()) { ActionLabel("folder-plus", "创建") }
                 }
                 if (vm.workspaceBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 vm.workspaceListing?.let { listing ->
                     Text("工作区内容", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    TextButton({ vm.browseWorkspace(listing.path.substringBeforeLast('/').ifBlank { "/" }) }, enabled = !vm.workspaceBusy && listing.path != "/") { Text("↑ 上一级") }
+                    TextButton({ vm.browseWorkspace(listing.path.substringBeforeLast('/').ifBlank { "/" }) }, enabled = !vm.workspaceBusy && listing.path != "/") { ActionLabel("arrow-up", "上一级") }
                     Column(Modifier.heightIn(max = 190.dp).verticalScroll(rememberScrollState())) {
                         if (listing.children.isEmpty() && listing.files.isEmpty()) MutedText("此目录为空，可以直接新建项目")
                         listing.children.forEach { child ->
@@ -1288,7 +1317,7 @@ private fun ExecutionSettingsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                                     Spacer(Modifier.width(8.dp))
                                     Text(child, Modifier.fillMaxWidth(), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                TextButton({ path = childPath; selectedFile = null }, enabled = !vm.workspaceBusy && !locked, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (path == childPath) "已选择 ✓" else "选择") }
+                                TextButton({ path = childPath; selectedFile = null }, enabled = !vm.workspaceBusy && !locked, contentPadding = PaddingValues(horizontal = 6.dp)) { ActionLabel(if (path == childPath) "check" else "folder", if (path == childPath) "已选择" else "选择") }
                             }
                         }
                         listing.files.forEach { file ->
@@ -1327,10 +1356,10 @@ private fun ExecutionSettingsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 if (vm.workspaceError.isNotBlank()) Text(vm.workspaceError, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                 if (vm.workspaceBusy && vm.workspaceStatus.isNotBlank()) MutedText(vm.workspaceStatus)
                 TextButton({ vm.saveExecution(ExecutionOptions(path.trim(), mode, effort)) { dismiss() } },
-                    enabled = !locked && !vm.workspaceBusy && !vm.busy && path.startsWith("/")) { Text(if (vm.workspaceBusy) "请稍候…" else "保存") }
+                    enabled = !locked && !vm.workspaceBusy && !vm.busy && path.startsWith("/")) { ActionLabel("save", if (vm.workspaceBusy) "请稍候…" else "保存") }
             }
         },
-        dismissButton = { TextButton(dismiss, enabled = !vm.workspaceBusy) { Text("取消") } })
+        dismissButton = { TextButton(dismiss, enabled = !vm.workspaceBusy) { ActionLabel("close", "取消") } })
 }
 
 private fun reasoningEffortLabel(value: String): String = when (value) {
@@ -1441,7 +1470,7 @@ private fun ModelPicker(vm: MobileViewModel, enabled: Boolean = true) {
             containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp,
             shadowElevation = 8.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             (listOf("gpt-6-luna", "gpt-6.1-sol") + vm.model).distinct().forEach { value ->
-                DropdownMenuItem(text = { Text(value + if (value == vm.model) "  ✓" else "") }, enabled = enabled,
+                DropdownMenuItem(leadingIcon = { LineIcon("sliders") }, text = { Text(value + if (value == vm.model) "  ✓" else "") }, enabled = enabled,
                     onClick = { vm.selectModel(value); expanded = false })
             }
         }
@@ -1451,7 +1480,12 @@ private fun ModelPicker(vm: MobileViewModel, enabled: Boolean = true) {
 @Composable
 private fun UpdateNotice(vm: MobileViewModel) {
     vm.updateInfo?.let { info ->
-        TextButton(vm::openUpdates) { Text("新版本 " + info.versionName + " 已就绪  →", color = MaterialTheme.colorScheme.secondary) }
+        TextButton(vm::openUpdates) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ActionLabel("download", "新版本 " + info.versionName + " 已就绪", MaterialTheme.colorScheme.secondary)
+                LineIcon("arrow-right", Modifier.size(14.dp), MaterialTheme.colorScheme.secondary)
+            }
+        }
     }
 }
 
@@ -1522,7 +1556,7 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                             placeholder = { Text("搜索对话或项目", fontSize = 14.sp) }, singleLine = true,
                             leadingIcon = { LineIcon("search", Modifier.size(19.dp), Color(0xFF807D78)) },
                             trailingIcon = { if (vm.threadSearch.isNotEmpty()) IconButton({ vm.threadSearch = "" },
-                                modifier = Modifier.semantics { contentDescription = "清空搜索" }) { Text("×", fontSize = 22.sp, color = Color(0xFF625F5B)) } },
+                                modifier = Modifier.semantics { contentDescription = "清空搜索" }) { LineIcon("close", Modifier.size(18.dp), Color(0xFF625F5B)) } },
                             shape = RoundedCornerShape(18.dp), colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
@@ -1557,7 +1591,7 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                         Text(if (vm.connecting) "正在后台恢复连接，可继续查看和编辑" else "离线缓存 · 可查看和编辑草稿",
                             Modifier.weight(1f), fontSize = 12.sp, color = Color(0xFF5D5954))
                         if (!vm.connecting && vm.privateKey.isNotBlank()) TextButton(vm::connect,
-                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连", color = neutralInk) }
+                            contentPadding = PaddingValues(horizontal = 8.dp)) { ActionLabel("refresh", "重连", neutralInk) }
                     }
                 }
             }
@@ -1747,12 +1781,12 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
                     DropdownMenu(menuExpanded, { menuExpanded = false }, shape = RoundedCornerShape(16.dp),
                         containerColor = colors.surface, tonalElevation = 0.dp,
                         border = BorderStroke(1.dp, colors.outlineVariant)) {
-                        DropdownMenuItem(text = { Text(if (pinned) "取消置顶" else "置顶") },
+                        DropdownMenuItem(leadingIcon = { LineIcon("pin") }, text = { Text(if (pinned) "取消置顶" else "置顶") },
                             onClick = { menuExpanded = false; vm.togglePinned(thread.id) })
-                        DropdownMenuItem(text = { Text("归档") }, enabled = canArchive,
+                        DropdownMenuItem(leadingIcon = { LineIcon("archive") }, text = { Text("归档") }, enabled = canArchive,
                             onClick = { menuExpanded = false; vm.archiveThread(thread.id) })
                         HorizontalDivider(color = colors.outlineVariant)
-                        DropdownMenuItem(text = { Text("删除", color = if (canArchive) Color(0xFF9B4F45)
+                        DropdownMenuItem(leadingIcon = { LineIcon("trash", color = if (canArchive) Color(0xFF9B4F45) else colors.onSurface.copy(alpha = .38f)) }, text = { Text("删除", color = if (canArchive) Color(0xFF9B4F45)
                             else colors.onSurface.copy(alpha = .38f)) }, enabled = canArchive,
                             onClick = { menuExpanded = false; confirmDelete = true })
                     }
@@ -1783,8 +1817,8 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
         title = { Text("删除这个会话？") },
         text = { Text("会话将从列表中移除，并在服务器上归档。") },
         confirmButton = { TextButton(enabled = canArchive,
-            onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { Text("删除") } },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } })
+            onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { ActionLabel("trash", "删除") } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { ActionLabel("close", "取消") } })
 }
 
 private val threadProjectColors = listOf(
@@ -1858,7 +1892,7 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
                     Text("正在加载对话…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Text(vm.threadOpenError, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
-                    Button(onClick = { vm.activeId?.let(vm::openThread) }) { Text("重试") }
+                    Button(onClick = { vm.activeId?.let(vm::openThread) }) { ActionLabel("refresh", "重试") }
                 }
             }
         }
@@ -1976,7 +2010,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                     Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (!vm.connected && !vm.connecting && vm.privateKey.isNotBlank()) {
-                    TextButton(vm::connect, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重连") }
+                        TextButton(vm::connect, contentPadding = PaddingValues(horizontal = 8.dp)) { ActionLabel("refresh", "重连") }
                 }
                 if (vm.connected) {
                     TextButton(
@@ -1988,7 +2022,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(6.dp))
                             Text("同步中")
-                        } else Text("重新同步")
+                        } else ActionLabel("refresh", "重新同步")
                     }
                 }
             }
@@ -2012,9 +2046,9 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                 maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (!task.autoStartAllowed) TextButton({ vm.startQueuedTask(task.id) },
                                 enabled = index == 0 && !running, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                                Text("启动", fontSize = 11.sp)
+                                ActionLabel("play", "启动", iconSize = 13.dp, fontSize = 11.sp)
                             }
-                            TextButton({ vm.removeQueuedTask(task.id) }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("移除", fontSize = 11.sp) }
+                            TextButton({ vm.removeQueuedTask(task.id) }, contentPadding = PaddingValues(horizontal = 6.dp)) { ActionLabel("close", "移除", iconSize = 13.dp, fontSize = 11.sp) }
                         }
                     }
                     if (queuedTasks.size > 3) Text("另有 ${queuedTasks.size - 3} 条", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2073,7 +2107,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                     }
                 }
                 item("historyHeader") {
-                    if (!vm.historyCursors[thread.id].isNullOrBlank()) TextButton(vm::loadOlder, enabled = !vm.busy) { Text("查看更早的消息", fontSize = 12.sp) }
+                    if (!vm.historyCursors[thread.id].isNullOrBlank()) TextButton(vm::loadOlder, enabled = !vm.busy) { ActionLabel("arrow-up", "查看更早的消息", iconSize = 14.dp, fontSize = 12.sp) }
                 }
             }
             // Only the rounded surface receives input; there is no opaque rectangular footer.
@@ -2109,7 +2143,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                             Text(image.label, Modifier.widthIn(max = 140.dp), fontSize = 11.sp,
                                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             IconButton({ vm.removeImage(index) }, Modifier.size(34.dp)
-                                                .semantics { contentDescription = "移除${image.label}" }) { Text("×") }
+                                                .semantics { contentDescription = "移除${image.label}" }) { LineIcon("close") }
                                         }
                                     }
                                 }
@@ -2120,7 +2154,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                 LineIcon("play", Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
                                 Text("${it.label} · ${formatVideoSize(it.sizeBytes)} · 原画质", Modifier.weight(1f).padding(start = 8.dp),
                                     fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IconButton(vm::removeVideo, Modifier.size(44.dp).semantics { contentDescription = "移除视频" }) { Text("×") }
+                                IconButton(vm::removeVideo, Modifier.size(44.dp).semantics { contentDescription = "移除视频" }) { LineIcon("close") }
                             }
                         }
                         sharedFiles.forEachIndexed { index, file ->
@@ -2128,7 +2162,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                 LineIcon("file", Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
                                 Text("${file.label} · ${formatVideoSize(file.sizeBytes)}", Modifier.weight(1f).padding(start = 8.dp),
                                     fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IconButton({ vm.removeSharedFile(index) }, Modifier.size(44.dp).semantics { contentDescription = "移除${file.label}" }) { Text("×") }
+                                IconButton({ vm.removeSharedFile(index) }, Modifier.size(44.dp).semantics { contentDescription = "移除${file.label}" }) { LineIcon("close") }
                             }
                         }
                         references.forEach { reference ->
@@ -2137,7 +2171,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                                 Text(reference.label, Modifier.weight(1f).padding(start = 8.dp),
                                     fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 IconButton({ vm.removeContextReference(reference.id) }, Modifier.size(44.dp)
-                                    .semantics { contentDescription = "移除上下文 ${reference.label}" }) { Text("×") }
+                                    .semantics { contentDescription = "移除上下文 ${reference.label}" }) { LineIcon("close") }
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2289,7 +2323,7 @@ private fun SmoothAssistantMessage(line: ChatLine, vm: MobileViewModel, onOpenLi
                 clipboard.setPrimaryClip(ClipData.newPlainText("Andri 生成文字", answerText))
                 copied = true
             }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                Text(if (copied) "已复制" else "复制文字", fontSize = 12.sp)
+                ActionLabel(if (copied) "check" else "save", if (copied) "已复制" else "复制文字", iconSize = 14.dp, fontSize = 12.sp)
             }
         }
     }
@@ -2321,7 +2355,7 @@ private fun ChatImageGallery(sources: List<String>, vm: MobileViewModel, baseDir
                     ChatImageSource(sources[page], vm, baseDirectory, galleryPage = true)
                 }
                 TextButton(onClick = { selectedIndex = -1 }, modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)) {
-                    Text("关闭", color = Color.White)
+                    ActionLabel("close", "关闭", Color.White)
                 }
                 if (sources.size > 1) {
                     Text("${pagerState.currentPage + 1} / ${sources.size}",
@@ -2448,7 +2482,7 @@ private fun ChatImage(
             Image((previewBitmap ?: bitmap)!!.asImageBitmap(), contentDescription = "图片预览",
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             TextButton(onClick = ::saveOriginal, modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)) {
-                Text("下载原图", color = Color.White)
+                ActionLabel("download", "下载原图", Color.White)
             }
             if (saveStatus.isNotBlank()) Text(saveStatus, Modifier.align(Alignment.BottomEnd).padding(24.dp),
                 fontSize = 12.sp, color = Color.White)
@@ -2462,8 +2496,8 @@ private fun ChatImage(
                 contentScale = if (compact) ContentScale.Crop else ContentScale.Fit)
             if (!compact) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = ::openPreview) { Text("查看原图") }
-                    TextButton(onClick = ::saveOriginal) { Text("下载原图") }
+                    TextButton(onClick = ::openPreview) { ActionLabel("eye", "查看原图") }
+                    TextButton(onClick = ::saveOriginal) { ActionLabel("download", "下载原图") }
                     if (saveStatus.isNotBlank()) Text(saveStatus, fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -2503,12 +2537,12 @@ private fun ChatImage(
                             .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY),
                         contentScale = ContentScale.Fit)
                     TextButton(onClick = ::closePreview, modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)) {
-                        Text("关闭", color = Color.White)
+                        ActionLabel("close", "关闭", Color.White)
                     }
                     Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { Text("重置缩放", color = Color.White) }
-                        TextButton(onClick = ::saveOriginal) { Text("下载原图", color = Color.White) }
+                        TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { ActionLabel("refresh", "重置缩放", Color.White) }
+                        TextButton(onClick = ::saveOriginal) { ActionLabel("download", "下载原图", Color.White) }
                     }
                 }
             }
@@ -2771,7 +2805,7 @@ private fun ChatVideoSource(path: String, vm: MobileViewModel, baseDirectory: St
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = ::saveVideo, enabled = videoFile?.isFile == true) {
-                Text("保存视频到相册", color = MaterialTheme.colorScheme.primary)
+                ActionLabel("download", "保存视频到相册", MaterialTheme.colorScheme.primary)
             }
             if (status.isNotBlank()) Text(status, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -3005,7 +3039,7 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
             }
             if (!answered) Button(onClick = { vm.sendQuestionAnswers(line, line.questions.indices.map { answers[it].orEmpty() }) },
                 enabled = vm.canSendToThread(vm.activeId.orEmpty()) && !vm.busy && vm.activeId !in vm.sending && line.questions.indices.all { !answers[it].isNullOrBlank() },
-                shape = RoundedCornerShape(12.dp)) { Text("提交回答") }
+                shape = RoundedCornerShape(12.dp)) { ActionLabel("send", "提交回答") }
         }
     }
 }
@@ -3171,9 +3205,9 @@ private fun ReleaseHistoryDialog(vm: MobileViewModel, install: (java.io.File) ->
                     Row {
                         TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = {
                             saveApk.launch("Andri-Android-" + downloaded.info.versionName + ".apk")
-                        }) { Text("保存 APK") }
+                        }) { ActionLabel("save", "保存 APK") }
                         TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = { vm.installHistory(install) }) {
-                            Text("打开系统安装器")
+                            ActionLabel("download", "打开系统安装器")
                         }
                     }
                 }
@@ -3188,14 +3222,14 @@ private fun ReleaseHistoryDialog(vm: MobileViewModel, install: (java.io.File) ->
                         TextButton(enabled = !vm.historyBusy && !exportBusy, onClick = {
                             exportMessage = ""
                             vm.downloadHistory(info)
-                        }) { Text("下载") }
+                        }) { ActionLabel("download", "下载") }
                     }
                     if (info.notes.isNotBlank()) Text(info.notes, fontSize = 12.sp)
                 }
             }
         },
-        confirmButton = { TextButton(vm::refreshHistory, enabled = !vm.historyBusy && !exportBusy) { Text("刷新列表") } },
-        dismissButton = { TextButton(vm::dismissHistory, enabled = !exportBusy) { Text(if (vm.historyBusy) "取消" else "关闭") } }
+        confirmButton = { TextButton(vm::refreshHistory, enabled = !vm.historyBusy && !exportBusy) { ActionLabel("refresh", "刷新列表") } },
+        dismissButton = { TextButton(vm::dismissHistory, enabled = !exportBusy) { ActionLabel("close", if (vm.historyBusy) "取消" else "关闭") } }
     )
 }
 
@@ -3207,7 +3241,7 @@ private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("当前版本 " + BuildConfig.VERSION_NAME)
-                TextButton(vm::openHistory, enabled = !vm.updateBusy) { Text("历史版本与恢复下载") }
+                TextButton(vm::openHistory, enabled = !vm.updateBusy) { ActionLabel("history", "历史版本与恢复下载") }
                 if (vm.updateChecking) Text("正在通过 82 的 SSH 检查版本…")
                 else Text(vm.updateMessage)
                 vm.updateInfo?.let { info ->
@@ -3224,13 +3258,13 @@ private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
             if (vm.updateInfo != null) TextButton(enabled = !vm.updateBusy && !vm.updateChecking, onClick = {
                 val file = vm.updateFile
                 if (file == null) vm.downloadUpdate() else vm.prepareUpdateInstall(install)
-            }) { Text(if (vm.updateFile == null) "下载更新" else "安装更新") }
+            }) { ActionLabel(if (vm.updateFile == null) "download" else "upload", if (vm.updateFile == null) "下载更新" else "安装更新") }
             else if (vm.updateError.isNotBlank()) TextButton(enabled = !vm.updateBusy && !vm.updateChecking,
-                onClick = { vm.checkForUpdate(manual = true) }) { Text("重新检查") }
-            else TextButton(vm::dismissUpdate) { Text("知道了") }
+                onClick = { vm.checkForUpdate(manual = true) }) { ActionLabel("refresh", "重新检查") }
+            else TextButton(vm::dismissUpdate) { ActionLabel("check", "知道了") }
         },
         dismissButton = {
-            if (vm.updateInfo != null) TextButton(vm::dismissUpdate, enabled = !vm.updateBusy) { Text("稍后") }
+            if (vm.updateInfo != null) TextButton(vm::dismissUpdate, enabled = !vm.updateBusy) { ActionLabel("close", "稍后") }
         }
     )
 }
@@ -3280,10 +3314,10 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
             TextButton(
                 enabled = !vm.responding && if (userInput) (0 until count).all { !answers[questions!!.getJSONObject(it).text("id")].isNullOrBlank() } else canApprove,
                 onClick = { vm.respond(request, approved = true, answers = answers.toMap()) }
-            ) { Text(if (userInput) "提交回答" else "批准这一次") }
+            ) { ActionLabel(if (userInput) "send" else "check", if (userInput) "提交回答" else "批准这一次") }
         },
         dismissButton = {
-            if (!userInput) TextButton(enabled = !vm.responding, onClick = { vm.respond(request, approved = false) }) { Text("拒绝") }
+            if (!userInput) TextButton(enabled = !vm.responding, onClick = { vm.respond(request, approved = false) }) { ActionLabel("close", "拒绝") }
         }
     )
 }

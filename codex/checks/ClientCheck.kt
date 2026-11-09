@@ -29,6 +29,25 @@ class ClientCheck {
         assertEquals("cursor", hydratePage(JSONObject().put("thread", JSONObject()), page).getString("historyCursor"))
     }
 
+    @Test fun latestPageMergeKeepsLongWindowOrderAndSameTurnDeltas() {
+        val history = listOf(
+            ChatLine("user", "第一轮问题", "u1", "t1"),
+            ChatLine("assistant", "第一轮回答", "a1", "t1"),
+            ChatLine("user", "第二轮问题", "u2", "t2"),
+            ChatLine("assistant", "第二轮回答", "a2", "t2")
+        )
+        val older = ChatLine("user", "更早的历史", "old", "t0")
+        val streamedAnswer = ChatLine("assistant", "第一轮回答仍在增长", "a1", "t1")
+        val sameTurnDelta = ChatLine("tool", "新增工具事件", "tool-extra", "t1")
+        val liveTail = ChatLine("assistant", "正在生成", "live-tail", "t2", streaming = true)
+        val current = listOf(older, history[0], streamedAnswer, sameTurnDelta, history[2], history[3], liveTail)
+
+        val merged = mergeHistory(history, current, latestPage = true, activeTurnId = "t2")
+
+        assertEquals(listOf("old", "u1", "a1", "tool-extra", "u2", "a2", "live-tail"), merged.map { it.id })
+        assertEquals("第一轮回答仍在增长", merged[2].text)
+    }
+
     @Test fun androidEd25519ImplementationIsAvailable() {
         val signature = com.jcraft.jsch.bc.SignatureEd25519()
         signature.init()

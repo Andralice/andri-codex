@@ -20,7 +20,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable
 internal fun BackgroundConnectionSettingsButton() {
     var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = true }) { Text("后台连接设置") }
+    TextButton(onClick = { open = true }) { ActionLabel("settings", "后台连接设置") }
     if (open) BackgroundConnectionSettingsDialog { open = false }
 }
 
@@ -58,7 +58,7 @@ internal fun BackgroundConnectionSettingsDialog(onDismiss: () -> Unit) {
                 Text("断网、系统强行停止或手动强制停止应用，仍会中断连接。")
             }
         },
-        confirmButton = { TextButton(onClick = { openSettings(true) }) { Text("打开省电设置") } },
-        dismissButton = { TextButton(onClick = { openSettings(false) }) { Text("应用系统设置") } }
+        confirmButton = { TextButton(onClick = { openSettings(true) }) { ActionLabel("bolt", "打开省电设置") } },
+        dismissButton = { TextButton(onClick = { openSettings(false) }) { ActionLabel("settings", "应用系统设置") } }
     )
 }

@@ -2280,10 +2280,16 @@ internal fun mergeHistory(
         }
         return merged
     }
-    val firstOverlap = current.indexOfFirst { live -> history.any { it.id == live.id } }
+    // A reconnect page is small, but `current` can contain a long locally loaded
+    // conversation. Index IDs once so each incoming line does not rescan that
+    // entire window. The old implementation made this path quadratic as history
+    // grew, especially while restoring a long conversation.
+    val historyIds = history.mapTo(HashSet(history.size)) { it.id }
+    val currentById = current.asReversed().associateBy { it.id }
+    val firstOverlap = current.indexOfFirst { it.id in historyIds }
     val prefix = if (firstOverlap < 0) emptyList() else current.take(firstOverlap)
     val merged = history.map { saved ->
-        current.firstOrNull { it.id == saved.id }?.let { live ->
+        currentById[saved.id]?.let { live ->
             // History is authoritative after reconnect. Preserve a genuinely longer
             // live prefix; equal text must take the saved completed status.
             when {
@@ -2293,25 +2299,34 @@ internal fun mergeHistory(
         } ?: saved
     }
     val remaining = current.drop(if (firstOverlap < 0) 0 else firstOverlap)
-        .filter { live -> history.none { it.id == live.id } }
+        .filter { live -> live.id !in historyIds }
     if (!latestPage) return prefix + merged + remaining
 
     // A latest-page response can omit older cached turns. Appending every
     // unmatched cached line after the page moves old messages to the bottom.
     // Reinsert lines into a turn already present in the page, keep an active
     // turn at the end, and retain other omitted turns before the page.
-    val orderedHistory = merged.toMutableList()
     val omittedOlderLines = mutableListOf<ChatLine>()
     val liveTail = mutableListOf<ChatLine>()
+    val additionsByTurn = LinkedHashMap<String, MutableList<ChatLine>>()
+    val mergedTurnIds = merged.mapNotNullTo(HashSet()) { it.turnId.takeIf(String::isNotBlank) }
     remaining.forEach { line ->
-        val turnLines = line.turnId.takeIf { it.isNotBlank() }
-            ?.let { turnId -> orderedHistory.indices.filter { orderedHistory[it].turnId == turnId } }
-            .orEmpty()
+        val turnId = line.turnId
         when {
-            turnLines.isNotEmpty() -> orderedHistory.add(turnLines.last() + 1, line)
+            turnId in mergedTurnIds ->
+                additionsByTurn.getOrPut(turnId) { mutableListOf() }.add(line)
             line.streaming || line.turnId.isBlank() || line.turnId == activeTurnId ||
                 line.status in setOf("inProgress", "pending", "waiting") -> liveTail.add(line)
             else -> omittedOlderLines.add(line)
+        }
+    }
+    val lastIndexByTurn = merged.mapIndexedNotNull { index, line ->
+        line.turnId.takeIf { it.isNotBlank() }?.let { it to index }
+    }.toMap()
+    val orderedHistory = buildList(merged.size + remaining.size) {
+        merged.forEachIndexed { index, line ->
+            add(line)
+            if (lastIndexByTurn[line.turnId] == index) addAll(additionsByTurn[line.turnId].orEmpty())
         }
     }
     return prefix + omittedOlderLines + orderedHistory + liveTail
