@@ -546,11 +546,13 @@ class SshCodexClient(
         return hydratePage(result, page)
     }
 
-    suspend fun updateThreadSettings(threadId: String, options: ExecutionOptions): JSONObject {
+    suspend fun updateThreadSettings(threadId: String, options: ExecutionOptions, model: String? = null): JSONObject {
         val updated = CompletableDeferred<JSONObject>()
         check(pendingSettings.putIfAbsent(threadId, updated) == null) { "设置正在保存，请稍候" }
         try {
-            request("thread/settings/update", options.params(turn = true).put("threadId", threadId))
+            request("thread/settings/update", options.params(turn = true).put("threadId", threadId).apply {
+                if (model != null) put("model", model)
+            })
             // The update response is intentionally empty. Prefer the settings
             // notification, but some app-server builds acknowledge the update
             // without delivering it to this client. In that case, read the
