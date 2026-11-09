@@ -96,11 +96,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.first
+import com.caverock.androidsvg.SVG
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.ByteArrayOutputStream
 import java.io.File
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.util.Base64
 import android.os.Build
 import android.content.pm.PackageManager
@@ -2733,6 +2737,7 @@ private fun imageMimeType(source: String, bytes: ByteArray?): String {
     if (source.startsWith("data:image/", true)) return source.substringAfter("data:").substringBefore(';')
     val path = runCatching { if (source.startsWith("file:", true)) URI(source).path else URI(source).path }.getOrNull().orEmpty()
     return when (path.substringAfterLast('.', "").lowercase()) {
+        "svg" -> "image/svg+xml"
         "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"; "bmp" -> "image/bmp"
         "avif" -> "image/avif"; "heic" -> "image/heic"; "heif" -> "image/heif"
         else -> when {
@@ -2746,6 +2751,7 @@ private fun imageMimeType(source: String, bytes: ByteArray?): String {
 
 private fun imageFileName(source: String, mimeType: String): String {
     val extension = when (mimeType.lowercase()) {
+        "image/svg+xml" -> "svg"
         "image/png" -> "png"; "image/gif" -> "gif"; "image/webp" -> "webp"; "image/bmp" -> "bmp"
         "image/avif" -> "avif"; "image/heic" -> "heic"; "image/heif" -> "heif"; else -> "jpg"
     }
@@ -2764,6 +2770,10 @@ private data class WorkspaceImageLoad(val uri: String? = null, val error: String
 
 private fun decodeChatBitmap(bytes: ByteArray, maxPixels: Long = MAX_CHAT_IMAGE_DECODE_PIXELS): android.graphics.Bitmap? {
     if (bytes.isEmpty() || bytes.size > MAX_CHAT_IMAGE_BYTES) return null
+    if (isSvgImage(bytes)) return decodeSvgBitmap(bytes, maxPixels)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        decodeWithImageDecoder(bytes, maxPixels)?.let { return it }
+    }
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     val width = bounds.outWidth
@@ -2777,6 +2787,44 @@ private fun decodeChatBitmap(bytes: ByteArray, maxPixels: Long = MAX_CHAT_IMAGE_
             inSampleSize = sample
         })
     } catch (_: OutOfMemoryError) {
+        null
+    }
+}
+
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.P)
+private fun decodeWithImageDecoder(bytes: ByteArray, maxPixels: Long): Bitmap? = try {
+    ImageDecoder.decodeBitmap(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+        val width = info.size.width
+        val height = info.size.height
+        require(width > 0 && height > 0 && width.toLong() * height <= MAX_CHAT_IMAGE_SOURCE_PIXELS) { "图片尺寸过大" }
+        val scale = minOf(1.0, kotlin.math.sqrt(maxPixels.toDouble() / (width.toDouble() * height)), 8192.0 / maxOf(width, height))
+        decoder.setTargetSize((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1))
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+    }
+} catch (_: Exception) {
+    null
+}
+
+private fun isSvgImage(bytes: ByteArray): Boolean =
+    bytes.copyOfRange(0, minOf(bytes.size, 4096)).toString(Charsets.UTF_8)
+        .contains(Regex("(?is)<svg(?:\\s|>)"))
+
+private fun decodeSvgBitmap(bytes: ByteArray, maxPixels: Long): Bitmap? {
+    return try {
+        val svg = SVG.getFromString(bytes.toString(Charsets.UTF_8))
+        val viewBox = svg.documentViewBox
+        val width = svg.documentWidth.takeIf { it.isFinite() && it > 0f } ?: viewBox?.width()
+        val height = svg.documentHeight.takeIf { it.isFinite() && it > 0f } ?: viewBox?.height()
+        if (width == null || height == null || !width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f) return null
+        val scale = minOf(1f, kotlin.math.sqrt(maxPixels.toDouble() / (width.toDouble() * height)).toFloat(), 8192f / maxOf(width, height))
+        val outWidth = (width * scale).toInt().coerceAtLeast(1)
+        val outHeight = (height * scale).toInt().coerceAtLeast(1)
+        Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val canvas = Canvas(bitmap)
+            canvas.scale(outWidth / width, outHeight / height)
+            svg.renderToCanvas(canvas)
+        }
+    } catch (_: Exception) {
         null
     }
 }
@@ -2982,7 +3030,7 @@ private fun markdownImageDestinations(markdown: String): List<String> {
         .filter { raw ->
             val path = runCatching { URI(raw).path.orEmpty() }.getOrDefault("")
             path.substringAfterLast('.', "").lowercase() in
-                setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif")
+                setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif", "svg")
         }
         .toList()
     return (markdownImages + directImageLinks).distinct().mapNotNull { raw ->
@@ -3282,6 +3330,13 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
 /** Recover generated role labels that put whitespace before `**` and no separating space after it. */
 private fun repairCommonMarkdownSpacing(markdown: String): String =
     Regex("(\\*\\*[^*\\n]+?[：:])[ \\t]+\\*\\*(?=\\S)").replace(markdown, "$1** ")
+        .let { normalized ->
+            // A space before the closing delimiter prevents CommonMark from recognizing bold text.
+            // Move it outside the delimiters so generated prose such as `**text. **next` renders bold.
+            Regex("(\\*\\*[^*\\n]+?)([ \\t]+)(\\*\\*)").replace(normalized) { match ->
+                "${match.groupValues[1]}${match.groupValues[3]}${match.groupValues[2]}"
+            }
+        }
 
 
 

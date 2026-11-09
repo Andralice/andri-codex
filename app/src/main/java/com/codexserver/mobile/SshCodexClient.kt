@@ -972,8 +972,10 @@ class SshCodexClient(
             val resolved = sftp.realpath(candidate)
             val root = WORKSPACE_ROOT.trimEnd('/')
             check(resolved == root || resolved.startsWith("$root/")) { "只允许读取工作区中的图片" }
-            check(resolved.substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")) {
-                "本地图片仅支持 PNG、JPEG、GIF、WebP 或 BMP 文件"
+            check(resolved.substringAfterLast('.', "").lowercase() in setOf(
+                "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic", "heif"
+            )) {
+                "本地图片仅支持 PNG、JPEG、GIF、WebP、BMP、SVG、AVIF、HEIC 或 HEIF 文件"
             }
             val attrs = sftp.lstat(resolved)
             check(attrs.isReg && !attrs.isLink) { "图片路径不是普通文件" }
@@ -1194,7 +1196,12 @@ private fun isSupportedImageBytes(bytes: ByteArray): Boolean =
             (bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte()) ||
             bytes.copyOfRange(0, 3).toString(Charsets.US_ASCII) == "GIF" ||
             (bytes.copyOfRange(0, 4).toString(Charsets.US_ASCII) == "RIFF" && bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII) == "WEBP") ||
-            bytes.copyOfRange(0, 2).toString(Charsets.US_ASCII) == "BM"
+            bytes.copyOfRange(0, 2).toString(Charsets.US_ASCII) == "BM" ||
+            (bytes.copyOfRange(4, 8).toString(Charsets.US_ASCII) == "ftyp" &&
+                bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII) in
+                    setOf("avif", "avis", "heic", "heix", "hevc", "hevx", "mif1", "msf1")) ||
+            bytes.copyOfRange(0, minOf(bytes.size, 4096)).toString(Charsets.UTF_8)
+                .contains(Regex("(?is)<svg(?:\\s|>)"))
     )
 
 private fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
