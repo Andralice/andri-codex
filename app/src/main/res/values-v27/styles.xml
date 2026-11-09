@@ -1,6 +1,6 @@
 <resources>
     <style name="Theme.CodexServer" parent="Base.Theme.CodexServer">
-        <item name="android:navigationBarColor">#FFFDFC</item>
+        <item name="android:navigationBarColor">#F3F1EB</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
