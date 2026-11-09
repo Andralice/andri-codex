@@ -6,6 +6,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -34,6 +35,8 @@ data class TaskCompletionAlert(val id: String, val threadId: String, val threadT
     val project: String, val title: String, val detail: String)
 
 class MobileViewModel(application: Application) : AndroidViewModel(application) {
+    private data class BufferedAgentDelta(val turnId: String, val text: StringBuilder)
+
     companion object {
         const val UPDATE_MANIFEST = "/home/ubuntu/codex/mobile-client/releases/latest.json"
         const val PENDING_SHARED_FILES = "__pending_shared_files__"
@@ -54,6 +57,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     // can arrive late around reconnects; threadId alone is not enough to distinguish
     // a stale event from the turn currently being shown.
     private val latestTurnIds = mutableMapOf<String, String>()
+    private val lastHydratedUpdatedAt = mutableMapOf<String, Long>()
+    private val bufferedAgentDeltas = mutableMapOf<String, LinkedHashMap<String, BufferedAgentDelta>>()
+    private val agentDeltaFlushJobs = mutableMapOf<String, Job>()
     private val timelineSyncing = mutableSetOf<String>()
     private val chatDiagnosticTrail = mutableMapOf<String, MutableList<JSONObject>>()
     private val lastChatDiagnosticUpload = mutableMapOf<String, Long>()
@@ -341,6 +347,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun connect(preserveUpdateState: Boolean = false, automatic: Boolean = false) {
         if ((!automatic && busy) || connectionJob?.isActive == true) return
+        flushAllAgentDeltas()
         val validPort = port.toIntOrNull()
         if (host.isBlank() || username.isBlank() || validPort == null || validPort !in 1..65535) {
             error = "请填写有效的服务器地址、用户名和端口"
@@ -453,24 +460,42 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         synchronizing = true
         synchronizationJob = viewModelScope.launch {
             try {
+                // On an already-live connection, thread/list is enough to tell
+                // whether the selected conversation changed. Avoid another
+                // turns/list read when its server timestamp is unchanged.
+                val listedActiveThread = CompletableDeferred<CodexThread?>()
                 syncConversationContent(
                     syncList = {
-                        val rows = connection.listThreads(firstPageOnly = true)
-                        if (client === connection && connected) {
-                            // A first page is partial: keep older cached conversations available.
-                            replaceThreads(rows, partial = true)
-                            updateRunningThreads(rows)
-                            // The first page keeps the sidebar responsive. Reconcile the full
-                            // list in the background and hydrate every active task there.
-                            refreshThreadListInBackground(connection, skipHydration = setOfNotNull(restore))
+                        try {
+                            val rows = connection.listThreads(firstPageOnly = true)
+                            listedActiveThread.complete(rows.firstOrNull { it.id == restore })
+                            if (client === connection && connected) {
+                                // A first page is partial: keep older cached conversations available.
+                                replaceThreads(rows, partial = true)
+                                updateRunningThreads(rows)
+                                // A reconnect needs a full reconciliation and task recovery.
+                                // A foreground refresh on the same live socket only needs the
+                                // first page; the full scan and serial resumes add no new data.
+                                if (restoreSubscription) {
+                                    refreshThreadListInBackground(connection, skipHydration = setOfNotNull(restore))
+                                }
+                            }
+                        } finally {
+                            // A failed list read must fall back to fetching the conversation.
+                            listedActiveThread.complete(null)
                         }
                     },
                     syncThread = {
                         if (restore != null) {
                             if (restoreSubscription) loadThread(restore, selectionGeneration)
                             else if (restore !in localEmptyThreads) {
-                                val snapshot = connection.readThread(restore)
-                                if (client === connection && connected) applySnapshot(snapshot)
+                                val listed = listedActiveThread.await()
+                                val knownUpdatedAt = lastHydratedUpdatedAt[restore] ?: 0L
+                                val unchanged = listed?.updatedAt?.let { it > 0L && it == knownUpdatedAt } == true
+                                if (!unchanged) {
+                                    val snapshot = connection.readThread(restore)
+                                    if (client === connection && connected) applySnapshot(snapshot)
+                                }
                             }
                         }
                     },
@@ -575,6 +600,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disconnect() {
+        flushAllAgentDeltas()
         reconnectJob?.cancel()
         reconnectJob = null
         recovery.reset()
@@ -623,6 +649,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val thread = result.optJSONObject("thread") ?: return
         val row = parseThread(thread, result.text("model"))
         if (row.id.isBlank()) return
+        if (row.updatedAt > 0L) lastHydratedUpdatedAt[row.id] = row.updatedAt
         val old = messages[row.id].orEmpty()
         val history = parseMessages(thread)
         val merged = mergeHistory(history, old, latestPage = true, activeTurnId = row.turnId)
@@ -1930,8 +1957,31 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun flushAgentDeltas(threadId: String, cancelTimer: Boolean = true) {
+        val flushJob = agentDeltaFlushJobs.remove(threadId)
+        if (cancelTimer) flushJob?.cancel()
+        val pending = bufferedAgentDeltas.remove(threadId) ?: return
+        var changed = false
+        pending.forEach { (itemId, delta) ->
+            if (delta.text.isEmpty()) return@forEach
+            val current = messages[threadId].orEmpty()
+            val updated = applyChatNotification(current, "item/agentMessage/delta", JSONObject()
+                .put("itemId", itemId).put("turnId", delta.turnId).put("delta", delta.text.toString()))
+            if (updated !== current) {
+                messages[threadId] = updated
+                changed = true
+            }
+        }
+        if (changed) promoteThread(threadId)
+    }
+
+    private fun flushAllAgentDeltas() {
+        (bufferedAgentDeltas.keys + agentDeltaFlushJobs.keys).toSet().forEach(::flushAgentDeltas)
+    }
+
     private fun handleEvent(event: JSONObject) {
         if (event.has("localError")) {
+            flushAllAgentDeltas()
             (running.keys.toList() + listOfNotNull(activeId)).distinct().forEach { target ->
                 reportChatError(event.text("localError"), "SSH 连接中断", target, running[target].orEmpty(), "connectionError:$target")
             }
@@ -1964,7 +2014,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             else ""
         }
         val eventItemId = params.text("itemId").ifBlank { params.optJSONObject("item")?.text("id").orEmpty() }
-        if (id.isNotBlank() && (method.startsWith("item/") || method.startsWith("turn/") || method == "error" ||
+        if (method != "item/agentMessage/delta" && id.isNotBlank()) flushAgentDeltas(id)
+        if (id.isNotBlank() && method != "item/agentMessage/delta" &&
+            (method.startsWith("item/") || method.startsWith("turn/") || method == "error" ||
                 method == "thread/status/changed" || method == "thread/queue/changed")) {
             recordChatDiagnostic("server.notification", id, eventTurnId, JSONObject()
                 .put("method", method).put("itemId", eventItemId)
@@ -2031,6 +2083,19 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 else -> replyUnsupported(event, "当前客户端暂不支持服务器请求：" + method)
+            }
+            return
+        }
+        if (method == "item/agentMessage/delta" && id.isNotBlank() && eventItemId.isNotBlank()) {
+            val pending = bufferedAgentDeltas.getOrPut(id) { linkedMapOf() }
+            val delta = pending[eventItemId]
+            if (delta == null) pending[eventItemId] = BufferedAgentDelta(eventTurnId, StringBuilder(params.text("delta")))
+            else delta.text.append(params.text("delta"))
+            if (agentDeltaFlushJobs[id]?.isActive != true) {
+                agentDeltaFlushJobs[id] = viewModelScope.launch {
+                    delay(32)
+                    flushAgentDeltas(id, cancelTimer = false)
+                }
             }
             return
         }
@@ -2247,6 +2312,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        flushAllAgentDeltas()
         historyJob?.cancel()
         historyClient?.let { connection -> kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { connection.close() } }
         reconnectJob?.cancel()

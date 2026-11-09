@@ -46,6 +46,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -62,7 +63,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -479,65 +479,61 @@ private fun BrandMark(size: Int = 40) {
 
 @Composable
 private fun LineIcon(name: String, modifier: Modifier = Modifier.size(20.dp), color: Color = LocalContentColor.current) {
-    Canvas(modifier) {
-        val unit = size.width / 24f
-        val stroke = 1.7f * unit
-        fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color, Offset(x1 * unit, y1 * unit), Offset(x2 * unit, y2 * unit), stroke, StrokeCap.Round)
-        when (name) {
-            "paperclip" -> { line(8f, 13f, 15f, 6f); line(15f, 6f, 19f, 10f); line(19f, 10f, 12f, 17f); line(12f, 17f, 8f, 13f); line(11f, 10f, 15f, 6f) }
-            "sliders" -> { line(4f, 7f, 20f, 7f); line(4f, 17f, 20f, 17f); drawCircle(color, 2f * unit, Offset(9f * unit, 7f * unit)); drawCircle(color, 2f * unit, Offset(15f * unit, 17f * unit)) }
-            "code" -> { line(8f, 6f, 2f, 12f); line(2f, 12f, 8f, 18f); line(16f, 6f, 22f, 12f); line(22f, 12f, 16f, 18f); line(14f, 4f, 10f, 20f) }
-            "chevron" -> { line(9f, 6f, 15f, 12f); line(15f, 12f, 9f, 18f) }
-            "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }
-            "sidebar" -> { line(4f, 5f, 20f, 5f); line(4f, 12f, 20f, 12f); line(4f, 19f, 20f, 19f); line(8f, 4f, 8f, 20f) }
-            "plus" -> { line(12f, 5f, 12f, 19f); line(5f, 12f, 19f, 12f) }
-            "send" -> { line(12f, 19f, 12f, 5f); line(6f, 11f, 12f, 5f); line(12f, 5f, 18f, 11f) }
-            "paperplane" -> { line(3f, 11f, 21f, 4f); line(21f, 4f, 15f, 20f); line(15f, 20f, 11f, 14f); line(11f, 14f, 3f, 11f); line(11f, 14f, 21f, 4f) }
-            "pause" -> { drawRoundRect(color, Offset(6f * unit, 5f * unit), androidx.compose.ui.geometry.Size(4f * unit, 14f * unit), CornerRadius(1f * unit)); drawRoundRect(color, Offset(14f * unit, 5f * unit), androidx.compose.ui.geometry.Size(4f * unit, 14f * unit), CornerRadius(1f * unit)) }
-            "play" -> drawPath(Path().apply { moveTo(7f * unit, 4f * unit); lineTo(20f * unit, 12f * unit); lineTo(7f * unit, 20f * unit); close() }, color)
-            "chevron-up" -> { line(6f, 15f, 12f, 9f); line(12f, 9f, 18f, 15f) }
-            "edit" -> { line(5f, 19f, 9f, 18f); line(9f, 18f, 19f, 8f); line(19f, 8f, 16f, 5f); line(16f, 5f, 6f, 15f); line(6f, 15f, 5f, 19f); line(14f, 7f, 17f, 10f) }
-            "folder" -> { line(3f, 8f, 9f, 8f); line(9f, 8f, 11f, 10f); line(11f, 10f, 21f, 10f); line(21f, 10f, 19f, 19f); line(19f, 19f, 5f, 19f); line(5f, 19f, 3f, 8f) }
-            "file" -> { line(6f, 3f, 15f, 3f); line(15f, 3f, 19f, 7f); line(19f, 7f, 19f, 21f); line(6f, 21f, 6f, 3f); line(15f, 3f, 15f, 7f); line(15f, 7f, 19f, 7f) }
-            "eye" -> { drawOval(color, Offset(2f * unit, 6f * unit), androidx.compose.ui.geometry.Size(20f * unit, 12f * unit), style = Stroke(stroke)); drawCircle(color, 2.5f * unit, Offset(12f * unit, 12f * unit)) }
-            "link" -> { drawRoundRect(color, Offset(3f * unit, 7f * unit), androidx.compose.ui.geometry.Size(11f * unit, 7f * unit), CornerRadius(3.5f * unit), style = Stroke(stroke)); drawRoundRect(color, Offset(10f * unit, 10f * unit), androidx.compose.ui.geometry.Size(11f * unit, 7f * unit), CornerRadius(3.5f * unit), style = Stroke(stroke)); line(8f, 14f, 16f, 10f) }
-            "more" -> listOf(5f, 12f, 19f).forEach { drawCircle(color, 1.5f * unit, Offset(it * unit, 12f * unit)) }
-            "search" -> { drawCircle(color, 6f * unit, Offset(10.5f * unit, 10.5f * unit), style = Stroke(stroke)); line(15f, 15f, 20f, 20f) }
-            "close" -> { line(6f, 6f, 18f, 18f); line(18f, 6f, 6f, 18f) }
-            "stop" -> drawRoundRect(color, Offset(6f * unit, 6f * unit), androidx.compose.ui.geometry.Size(12f * unit, 12f * unit), CornerRadius(2f * unit))
-            "chat" -> {
-                val path = Path().apply { moveTo(5f * unit, 4f * unit); lineTo(19f * unit, 4f * unit); quadraticBezierTo(21f * unit, 4f * unit, 21f * unit, 6f * unit); lineTo(21f * unit, 16f * unit); quadraticBezierTo(21f * unit, 18f * unit, 19f * unit, 18f * unit); lineTo(8f * unit, 18f * unit); lineTo(3f * unit, 21f * unit); lineTo(3f * unit, 6f * unit); quadraticBezierTo(3f * unit, 4f * unit, 5f * unit, 4f * unit); close() }
-                drawPath(path, color, style = Stroke(stroke))
-                line(7f, 9f, 17f, 9f); line(7f, 13f, 14f, 13f)
-            }
-            "history" -> { drawCircle(color, 8f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); line(12f, 8f, 12f, 12f); line(12f, 12f, 15f, 14f); line(4f, 8f, 4f, 4f); line(4f, 4f, 8f, 4f); line(4f, 4f, 7f, 7f) }
-            "refresh" -> { line(19f, 8f, 19f, 4f); line(19f, 4f, 15f, 4f); drawArc(color, -45f, 250f, false, topLeft = Offset(4f * unit, 4f * unit), size = androidx.compose.ui.geometry.Size(16f * unit, 16f * unit), style = Stroke(stroke)); line(5f, 16f, 5f, 20f); line(5f, 20f, 9f, 20f) }
-            "download" -> { line(12f, 4f, 12f, 15f); line(7f, 11f, 12f, 16f); line(12f, 16f, 17f, 11f); line(5f, 20f, 19f, 20f) }
-            "upload" -> { line(12f, 20f, 12f, 9f); line(7f, 13f, 12f, 8f); line(12f, 8f, 17f, 13f); line(5f, 4f, 19f, 4f) }
-            "share" -> { drawCircle(color, 2.2f * unit, Offset(18f * unit, 5f * unit)); drawCircle(color, 2.2f * unit, Offset(6f * unit, 12f * unit)); drawCircle(color, 2.2f * unit, Offset(18f * unit, 19f * unit)); line(8f, 11f, 16f, 6f); line(8f, 13f, 16f, 18f) }
-            "check" -> { line(5f, 12f, 10f, 17f); line(10f, 17f, 19f, 7f) }
-            "pin" -> { line(8f, 4f, 16f, 4f); line(9f, 4f, 9f, 10f); line(15f, 4f, 15f, 10f); line(6f, 10f, 18f, 10f); line(12f, 10f, 12f, 20f) }
-            "archive" -> { line(4f, 7f, 20f, 7f); line(5f, 7f, 6f, 20f); line(18f, 7f, 19f, 20f); line(6f, 20f, 18f, 20f); line(8f, 4f, 16f, 4f); line(9f, 13f, 15f, 13f) }
-            "trash" -> { line(5f, 7f, 19f, 7f); line(9f, 4f, 15f, 4f); line(8f, 7f, 9f, 20f); line(16f, 7f, 15f, 20f); line(9f, 20f, 15f, 20f) }
-            "settings" -> { drawCircle(color, 4f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); listOf(0f, 60f, 120f, 180f, 240f, 300f).forEach { angle -> val radians = Math.toRadians(angle.toDouble()); val x1 = (12f + kotlin.math.cos(radians).toFloat() * 7f); val y1 = (12f + kotlin.math.sin(radians).toFloat() * 7f); val x2 = (12f + kotlin.math.cos(radians).toFloat() * 9f); val y2 = (12f + kotlin.math.sin(radians).toFloat() * 9f); line(x1, y1, x2, y2) } }
-            "folder-plus" -> { line(3f, 8f, 9f, 8f); line(9f, 8f, 11f, 10f); line(11f, 10f, 21f, 10f); line(19f, 19f, 5f, 19f); line(5f, 19f, 3f, 8f); line(16f, 12f, 16f, 18f); line(13f, 15f, 19f, 15f) }
-            "arrow-up" -> { line(12f, 19f, 12f, 5f); line(6f, 11f, 12f, 5f); line(12f, 5f, 18f, 11f) }
-            "arrow-right" -> { line(4f, 12f, 19f, 12f); line(13f, 6f, 19f, 12f); line(19f, 12f, 13f, 18f) }
-            "save" -> { line(5f, 4f, 19f, 4f); line(5f, 4f, 5f, 20f); line(19f, 4f, 19f, 20f); line(5f, 20f, 19f, 20f); line(8f, 4f, 8f, 10f); line(16f, 4f, 16f, 10f); line(8f, 15f, 16f, 15f); line(8f, 15f, 8f, 20f); line(16f, 15f, 16f, 20f) }
-            "bolt" -> { line(13f, 3f, 6f, 13f); line(6f, 13f, 12f, 13f); line(12f, 13f, 10f, 21f); line(10f, 21f, 18f, 10f); line(18f, 10f, 12f, 10f) }
-            "info" -> { drawCircle(color, 9f * unit, Offset(12f * unit, 12f * unit), style = Stroke(stroke)); drawCircle(color, 1.2f * unit, Offset(12f * unit, 8f * unit)); line(12f, 11f, 12f, 17f) }
-        }
+    val resource = when (name) {
+        "paperclip" -> R.drawable.ic_material_attach_file
+        "sliders" -> R.drawable.ic_material_tune
+        "code" -> R.drawable.ic_material_code
+        "chevron" -> R.drawable.ic_material_chevron_right
+        "back" -> R.drawable.ic_material_arrow_back
+        "sidebar" -> R.drawable.ic_material_menu_open
+        "plus" -> R.drawable.ic_material_add
+        "send", "paperplane" -> R.drawable.ic_material_send
+        "pause" -> R.drawable.ic_material_pause
+        "play" -> R.drawable.ic_material_play_arrow
+        "chevron-up" -> R.drawable.ic_material_expand_less
+        "edit" -> R.drawable.ic_material_edit
+        "folder" -> R.drawable.ic_material_folder
+        "folder-plus" -> R.drawable.ic_material_add
+        "file" -> R.drawable.ic_material_description
+        "eye" -> R.drawable.ic_material_visibility
+        "link" -> R.drawable.ic_material_link
+        "more" -> R.drawable.ic_material_more_vert
+        "search" -> R.drawable.ic_material_search
+        "close" -> R.drawable.ic_material_close
+        "stop" -> R.drawable.ic_material_stop
+        "chat" -> R.drawable.ic_material_chat_bubble_outline
+        "history" -> R.drawable.ic_material_history
+        "refresh" -> R.drawable.ic_material_refresh
+        "download" -> R.drawable.ic_material_download
+        "upload" -> R.drawable.ic_material_upload
+        "share" -> R.drawable.ic_material_share
+        "check" -> R.drawable.ic_material_check
+        "pin" -> R.drawable.ic_material_push_pin
+        "archive" -> R.drawable.ic_material_archive
+        "trash" -> R.drawable.ic_material_delete_outline
+        "settings" -> R.drawable.ic_material_settings
+        "arrow-up" -> R.drawable.ic_material_arrow_upward
+        "arrow-right" -> R.drawable.ic_material_arrow_forward
+        "save" -> R.drawable.ic_material_save
+        "bolt" -> R.drawable.ic_material_bolt
+        "info" -> R.drawable.ic_material_info_outline
+        else -> R.drawable.ic_material_info_outline
     }
+    Icon(painterResource(resource), contentDescription = null, modifier = modifier, tint = color)
 }
 
 @Composable
-internal fun ActionLabel(icon: String, label: String, color: Color = Color.Unspecified, iconSize: androidx.compose.ui.unit.Dp = 16.dp,
+internal fun ActionLabel(icon: String?, label: String, color: Color = Color.Unspecified, iconSize: androidx.compose.ui.unit.Dp = 16.dp,
     fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
     modifier: Modifier = Modifier) {
     val contentColor = if (color == Color.Unspecified) LocalContentColor.current else color
-    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        LineIcon(icon, Modifier.size(iconSize), contentColor)
-        Text(label, color = contentColor, fontSize = fontSize)
+    if (icon == null) {
+        Text(label, modifier, color = contentColor, fontSize = fontSize)
+    } else {
+        Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LineIcon(icon, Modifier.size(iconSize), contentColor)
+            Text(label, color = contentColor, fontSize = fontSize)
+        }
     }
 }
 
@@ -688,7 +684,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
             TextButton(onClick = { vm.renameActiveThread(titleDraft); renameDialog = false },
                 enabled = !vm.busy && titleDraft.isNotBlank() && titleDraft.trim() != thread.title) { ActionLabel("save", "保存") }
         },
-        dismissButton = { TextButton(onClick = { renameDialog = false }, enabled = !vm.busy) { ActionLabel("close", "取消") } }
+        dismissButton = { TextButton(onClick = { renameDialog = false }, enabled = !vm.busy) { ActionLabel(null, "取消") } }
     )
     if (filesDialog && thread != null) WorkspaceFilesDialog(vm) { filesDialog = false }
     if (diffDialog && thread != null) GitDiffDialog(vm) { diffDialog = false }
@@ -752,7 +748,7 @@ private fun WorkspaceFilesDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(dismiss) { ActionLabel("check", "完成") } })
+        confirmButton = { TextButton(dismiss) { ActionLabel(null, "完成") } })
 
     previewFile?.let { file -> WorkspaceFilePreview(file, previewName,
         onDismiss = { previewFile = null },
@@ -927,7 +923,7 @@ private fun ContextDrawer(
                     }
                 }
             }
-            TextButton(onDismiss, modifier = Modifier.align(Alignment.End)) { ActionLabel("check", "完成") }
+            TextButton(onDismiss, modifier = Modifier.align(Alignment.End)) { ActionLabel(null, "完成") }
         }
     }
     if (webDialog) AlertDialog(onDismissRequest = { webDialog = false },
@@ -944,7 +940,7 @@ private fun ContextDrawer(
                 .onFailure { vm.showWorkspaceError(it.message.orEmpty()) }
             sharedText = ""; sharedTitle = ""; webDialog = false
         }, enabled = sharedText.isNotBlank()) { ActionLabel("plus", "添加") } },
-        dismissButton = { TextButton({ webDialog = false }) { ActionLabel("close", "取消") } })
+        dismissButton = { TextButton({ webDialog = false }) { ActionLabel(null, "取消") } })
     if (browserDialog) WebPageContextDialog(webAddress.ifBlank { sharedUrl }, onDismiss = { browserDialog = false }, onAdd = { title, prompt ->
         vm.addContextReference(title, prompt)
         browserDialog = false
@@ -1137,7 +1133,7 @@ private fun WorkspaceFilePreview(file: File, name: String, onDismiss: () -> Unit
                     })
                 }
             }) { ActionLabel("link", "打开") }
-        } }, dismissButton = { TextButton(onDismiss) { ActionLabel("close", "关闭") } })
+        } }, dismissButton = { TextButton(onDismiss) { ActionLabel(null, "关闭") } })
 }
 
 @Composable
@@ -1175,7 +1171,7 @@ private fun ServerWorkspaceFileLinkDialog(vm: MobileViewModel, path: String, onD
             }
         },
         confirmButton = { if (error.isNotBlank()) TextButton(onClick = { attempt++ }) { ActionLabel("refresh", "重试") } },
-        dismissButton = { TextButton(onDismiss) { ActionLabel("close", "关闭") } })
+        dismissButton = { TextButton(onDismiss) { ActionLabel(null, "关闭") } })
     fileToShare?.let { shared -> LaunchedEffect(shared) {
         runCatching {
             val uri = FileProvider.getUriForFile(context, context.packageName + ".files", shared)
@@ -1228,7 +1224,7 @@ private fun GitDiffDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                 }
             }
         }, confirmButton = { TextButton({ vm.loadGitDiff() }, enabled = !vm.gitDiffBusy) { ActionLabel("refresh", "刷新") } },
-        dismissButton = { TextButton(dismiss) { ActionLabel("close", "关闭") } })
+        dismissButton = { TextButton(dismiss) { ActionLabel(null, "关闭") } })
 }
 
 @Composable
@@ -1260,7 +1256,7 @@ private fun GlobalInstructionsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
         },
         confirmButton = { TextButton(vm::saveGlobalInstructions, enabled = !vm.globalInstructionsBusy && document != null &&
             vm.globalInstructionsDraft != document.content) { ActionLabel("save", if (vm.globalInstructionsBusy) "处理中…" else "保存") } },
-        dismissButton = { TextButton(dismiss, enabled = !vm.globalInstructionsBusy) { ActionLabel("close", "关闭") } })
+        dismissButton = { TextButton(dismiss, enabled = !vm.globalInstructionsBusy) { ActionLabel(null, "关闭") } })
 }
 
 @Composable
@@ -1359,7 +1355,7 @@ private fun ExecutionSettingsDialog(vm: MobileViewModel, dismiss: () -> Unit) {
                     enabled = !locked && !vm.workspaceBusy && !vm.busy && path.startsWith("/")) { ActionLabel("save", if (vm.workspaceBusy) "请稍候…" else "保存") }
             }
         },
-        dismissButton = { TextButton(dismiss, enabled = !vm.workspaceBusy) { ActionLabel("close", "取消") } })
+        dismissButton = { TextButton(dismiss, enabled = !vm.workspaceBusy) { ActionLabel(null, "取消") } })
 }
 
 private fun reasoningEffortLabel(value: String): String = when (value) {
@@ -1818,7 +1814,7 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
         text = { Text("会话将从列表中移除，并在服务器上归档。") },
         confirmButton = { TextButton(enabled = canArchive,
             onClick = { confirmDelete = false; vm.archiveThread(thread.id, deleteLabel = true) }) { ActionLabel("trash", "删除") } },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { ActionLabel("close", "取消") } })
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { ActionLabel(null, "取消") } })
 }
 
 private val threadProjectColors = listOf(
@@ -1907,8 +1903,12 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
     var serverFileLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     var serverDirectoryLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     val running = thread.id in vm.running
-    val messages = foldCompletedProcessLines(visibleChatLines(vm.messages[thread.id].orEmpty()),
-        vm.running[thread.id], running)
+    val sourceMessages = vm.messages[thread.id].orEmpty()
+    val visibleMessages = remember(sourceMessages) { visibleChatLines(sourceMessages) }
+    val activeTurnId = vm.running[thread.id]
+    val messages = remember(visibleMessages, activeTurnId, running) {
+        foldCompletedProcessLines(visibleMessages, activeTurnId, running)
+    }
     val keyedMessages = remember(messages) {
         val used = mutableSetOf<String>()
         messages.asReversed().mapIndexed { index, line ->
@@ -3229,7 +3229,7 @@ private fun ReleaseHistoryDialog(vm: MobileViewModel, install: (java.io.File) ->
             }
         },
         confirmButton = { TextButton(vm::refreshHistory, enabled = !vm.historyBusy && !exportBusy) { ActionLabel("refresh", "刷新列表") } },
-        dismissButton = { TextButton(vm::dismissHistory, enabled = !exportBusy) { ActionLabel("close", if (vm.historyBusy) "取消" else "关闭") } }
+        dismissButton = { TextButton(vm::dismissHistory, enabled = !exportBusy) { ActionLabel(null, if (vm.historyBusy) "取消" else "关闭") } }
     )
 }
 
@@ -3261,10 +3261,10 @@ private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
             }) { ActionLabel(if (vm.updateFile == null) "download" else "upload", if (vm.updateFile == null) "下载更新" else "安装更新") }
             else if (vm.updateError.isNotBlank()) TextButton(enabled = !vm.updateBusy && !vm.updateChecking,
                 onClick = { vm.checkForUpdate(manual = true) }) { ActionLabel("refresh", "重新检查") }
-            else TextButton(vm::dismissUpdate) { ActionLabel("check", "知道了") }
+            else TextButton(vm::dismissUpdate) { ActionLabel(null, "知道了") }
         },
         dismissButton = {
-            if (vm.updateInfo != null) TextButton(vm::dismissUpdate, enabled = !vm.updateBusy) { ActionLabel("close", "稍后") }
+            if (vm.updateInfo != null) TextButton(vm::dismissUpdate, enabled = !vm.updateBusy) { ActionLabel(null, "稍后") }
         }
     )
 }
@@ -3317,7 +3317,7 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
             ) { ActionLabel(if (userInput) "send" else "check", if (userInput) "提交回答" else "批准这一次") }
         },
         dismissButton = {
-            if (!userInput) TextButton(enabled = !vm.responding, onClick = { vm.respond(request, approved = false) }) { ActionLabel("close", "拒绝") }
+            if (!userInput) TextButton(enabled = !vm.responding, onClick = { vm.respond(request, approved = false) }) { ActionLabel(null, "拒绝") }
         }
     )
 }
