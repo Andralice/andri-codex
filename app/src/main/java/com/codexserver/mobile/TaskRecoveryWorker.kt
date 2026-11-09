@@ -34,20 +34,24 @@ internal class TaskRecoveryWorker(context: Context, params: WorkerParameters) : 
 
         CacheMaintenance.trim(applicationContext.cacheDir)
         val client = SshCodexClient(host, port, username, privateKey, passphrase) { }
+        val resultRevision = TaskNotifications.revision(applicationContext, threadId)
         return try {
             client.connect()
-            val thread = client.readThread(threadId)
+            val result = client.readThread(threadId)
+            val thread = result.optJSONObject("thread") ?: return Result.retry()
             val turns = thread.optJSONArray("turns") ?: org.json.JSONArray()
             val latestTurn = turns.optJSONObject(turns.length() - 1)
             val latestStatus = latestTurn?.text("status").orEmpty()
             if (latestStatus == "inProgress") return Result.retry()
-            if (latestStatus in setOf("completed", "failed", "interrupted", "cancelled")) {
-                applicationContext.getSharedPreferences("connection", Context.MODE_PRIVATE).edit()
-                    .putString("thread.$threadId.lastTaskStatus", latestStatus)
-                    .apply()
-            }
-
             val latestTurnId = latestTurn?.text("id").orEmpty()
+            if (latestStatus in terminalTaskStatuses) {
+                val row = parseThread(thread)
+                val notification = TaskNotifications.complete(applicationContext, threadId, latestTurnId, latestStatus,
+                    row.title, projectNameForPath(row.cwd.ifBlank { baseDirectory }),
+                    latestTurn?.optJSONObject("error")?.text("message").orEmpty().take(180), resultRevision)
+                if (notification.stage == "superseded") return Result.retry()
+                if (!notification.sent) android.util.Log.w("TaskRecovery", "Task notification unavailable: ${notification.stage}")
+            }
             val latestTurnMessages = parseMessages(thread).filter { latestTurnId.isBlank() || it.turnId == latestTurnId }
             val imagePaths = taskImagePaths(latestTurnMessages)
             var downloadFailed = false

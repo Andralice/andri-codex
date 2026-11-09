@@ -68,6 +68,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -158,17 +159,26 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = LightColors) {
                 Box(Modifier.fillMaxSize()) {
                 val connectAfterNotificationPrompt = remember { mutableStateOf(false) }
+                var notificationPermissionRequested by rememberSaveable { mutableStateOf(false) }
                 val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                     if (connectAfterNotificationPrompt.value) {
                         connectAfterNotificationPrompt.value = false
                         vm.connect()
-                        if (!granted) vm.error = "通知权限未开启，应用进入后台时无法收到任务提醒；可在系统设置中为 Andri 开启通知。"
+                    }
+                    if (!granted) vm.error = "通知权限未开启，无法显示系统任务提醒；可从菜单的任务通知设置中开启。"
+                }
+                LaunchedEffect(vm.connected) {
+                    if (vm.connected && !notificationPermissionRequested && Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        notificationPermissionRequested = true
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
                 val connect = {
                     if (Build.VERSION.SDK_INT >= 33 &&
                         checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                         connectAfterNotificationPrompt.value = true
+                        notificationPermissionRequested = true
                         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else vm.connect()
                 }
@@ -276,32 +286,20 @@ class MainActivity : ComponentActivity() {
                     withFrameNanos { }
                     vm.recordScreenFrame(screenKey)
                 }
-                LaunchedEffect(vm.connected, vm.hasCachedSession, notificationThreadId) {
+                val notificationThreadCached = vm.threads.any { it.id == notificationThreadId }
+                LaunchedEffect(vm.connected, notificationThreadCached, notificationThreadId) {
                     val threadId = notificationThreadId
-                    if ((vm.connected || vm.hasCachedSession) && !threadId.isNullOrBlank()) {
-                        notificationThreadId = null
+                    if ((vm.connected || notificationThreadCached) && !threadId.isNullOrBlank()) {
                         vm.openThread(threadId)
+                        notificationThreadId = null
+                        intent.removeExtra("threadId")
                     }
                 }
-                val completionAlert = vm.taskCompletionAlerts.firstOrNull()
-                val showCompletionAlert = completionAlert != null && vm.visibleRequestId == null && !vm.updateDialog
-                LaunchedEffect(completionAlert?.id, showCompletionAlert) {
-                    if (completionAlert != null && showCompletionAlert) {
-                        delay(4_500)
-                        if (vm.taskCompletionAlerts.firstOrNull()?.id == completionAlert.id) {
-                            vm.dismissTaskCompletionAlert()
-                        }
-                    }
-                }
-                val bannerSpace by animateDpAsState(
-                    targetValue = if (showCompletionAlert) 60.dp else 0.dp,
-                    animationSpec = tween(180), label = "taskBannerSpace"
-                )
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                         AnimatedContent(
                             targetState = screenKey,
-                            modifier = Modifier.fillMaxSize().padding(top = bannerSpace),
+                            modifier = Modifier.fillMaxSize(),
                             transitionSpec = {
                                 val enteringChat = initialState == "thread-list" &&
                                     (targetState == "chat" || targetState.startsWith("thread-loading:"))
@@ -358,35 +356,7 @@ class MainActivity : ComponentActivity() {
                                     addFiles = { filePicker.launch(arrayOf("*/*")) }) }
                             }
                         }
-                        AnimatedVisibility(
-                            visible = showCompletionAlert,
-                            modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
-                            enter = slideInVertically(initialOffsetY = { -it / 2 }) + fadeIn(tween(160)),
-                            exit = slideOutVertically(targetOffsetY = { -it / 2 }, animationSpec = tween(180)) + fadeOut(tween(140))
-                        ) {
-                            completionAlert?.let { alert ->
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(15.dp),
-                                    color = MaterialTheme.colorScheme.surface,
-                                    contentColor = MaterialTheme.colorScheme.onSurface,
-                                    tonalElevation = 3.dp,
-                                    shadowElevation = 2.dp
-                                ) {
-                                    Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Box(Modifier.size(8.dp).background(
-                                            if (alert.title == "任务已完成") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                                            CircleShape))
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                            Text(alert.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                            Text("${alert.project} · ${alert.threadTitle}", fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+
                     }
                 }
                 vm.requests.firstOrNull { it.get("id").toString() == vm.visibleRequestId }?.let { request -> key(request.get("id").toString()) { RequestDialog(vm, request) } }
@@ -651,6 +621,7 @@ private fun ServerStatus() {
 
 @Composable
 private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var workspaceDialog by remember { mutableStateOf(false) }
     var globalInstructionsDialog by remember { mutableStateOf(false) }
@@ -677,6 +648,11 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null) {
             DropdownMenuItem(leadingIcon = { LineIcon("refresh") }, text = { Text("刷新") }, enabled = vm.connected && !vm.operationPending("刷新对话", null), onClick = { expanded = false; vm.refresh() })
             DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("工作区与权限") }, enabled = true, onClick = { expanded = false; workspaceDialog = true })
             DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("后台连接设置") }, onClick = { expanded = false; backgroundConnectionDialog = true })
+            DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("任务通知设置") }, onClick = {
+                expanded = false
+                runCatching { context.startActivity(TaskNotifications.settingsIntent(context)) }
+                    .onFailure { vm.error = "无法打开通知设置，请在手机系统设置中开启 Andri 的通知和横幅提醒。" }
+            })
             DropdownMenuItem(leadingIcon = { LineIcon("file") }, text = { Text("全局指令") }, onClick = { expanded = false; globalInstructionsDialog = true; if (vm.globalInstructionsDocument == null) vm.loadGlobalInstructions() })
             DropdownMenuItem(leadingIcon = { LineIcon("download") }, text = { Text("检查更新 · v" + BuildConfig.VERSION_NAME) }, onClick = { expanded = false; vm.openUpdates() })
             DropdownMenuItem(leadingIcon = { LineIcon("history") }, text = { Text("历史版本与恢复下载") }, onClick = { expanded = false; vm.openHistory() })
@@ -1747,7 +1723,8 @@ private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (Stri
                             verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(item.title, fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                 maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val status = if (item.id in vm.running) "进行中" else vm.projectFor(item.id)
+                            val status = if (item.id in vm.running) "进行中" else
+                                listOf(vm.lastTaskStatus(item.id), vm.projectFor(item.id)).filter { it.isNotBlank() }.joinToString(" · ")
                             Text(status, fontSize = 11.sp, color = if (item.id in vm.running) MaterialTheme.colorScheme.secondary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1790,6 +1767,7 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
     val runningFor = startedAt?.let { formatElapsed(now - it) }
     val activity = vm.activity[thread.id].orEmpty().takeIf { it.isNotBlank() }
     val activeColor = MaterialTheme.colorScheme.secondary
+    val taskStatus = vm.lastTaskStatus(thread.id)
 
     Surface(onClick = { vm.openThread(thread.id) },
         modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
@@ -1840,7 +1818,15 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
                     Surface(color = Color(0xFFE4EDDF), shape = RoundedCornerShape(6.dp)) {
                         Text("进行中", Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 10.sp, color = activeColor)
                     }
-                } else age?.let { Text(it, fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1) }
+                } else {
+                    if (taskStatus.isNotBlank()) {
+                        val resultColor = if (taskStatus == "最近任务已完成") colors.secondary else colors.error
+                        Surface(color = resultColor.copy(alpha = .1f), shape = RoundedCornerShape(6.dp)) {
+                            Text(taskStatus, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 10.sp, color = resultColor)
+                        }
+                    }
+                    age?.let { Text(it, fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1) }
+                }
             }
             if (active) {
                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 2.dp).height(2.dp),
@@ -2398,8 +2384,10 @@ private fun ChatImageGallery(sources: List<String>, vm: MobileViewModel, baseDir
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         sources.forEachIndexed { index, source ->
-            ChatImageSource(source, vm, baseDirectory, compact = true, onClick = { selectedIndex = index },
-                modifier = Modifier.size(76.dp))
+            key(index, source) {
+                ChatImageSource(source, vm, baseDirectory, compact = true, onClick = { selectedIndex = index },
+                    modifier = Modifier.size(76.dp))
+            }
         }
     }
     if (selectedIndex >= 0) {
@@ -2434,10 +2422,11 @@ private fun ChatImage(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val saveScope = rememberCoroutineScope()
-    var originalBytes by remember(source) { mutableStateOf<ByteArray?>(null) }
-    val bitmap by produceState<android.graphics.Bitmap?>(null, source) {
+    var retryCount by remember(source) { mutableIntStateOf(0) }
+    val imageLoad by produceState<ChatImageLoad?>(null, source, retryCount) {
+        value = null
         value = withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val bytes = when {
                     source.startsWith("data:image/", true) -> {
                         val encoded = source.substringAfter(",", "")
@@ -2459,11 +2448,20 @@ private fun ChatImage(
                     }
                     else -> null
                 }
-                originalBytes = bytes
-                bytes?.let(::decodeChatBitmap)
-            }.getOrNull()
+                check(bytes != null) { "图片来源格式不受支持" }
+                val decoded = decodeChatBitmap(bytes)
+                check(decoded != null) { "图片格式无法解码" }
+                ChatImageLoad(bytes = bytes, bitmap = decoded)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                ChatImageLoad(error = error.message?.take(180).orEmpty().ifBlank { "图片读取失败" })
+            }
         }
     }
+    val originalBytes = imageLoad?.bytes
+    val bitmap = imageLoad?.bitmap
+    val loadError = imageLoad?.error
     var previewOpen by remember(source) { mutableStateOf(false) }
     val previewTransition = remember(source) { MutableTransitionState(false) }
     val previewScope = rememberCoroutineScope()
@@ -2485,64 +2483,67 @@ private fun ChatImage(
         }
     }
     var saveStatus by remember(source) { mutableStateOf("") }
+    var saving by remember(source) { mutableStateOf(false) }
     var pendingLegacySave by remember(source) { mutableStateOf<Triple<ByteArray, String, String>?>(null) }
     val mimeType = remember(source, originalBytes) { imageMimeType(source, originalBytes) }
     val suggestedName = remember(source, mimeType) { imageFileName(source, mimeType) }
+    fun reportSaveResult(message: String) {
+        saveStatus = message
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+    }
+    fun saveToGallery(bytes: ByteArray, name: String, type: String, legacy: Boolean) {
+        saving = true
+        saveStatus = "正在保存到相册…"
+        saveScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (legacy) saveImageToLegacyGallery(context, bytes, name, type)
+                    else saveImageToGallery(context, bytes, name, type)
+                }
+                reportSaveResult("原图已保存到相册")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                reportSaveResult("保存失败：${error.message ?: "无法写入相册"}")
+            } finally {
+                saving = false
+            }
+        }
+    }
     val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val pending = pendingLegacySave
         pendingLegacySave = null
-        if (granted && pending != null) saveScope.launch {
-            val result = runCatching {
-                withContext(Dispatchers.IO) { saveImageToLegacyGallery(context, pending.first, pending.second, pending.third) }
-            }
-            saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
-        } else if (!granted) saveStatus = "需要存储权限才能保存到相册"
-    }
-    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mimeType)) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val bytes = originalBytes
-        saveStatus = runCatching {
-            check(bytes != null) { "图片尚未加载完成" }
-            context.contentResolver.openOutputStream(uri, "w")!!.use { it.write(bytes) }
-            "原图已保存"
-        }.getOrElse { "保存失败：${it.message ?: "无法写入文件"}" }
+        if (granted && pending != null) saveToGallery(pending.first, pending.second, pending.third, legacy = true)
+        else {
+            saving = false
+            if (!granted) reportSaveResult("需要存储权限才能保存到相册")
+        }
     }
     fun saveOriginal() {
-        if (originalBytes == null) saveStatus = "图片尚未加载完成"
+        if (saving) return
+        val bytes = originalBytes
+        if (bytes == null) reportSaveResult("图片尚未加载完成")
         else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val bytes = originalBytes ?: return
-            saveStatus = "正在保存到相册…"
-            saveScope.launch {
-                val result = runCatching {
-                    withContext(Dispatchers.IO) { saveImageToGallery(context, bytes, suggestedName, mimeType) }
-                }
-                saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            pendingLegacySave = Triple(originalBytes ?: return, suggestedName, mimeType)
+            saveToGallery(bytes, suggestedName, mimeType, legacy = false)
+        } else if (context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            pendingLegacySave = Triple(bytes, suggestedName, mimeType)
+            saving = true
+            saveStatus = "等待存储权限…"
             legacyStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        } else {
-            val bytes = originalBytes ?: return
-            saveStatus = "正在保存到相册…"
-            saveScope.launch {
-                val result = runCatching {
-                    withContext(Dispatchers.IO) { saveImageToLegacyGallery(context, bytes, suggestedName, mimeType) }
-                }
-                saveStatus = result.fold({ "已保存到相册" }, { "保存失败：${it.message ?: "无法写入相册"}" })
-            }
-        }
+        } else saveToGallery(bytes, suggestedName, mimeType, legacy = true)
     }
 
     if (bitmap != null && galleryPage) {
         Box(Modifier.fillMaxSize()) {
             Image((previewBitmap ?: bitmap)!!.asImageBitmap(), contentDescription = "图片预览",
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            TextButton(onClick = ::saveOriginal, modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)) {
-                ActionLabel("download", "下载原图", Color.White)
+            Column(Modifier.align(Alignment.BottomStart).safeDrawingPadding().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = ::saveOriginal, enabled = !saving) {
+                    ActionLabel("download", if (saving) "正在保存…" else "下载原图", Color.White)
+                }
+                if (saveStatus.isNotBlank()) ImageSaveFeedback(saveStatus)
             }
-            if (saveStatus.isNotBlank()) Text(saveStatus, Modifier.align(Alignment.BottomEnd).padding(24.dp),
-                fontSize = 12.sp, color = Color.White)
         }
     } else if (bitmap != null) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2554,19 +2555,61 @@ private fun ChatImage(
             if (!compact) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = ::openPreview) { ActionLabel("eye", "查看原图") }
-                    TextButton(onClick = ::saveOriginal) { ActionLabel("download", "下载原图") }
-                    if (saveStatus.isNotBlank()) Text(saveStatus, fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = ::saveOriginal, enabled = !saving) {
+                        ActionLabel("download", if (saving) "正在保存…" else "下载原图")
+                    }
+                }
+                if (saveStatus.isNotBlank()) Text(saveStatus, fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    } else if (source.isNotBlank() && imageLoad == null) {
+        if (galleryPage) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (compact) {
+            Box(modifier.size(76.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        } else Text("正在加载图片…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else if (source.isNotBlank()) {
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val retryAction: @Composable () -> Unit = {
+            TextButton(onClick = { retryCount++ }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                ActionLabel("refresh", "重试加载", iconSize = 14.dp, fontSize = 12.sp)
+            }
+        }
+        val copyLinkAction: @Composable () -> Unit = {
+            if (source.startsWith("https://", true)) {
+                TextButton(onClick = {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("图片链接", source))
+                }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    ActionLabel("link", "复制链接", iconSize = 14.dp, fontSize = 12.sp)
                 }
             }
         }
-    } else if (source.isNotBlank()) {
         if (compact) {
-            Box(modifier.size(76.dp).clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-                Text("图片", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(modifier.size(76.dp).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant).padding(3.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text("加载失败", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                retryAction()
             }
-        } else Text("图片暂时无法显示", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (galleryPage) {
+            Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center) {
+                Text("图片加载失败：${loadError.orEmpty()}", color = Color.White, fontSize = 13.sp)
+                Row { retryAction(); copyLinkAction() }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("图片加载失败：${loadError.orEmpty()}", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row { retryAction(); copyLinkAction() }
+            }
+        }
     }
 
     if (previewOpen && bitmap != null) {
@@ -2596,15 +2639,28 @@ private fun ChatImage(
                     TextButton(onClick = ::closePreview, modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)) {
                         ActionLabel("close", "关闭", Color.White)
                     }
-                    Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { ActionLabel("refresh", "重置缩放", Color.White) }
-                        TextButton(onClick = ::saveOriginal) { ActionLabel("download", "下载原图", Color.White) }
+                    Column(Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (saveStatus.isNotBlank()) ImageSaveFeedback(saveStatus)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { ActionLabel("refresh", "重置缩放", Color.White) }
+                            TextButton(onClick = ::saveOriginal, enabled = !saving) {
+                                ActionLabel("download", if (saving) "正在保存…" else "下载原图", Color.White)
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ImageSaveFeedback(status: String) {
+    Text(status, Modifier.background(Color.Black.copy(alpha = .7f), RoundedCornerShape(8.dp))
+        .padding(horizontal = 12.dp, vertical = 8.dp).semantics {
+            liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+        }, fontSize = 13.sp, color = Color.White)
 }
 
 private fun saveImageToGallery(context: android.content.Context, bytes: ByteArray, name: String, mimeType: String) {
@@ -2703,6 +2759,8 @@ private val remoteImageLoadSemaphore = Semaphore(permits = 4)
 private const val MAX_CHAT_IMAGE_SOURCE_PIXELS = 100_000_000L
 private const val MAX_CHAT_IMAGE_DECODE_PIXELS = 2_500_000L
 private const val MAX_CHAT_IMAGE_PREVIEW_PIXELS = 20_000_000L
+private data class ChatImageLoad(val bytes: ByteArray? = null, val bitmap: android.graphics.Bitmap? = null, val error: String? = null)
+private data class WorkspaceImageLoad(val uri: String? = null, val error: String? = null)
 
 private fun decodeChatBitmap(bytes: ByteArray, maxPixels: Long = MAX_CHAT_IMAGE_DECODE_PIXELS): android.graphics.Bitmap? {
     if (bytes.isEmpty() || bytes.size > MAX_CHAT_IMAGE_BYTES) return null
@@ -2745,13 +2803,32 @@ private fun ChatImageSource(
         ChatImage(source, compact, onClick, galleryPage, modifier)
     } else {
         val serverPath = if (source.startsWith("file:", true)) runCatching { URI(source).path }.getOrNull() ?: source else source
-        val local by produceState<String?>(null, serverPath, baseDirectory) {
-            value = runCatching { vm.cacheWorkspaceImage(serverPath, baseDirectory) }.getOrNull() ?: ""
+        var retryCount by remember(serverPath, baseDirectory) { mutableIntStateOf(0) }
+        val local by produceState<WorkspaceImageLoad?>(null, serverPath, baseDirectory, retryCount) {
+            value = null
+            value = try {
+                WorkspaceImageLoad(uri = vm.cacheWorkspaceImage(serverPath, baseDirectory))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                WorkspaceImageLoad(error = error.message?.take(180).orEmpty().ifBlank { "服务器图片读取失败" })
+            }
         }
         when {
             local == null -> Text("正在读取工作区图片…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            local!!.isBlank() -> Text("无法读取工作区图片", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> ChatImage(local!!, compact, onClick, galleryPage, modifier)
+            local!!.uri != null -> ChatImage(local!!.uri!!, compact, onClick, galleryPage, modifier)
+            else -> {
+                val errorModifier = if (galleryPage) Modifier.fillMaxSize() else Modifier.then(if (compact) modifier else Modifier)
+                Column(errorModifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center) {
+                    Text("无法读取图片：${local!!.error}", fontSize = 11.sp,
+                        color = if (galleryPage) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { retryCount++ }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        ActionLabel("refresh", "重试", iconSize = 14.dp, fontSize = 12.sp,
+                            color = if (galleryPage) Color.White else Color.Unspecified)
+                    }
+                }
+            }
         }
     }
 }
@@ -2765,7 +2842,7 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     markdownImageDestinations(bounded).distinct().forEach { destination ->
-        ChatImageSource(destination, vm, baseDirectory)
+        key(destination) { ChatImageSource(destination, vm, baseDirectory) }
     }
     videoAttachmentPaths(bounded).forEach { path -> ChatVideoSource(path, vm, baseDirectory) }
 }
@@ -3065,9 +3142,11 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
 
 @Composable
 private fun QuestionFields(title: String, options: List<Pair<String, String>>, value: String, enabled: Boolean,
-    secret: Boolean = false, onChange: (String) -> Unit) {
+    secret: Boolean = false, collapsibleCustomInput: Boolean = false, onChange: (String) -> Unit) {
+    val hasCustomValue = options.isNotEmpty() && value.isNotBlank() && options.none { it.first == value }
+    var customInputExpanded by rememberSaveable(title) { mutableStateOf(hasCustomValue) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 21.sp)
+        Text(title, fontSize = 14.sp, lineHeight = 21.sp)
         if (options.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
             options.forEach { (label, _) ->
@@ -3082,11 +3161,27 @@ private fun QuestionFields(title: String, options: List<Pair<String, String>>, v
                 }
             }
         }
-        OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), enabled = enabled,
-            label = { Text(if (options.isEmpty()) "你的回答" else "也可以自己填写") },
-            shape = RoundedCornerShape(12.dp), textStyle = MaterialTheme.typography.bodyMedium,
-            minLines = 1, maxLines = 4,
-            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
+        if (options.isNotEmpty() && collapsibleCustomInput) {
+            val expanded = customInputExpanded
+            Row(Modifier.clickable(enabled = enabled) { customInputExpanded = !expanded }
+                .padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(if (expanded) "▾" else "▸", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("自己填写", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            AnimatedVisibility(expanded) {
+                OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), enabled = enabled,
+                    label = { Text("你的回答") }, shape = RoundedCornerShape(12.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium, minLines = 1, maxLines = 4,
+                    visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
+            }
+        } else {
+            OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), enabled = enabled,
+                label = { Text(if (options.isEmpty()) "你的回答" else "也可以自己填写") },
+                shape = RoundedCornerShape(12.dp), textStyle = MaterialTheme.typography.bodyMedium,
+                minLines = 1, maxLines = 4,
+                visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
+        }
     }
 }
 
@@ -3096,11 +3191,12 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
     val answered = line.id in vm.answeredQuestionItems || !latestQuestion
     val enabled = !answered && vm.canSendToThread(vm.activeId.orEmpty()) && vm.activeId !in vm.sending && vm.activeId !in vm.queueSubmitting
     val allAnswered = line.questions.indices.all { !answers[it].isNullOrBlank() }
-    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         if (!answered && line.questions.isNotEmpty()) Text("可以，确认几个小地方就开始。",
             fontSize = 14.sp, lineHeight = 22.sp, color = MaterialTheme.colorScheme.onSurface)
         line.questions.forEachIndexed { index, question ->
-            QuestionFields(question.title, question.options.map { it to "" }, answers[index].orEmpty(), !answered) { vm.questionAnswerDrafts[line.id] = answers + (index to it) }
+            QuestionFields(question.title, question.options.map { it to "" }, answers[index].orEmpty(), !answered,
+                collapsibleCustomInput = true) { vm.questionAnswerDrafts[line.id] = answers + (index to it) }
         }
         if (!answered) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { vm.sendQuestionAnswers(line, line.questions.indices.map { answers[it].orEmpty() }) },
@@ -3113,7 +3209,6 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
             TextButton(onClick = { vm.sendQuestionAnswers(line, line.questions.indices.map { "" }, skip = true) },
                 enabled = enabled) { Text("先出一版", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        Text("也可以直接发消息补充想法", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

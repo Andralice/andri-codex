@@ -37,8 +37,6 @@ data class SharedFileAttachment(val file: File, val label: String, val sizeBytes
 data class ContextReference(val id: String, val label: String, val prompt: String)
 data class QueuedTask(val id: String, val clientUserMessageId: String, val prompt: String,
     val autoStartAllowed: Boolean = false)
-data class TaskCompletionAlert(val id: String, val threadId: String, val threadTitle: String,
-    val project: String, val title: String, val detail: String)
 
 class MobileViewModel(application: Application) : AndroidViewModel(application) {
     private data class BufferedAgentDelta(val turnId: String, val text: StringBuilder)
@@ -59,6 +57,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private var defaultMode by mutableStateOf(runCatching { ExecutionMode.valueOf(settings.getString("executionMode", "ASK").orEmpty()) }.getOrDefault(ExecutionMode.ASK))
     private val threadExecution = mutableStateMapOf<String, ExecutionOptions>()
     private val taskStatuses = mutableStateMapOf<String, String>()
+    private val taskStatusListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+        if (key != null && key.startsWith("thread.") && key.endsWith(".lastTaskStatus")) {
+            val id = key.removePrefix("thread.").removeSuffix(".lastTaskStatus")
+            taskStatuses[id] = prefs.getString(key, "").orEmpty()
+        }
+    }
     // Keep the newest turn identity even after it finishes. App-server notifications
     // can arrive late around reconnects; threadId alone is not enough to distinguish
     // a stale event from the turn currently being shown.
@@ -194,7 +198,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val activity = mutableStateMapOf<String, String>()
     val answeredQuestionItems = mutableStateListOf<String>()
     val questionAnswerDrafts = mutableStateMapOf<String, Map<Int, String>>()
-    val taskCompletionAlerts = mutableStateListOf<TaskCompletionAlert>()
     var updateInfo by mutableStateOf<UpdateInfo?>(null)
         private set
     var updateBusy by mutableStateOf(false)
@@ -249,6 +252,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val activeThread: CodexThread? get() = threads.firstOrNull { it.id == activeId }
 
     init {
+        settings.all.forEach { (key, value) ->
+            if (key.startsWith("thread.") && key.endsWith(".lastTaskStatus") && value is String) {
+                taskStatuses[key.removePrefix("thread.").removeSuffix(".lastTaskStatus")] = value
+            }
+        }
+        settings.registerOnSharedPreferenceChangeListener(taskStatusListener)
         settings.all.filter { (key, value) -> key.startsWith("thread.") && key.endsWith(".pendingExecution") && value == true }
             .keys.forEach { pendingExecutionIds += it.removePrefix("thread.").removeSuffix(".pendingExecution") }
         restoreSharedFiles()
@@ -326,13 +335,13 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             if (activeId == id) back()
         }
     }
-    fun lastTaskStatus(id: String): String = taskStatuses[id].orEmpty().ifBlank { settings.getString("thread.$id.lastTaskStatus", "").orEmpty() }
+    fun lastTaskStatus(id: String): String = taskStatuses[id].orEmpty()
         .takeIf { it.isNotBlank() }?.let { state ->
             when (state) { "completed" -> "最近任务已完成"; "failed" -> "最近任务失败"; else -> "最近任务已中断" }
         }.orEmpty()
     private fun clearTaskStatus(id: String) {
         taskStatuses.remove(id)
-        settings.edit().remove("thread.$id.lastTaskStatus").apply()
+        TaskNotifications.acknowledge(getApplication(), id)
     }
     private fun autoStartQueueIds(threadId: String): Set<String> =
         settings.getStringSet("thread.$threadId.autoStartQueueIds", emptySet()).orEmpty().toSet()
@@ -342,14 +351,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private fun consumeQueueAutoStart(threadId: String, queueId: String) {
         val ids = autoStartQueueIds(threadId) - queueId
         settings.edit().putStringSet("thread.$threadId.autoStartQueueIds", ids).apply()
-    }
-    fun dismissTaskCompletionAlert() {
-        if (taskCompletionAlerts.isNotEmpty()) taskCompletionAlerts.removeAt(0)
-    }
-    fun openTaskCompletionThread() {
-        val alert = taskCompletionAlerts.firstOrNull() ?: return
-        dismissTaskCompletionAlert()
-        if (connected) openThread(alert.threadId)
     }
     val currentExecution: ExecutionOptions
         get() = activeId?.let { threadExecution[it] ?: savedExecution(it) } ?: ExecutionOptions(activeThread?.cwd?.ifBlank { cwd } ?: cwd, defaultMode, defaultReasoningEffort)
@@ -914,7 +915,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun loadThread(id: String, selectionGeneration: Int? = null) {
         fun maySelectThread() = selectionGeneration == null || selectionGeneration == threadSelectionGeneration
         if (threadReads.isArchived(id)) return
-        clearTaskStatus(id)
         if (maySelectThread()) settings.getString("thread.$id.nextModel", null)?.let { model = it }
         if (!drafts.containsKey(id)) drafts[id] = settings.getString("draft.$id", "").orEmpty()
         val connection = checkNotNull(client) { "SSH 已断开" }
@@ -2452,40 +2452,26 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 TaskRecoveryScheduler.enqueue(getApplication(), id, threads.firstOrNull { it.id == id }?.cwd ?: cwd, delaySeconds = 0)
                 if (status == "completed") maybeGenerateThreadTitle(id)
                 if (status in setOf("completed", "failed", "interrupted", "cancelled")) {
-                    if (activeId == id) clearTaskStatus(id) else {
-                        taskStatuses[id] = status
-                        settings.edit().putString("thread.$id.lastTaskStatus", status).apply()
-                    }
-                    if (completedTurnId.isBlank() || settings.getString("thread.$id.lastNotifiedTurnId", null) != completedTurnId) {
-                        if (completedTurnId.isNotBlank()) settings.edit().putString("thread.$id.lastNotifiedTurnId", completedTurnId).apply()
-                        val threadTitle = threads.firstOrNull { it.id == id }?.title ?: "Andri 任务"
-                        val project = projectFor(id)
-                        val alertTitle = if (failed) "任务执行失败" else if (status in setOf("interrupted", "cancelled")) "任务已中断" else "任务已完成"
-                        val detail = turn?.optJSONObject("error")?.text("message").orEmpty().take(180)
-                        if (inForeground) {
-                            taskCompletionAlerts.add(TaskCompletionAlert(
-                                id = "$id:$completedTurnId", threadId = id, threadTitle = threadTitle,
-                                project = project, title = alertTitle, detail = detail))
-                        } else {
-                            val notification = TaskNotifications.show(getApplication(), id, threadTitle, project, alertTitle, detail)
-                            if (!notification.sent) {
-                                val diagnosticClient = client
-                                if (diagnosticClient?.isAlive() == true) viewModelScope.launch {
-                                    runCatching {
-                                        diagnosticClient.reportDiagnostic(JSONObject()
-                                            .put("type", "task_notification_failed")
-                                            .put("time", System.currentTimeMillis())
-                                            .put("stage", notification.stage)
-                                            .put("reason", notification.reason.take(300))
-                                            .put("appVersion", BuildConfig.VERSION_NAME)
-                                            .put("androidApi", android.os.Build.VERSION.SDK_INT))
-                                    }.onFailure {
-                                        android.util.Log.w("MobileDiagnostics", "Unable to upload notification diagnostic", it)
-                                        error = "任务通知发送失败（${notification.stage}）；诊断回传也失败：${it.message ?: "SSH/SFTP 不可用"}"
-                                    }
-                                } else error = "任务通知发送失败（${notification.stage}）：${notification.reason}；当前没有可用的 SSH 连接回传诊断。"
+                    val threadTitle = threads.firstOrNull { it.id == id }?.title ?: "Andri 任务"
+                    val detail = turn?.optJSONObject("error")?.text("message").orEmpty().take(180)
+                    val notification = TaskNotifications.complete(getApplication(), id, completedTurnId, status,
+                        threadTitle, projectFor(id), detail)
+                    if (!notification.sent) {
+                        val diagnosticClient = client
+                        if (diagnosticClient?.isAlive() == true) viewModelScope.launch {
+                            runCatching {
+                                diagnosticClient.reportDiagnostic(JSONObject()
+                                    .put("type", "task_notification_failed")
+                                    .put("time", System.currentTimeMillis())
+                                    .put("stage", notification.stage)
+                                    .put("reason", notification.reason.take(300))
+                                    .put("appVersion", BuildConfig.VERSION_NAME)
+                                    .put("androidApi", android.os.Build.VERSION.SDK_INT))
+                            }.onFailure {
+                                android.util.Log.w("MobileDiagnostics", "Unable to upload notification diagnostic", it)
+                                error = "任务通知发送失败（${notification.stage}）；诊断回传也失败：${it.message ?: "SSH/SFTP 不可用"}"
                             }
-                        }
+                        } else error = "任务通知发送失败（${notification.stage}）：${notification.reason}；当前没有可用的 SSH 连接回传诊断。"
                     }
                 }
                 if (failed) reportChatError(
@@ -2601,6 +2587,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        settings.unregisterOnSharedPreferenceChangeListener(taskStatusListener)
         flushAllAgentDeltas()
         historyJob?.cancel()
         historyClient?.let { connection -> kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { connection.close() } }

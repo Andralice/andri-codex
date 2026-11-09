@@ -941,7 +941,7 @@ class SshCodexClient(
         val root = WORKSPACE_ROOT.trimEnd('/')
         check(resolved == root || resolved.startsWith("$root/")) { "只能查看工作区中的 Git 改动" }
         val quoted = "'" + resolved.replace("'", "'\\''") + "'"
-        val command = "git -C $quoted status --short; printf '\\n--- 已暂存的改动 ---\\n'; git -C $quoted diff --cached --no-ext-diff --no-color; printf '\\n--- 未暂存的改动 ---\\n'; git -C $quoted diff --no-ext-diff --no-color"
+        val command = "repo_root=\$(git -C $quoted rev-parse --show-toplevel 2>/dev/null) || { printf '当前目录不属于 Git 仓库：%s\\n请切换到项目目录后重试。\\n' $quoted; exit 2; }; set -e; printf '%s\\n' \"--- Git 仓库：\$repo_root ---\"; git -C \"\$repo_root\" status --short 2>&1; printf '\\n--- 已暂存的改动 ---\\n'; git -C \"\$repo_root\" diff --cached --no-ext-diff --no-color 2>&1; printf '\\n--- 未暂存的改动 ---\\n'; git -C \"\$repo_root\" diff --no-ext-diff --no-color 2>&1"
         val channel = session?.openChannel("exec") as? ChannelExec ?: error("无法打开 SSH 命令通道")
         try {
             channel.setCommand(command)
@@ -956,7 +956,9 @@ class SshCodexClient(
                 output.write(buffer, 0, count)
             }
             val text = output.toString(Charsets.UTF_8.name()).trim()
-            check(channel.exitStatus == 0) { "读取 Git 改动失败" }
+            check(channel.exitStatus == 0) {
+                text.ifBlank { "读取 Git 改动失败（退出码 ${channel.exitStatus}）" }
+            }
             text
         } finally { channel.disconnect() }
     }
