@@ -282,6 +282,21 @@ class MainActivity : ComponentActivity() {
                 }
                 var workspacePage by rememberSaveable(vm.activeId) { mutableStateOf(false) }
                 val chatState = rememberSaveableStateHolder()
+                var previewSources by rememberSaveable(vm.activeId,
+                    stateSaver = androidx.compose.runtime.saveable.listSaver<List<String>, String>(
+                        save = { sources -> sources.filterNot { it.startsWith("data:image/", true) } },
+                        restore = { it }
+                    )) { mutableStateOf(emptyList<String>()) }
+                var previewRequest by rememberSaveable(vm.activeId) { mutableIntStateOf(0) }
+                val openWorkspaceLink: (String, String) -> Unit = { link, base ->
+                    val target = workspacePreviewTarget(link, base)
+                    if (target == null) android.widget.Toast.makeText(this@MainActivity, "无法打开此链接", android.widget.Toast.LENGTH_SHORT).show()
+                    else {
+                        if (previewSources.lastOrNull() != target.navigationLink) previewSources = (previewSources + target.navigationLink).takeLast(40)
+                        previewRequest++
+                        workspacePage = true
+                    }
+                }
                 BackHandler(enabled = vm.activeId != null) {
                     if (workspacePage) workspacePage = false else vm.back()
                 }
@@ -362,10 +377,17 @@ class MainActivity : ComponentActivity() {
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
                                 screen == "thread-list" -> ThreadListScreen(vm)
                                 screen == "thread-loading" -> ThreadLoadingScreen(vm)
-                                screen == "workspace" -> WorkspacePage(vm, checkNotNull(page.thread), onBack = { workspacePage = false })
+                                screen == "workspace" -> chatState.SaveableStateProvider(page.key) {
+                                    WorkspacePage(vm, checkNotNull(page.thread), previewSources, previewRequest,
+                                        onOpenLink = openWorkspaceLink,
+                                        onPreviewBack = { previewSources = previewSources.dropLast(1) },
+                                        onClosePreview = { previewSources = emptyList() },
+                                        onBack = { workspacePage = false })
+                                }
                                 else -> chatState.SaveableStateProvider(page.key) { ChatScreen(vm, checkNotNull(page.thread),
                                     isActive = page.key == screenKey,
                                     openWorkspace = { workspacePage = true },
+                                    onOpenWorkspaceLink = openWorkspaceLink,
                                     addImage = {
                                         if (Build.VERSION.SDK_INT >= 33) {
                                             imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -1226,61 +1248,6 @@ private fun WorkspaceFilePreview(file: File, name: String, onDismiss: () -> Unit
 }
 
 @Composable
-private fun ServerWorkspaceFileLinkDialog(vm: MobileViewModel, path: String, onDismiss: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-    var file by remember(path) { mutableStateOf<File?>(null) }
-    var fileName by remember(path) { mutableStateOf(path.substringAfterLast('/')) }
-    var error by remember(path) { mutableStateOf("") }
-    var attempt by remember(path) { mutableIntStateOf(0) }
-    var fileToShare by remember { mutableStateOf<File?>(null) }
-    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
-        val source = file
-        if (uri != null && source?.isFile == true) scope.launch {
-            runCatching { withContext(Dispatchers.IO) {
-                context.contentResolver.openOutputStream(uri, "w")!!.use { output -> source.inputStream().use { it.copyTo(output) } }
-            } }.onFailure { error = "保存文件失败：${it.message}" }
-        }
-    }
-    LaunchedEffect(path, attempt) {
-        error = ""
-        runCatching { vm.cacheWorkspaceFile(path, WORKSPACE_ROOT) }
-            .onSuccess { file = it; fileName = vm.downloadedWorkspaceFileName }
-            .onFailure { error = it.message ?: "读取服务器文件失败" }
-    }
-    file?.let { cached -> WorkspaceFilePreview(cached, fileName, onDismiss,
-        onSave = { saveLauncher.launch(fileName) }, onShare = { fileToShare = cached }) }
-    if (file == null) AlertDialog(onDismissRequest = onDismiss, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface,
-        title = { Text("服务器文件") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(path, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (error.isBlank()) LinearProgressIndicator(Modifier.fillMaxWidth())
-                else Text(error, color = MaterialTheme.colorScheme.error)
-            }
-        },
-        confirmButton = { if (error.isNotBlank()) TextButton(onClick = { attempt++ }) { ActionLabel("refresh", "重试") } },
-        dismissButton = { TextButton(onDismiss) { ActionLabel(null, "关闭") } })
-    fileToShare?.let { shared -> LaunchedEffect(shared) {
-        runCatching {
-            val uri = FileProvider.getUriForFile(context, context.packageName + ".files", shared)
-            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                type = URLConnection.guessContentTypeFromName(shared.name) ?: "application/octet-stream"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, "分享文件"))
-        }.onFailure { error = "分享文件失败：${it.message}" }
-        fileToShare = null
-    } }
-}
-
-@Composable
-private fun ServerWorkspaceDirectoryLinkDialog(vm: MobileViewModel, path: String, onDismiss: () -> Unit) {
-    LaunchedEffect(path) { vm.loadProjectFiles(path) }
-    WorkspaceFilesDialog(vm, onDismiss)
-}
-
-@Composable
 private fun GitDiffDialog(vm: MobileViewModel, dismiss: () -> Unit) {
     AlertDialog(onDismissRequest = dismiss, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("审阅代码改动") },
@@ -2000,12 +1967,10 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 
 @Composable
 private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boolean, openWorkspace: () -> Unit,
-    addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
+    onOpenWorkspaceLink: (String, String) -> Unit, addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val sidebarState = rememberDrawerState(DrawerValue.Closed)
     val sidebarScope = rememberCoroutineScope()
-    var serverFileLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
-    var serverDirectoryLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     val running = thread.id in vm.running
     val sourceMessages = vm.messages[thread.id].orEmpty()
     val visibleMessages = remember(sourceMessages) { visibleChatLines(sourceMessages) }
@@ -2041,19 +2006,10 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val sharedFiles = vm.sharedFilesFor(thread.id)
     val references = vm.contextFor(thread.id)
     var contextDrawerOpen by rememberSaveable(thread.id) { mutableStateOf(false) }
-    var webLinkToOpen by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
-    var imageLinkToOpen by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     fun openChatLink(url: String) {
-        when (val target = chatLinkTarget(url, thread.cwd.ifBlank { vm.cwd })) {
-            is ChatLinkTarget.Workspace -> {
-                if (target.path.endsWith('/') || target.path == WORKSPACE_ROOT) {
-                    serverDirectoryLinkPath = target.path.trimEnd('/')
-                } else serverFileLinkPath = target.path
-            }
-            is ChatLinkTarget.Image -> imageLinkToOpen = target.url
-            is ChatLinkTarget.Web -> webLinkToOpen = target.url
-            null -> android.widget.Toast.makeText(context, "无法打开此链接", android.widget.Toast.LENGTH_SHORT).show()
-        }
+        focusComposer = false
+        keyboard?.hide()
+        onOpenWorkspaceLink(url, thread.cwd.ifBlank { vm.cwd })
     }
     var leftBottom by rememberSaveable(thread.id) { mutableStateOf(false) }
     fun collapse() { expanded = false; focusComposer = false; keyboard?.hide() }
@@ -2416,37 +2372,24 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     }
     if (contextDrawerOpen) ContextDrawer(vm, thread.cwd.ifBlank { vm.cwd }, addImage, addVideo, addFiles,
         onDismiss = { contextDrawerOpen = false })
-    webLinkToOpen?.let { url ->
-        WebPageContextDialog(url, onDismiss = { webLinkToOpen = null }, onAdd = { title, prompt ->
-            vm.addContextReference(title, prompt)
-            webLinkToOpen = null
-        }, allowContextImport = false)
-    }
-    imageLinkToOpen?.let { url ->
-        Dialog(onDismissRequest = { imageLinkToOpen = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
-                ChatImageSource(url, vm, thread.cwd.ifBlank { vm.cwd }, galleryPage = true)
-                TextButton(onClick = { imageLinkToOpen = null }, modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding()) {
-                    ActionLabel("close", "关闭", Color.White)
-                }
-            }
-        }
-    }
-    serverFileLinkPath?.let { path ->
-        ServerWorkspaceFileLinkDialog(vm, path) { serverFileLinkPath = null }
-    }
-    serverDirectoryLinkPath?.let { path ->
-        ServerWorkspaceDirectoryLinkDialog(vm, path) { serverDirectoryLinkPath = null }
-    }
+
 }
 
 @Composable
-private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, onBack: () -> Unit) {
+private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSources: List<String>, previewRequest: Int,
+    onOpenLink: (String, String) -> Unit, onPreviewBack: () -> Unit, onClosePreview: () -> Unit, onBack: () -> Unit) {
     val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
     var selectedTab by rememberSaveable(thread.id) { mutableIntStateOf(0) }
-    var previewPath by rememberSaveable(thread.id, cwd) { mutableStateOf<String?>(null) }
-    var mediaPreview by remember(thread.id, cwd) { mutableStateOf<WorkspaceMedia?>(null) }
+    var handledPreviewRequest by rememberSaveable(thread.id) { mutableIntStateOf(-1) }
+    val preview = previewSources.lastOrNull()?.let { workspacePreviewTarget(it, cwd) }
+    LaunchedEffect(previewRequest) {
+        if (handledPreviewRequest != previewRequest) {
+            if (preview != null) selectedTab = 5
+            handledPreviewRequest = previewRequest
+        }
+    }
     val browserState = rememberSaveableStateHolder()
+    val previewState = rememberSaveableStateHolder()
     var filesRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     var diffRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -2483,8 +2426,8 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, onBack: () -
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(0 to ("文件" to "folder"), 4 to ("侧边聊天" to "chat"), 1 to ("改动" to "code"),
-                2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
+            listOf(5 to ("预览" to "eye"), 4 to ("侧边聊天" to "chat"), 0 to ("文件" to "folder"),
+                1 to ("改动" to "code"), 2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
                 val (label, icon) = tab
                 FilterChip(selected = selectedTab == index, onClick = { selectedTab = index }, label = { Text(label) }, leadingIcon = {
                     LineIcon(icon, Modifier.size(17.dp))
@@ -2543,12 +2486,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, onBack: () -
                                         }, enabled = vm.connected,
                                             modifier = Modifier.semantics { contentDescription = "引用 $name" }) { LineIcon("plus", Modifier.size(18.dp), MaterialTheme.colorScheme.primary) }
                                         IconButton(onClick = {
-                                            val extension = name.substringAfterLast('.', "").lowercase()
-                                            when (extension) {
-                                                in SshCodexClient.VIDEO_EXTENSIONS -> mediaPreview = WorkspaceMedia(path, video = true, name)
-                                                in chatImageExtensions -> mediaPreview = WorkspaceMedia(path, video = false, name)
-                                                else -> previewPath = path
-                                            }
+                                            onOpenLink(workspaceFileLink(path), cwd)
                                         }, enabled = vm.connected,
                                             modifier = Modifier.semantics { contentDescription = "预览 $name" }) { LineIcon("eye", Modifier.size(18.dp)) }
                                     }
@@ -2583,16 +2521,195 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, onBack: () -
                     android.widget.Toast.makeText(context, "网页正文已加入聊天上下文", android.widget.Toast.LENGTH_SHORT).show()
                 }, modifier = Modifier.weight(1f).padding(horizontal = 16.dp))
             }
-            3 -> WorkspaceMediaList(vm.messages[thread.id].orEmpty(), cwd, onOpen = { mediaPreview = it })
-            else -> WorkspaceSideChat(vm, thread.id, Modifier.weight(1f))
+            3 -> WorkspaceMediaList(vm.messages[thread.id].orEmpty(), cwd, onOpen = { media ->
+                val target = if (media.source.startsWith("/")) workspaceFileLink(media.source) else media.source
+                onOpenLink(target, cwd)
+            })
+            5 -> if (preview == null) WorkspaceEmptyCard("点击聊天里的链接，在这里阅读文件、浏览网页或预览图片和视频。")
+                else previewState.SaveableStateProvider(preview.source) { WorkspaceLinkPreview(vm, preview, previewSources.size > 1,
+                    onOpenLink, onPreviewBack, onClose = { onClosePreview(); selectedTab = 4 }, modifier = Modifier.weight(1f)) }
+            else -> WorkspaceSideChat(vm, thread.id, Modifier.weight(1f), onOpenLink = { onOpenLink(it, cwd) })
         }
     }
-    previewPath?.let { ServerWorkspaceFileLinkDialog(vm, it) { previewPath = null } }
-    mediaPreview?.let { media -> WorkspaceMediaPreview(vm, cwd, media) { mediaPreview = null } }
 }
 
 @Composable
-private fun WorkspaceSideChat(vm: MobileViewModel, threadId: String, modifier: Modifier = Modifier) {
+private fun WorkspaceLinkPreview(vm: MobileViewModel, target: WorkspacePreviewTarget, canGoBack: Boolean,
+    onOpenLink: (String, String) -> Unit, onBack: () -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (canGoBack) IconButton(onBack, modifier = Modifier.semantics { contentDescription = "返回上一个预览" }) { LineIcon("back") }
+            Text(target.name, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton(onClose) { ActionLabel("close", "关闭预览") }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        when (target.kind) {
+            WorkspacePreviewKind.WEB -> WorkspaceBrowser(target.source, onAdd = null,
+                modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+            WorkspacePreviewKind.IMAGE -> Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+                ChatImageSource(target.source, vm, target.linkBase, galleryPage = true)
+            }
+            WorkspacePreviewKind.VIDEO -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                if (target.remote) WorkspaceVideoPlayer(target.source)
+                else ChatVideoSource(target.source, vm, target.linkBase)
+            }
+            WorkspacePreviewKind.FILE -> WorkspaceDocumentPreview(vm, target, onOpenLink, Modifier.weight(1f))
+            WorkspacePreviewKind.DIRECTORY -> WorkspaceDirectoryPreview(vm, target, onOpenLink, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceDirectoryPreview(vm: MobileViewModel, target: WorkspacePreviewTarget,
+    onOpenLink: (String, String) -> Unit, modifier: Modifier = Modifier) {
+    val path = target.source.trimEnd('/')
+    LaunchedEffect(path, vm.connected) { if (vm.connected) vm.loadProjectFiles(path) }
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        val listing = vm.projectFilesListing?.takeIf { it.path.trimEnd('/') == path }
+        when {
+            !vm.connected -> WorkspaceEmptyCard("连接服务器后查看目录。")
+            vm.projectFilesBusy -> LinearProgressIndicator(Modifier.fillMaxWidth())
+            vm.projectFilesError.isNotBlank() -> Text(vm.projectFilesError, color = MaterialTheme.colorScheme.error)
+            listing != null -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (listing.children.isEmpty() && listing.files.isEmpty()) item { WorkspaceEmptyCard("这个目录里没有文件。") }
+                items(listing.children, key = { "dir:$it" }) { name ->
+                    ContextAction(name, "目录") { onOpenLink(workspaceFileLink("$path/$name/"), path) }
+                }
+                items(listing.files, key = { "file:$it" }) { name ->
+                    ContextAction(name, "打开预览") { onOpenLink(workspaceFileLink("$path/$name"), path) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePreviewTarget,
+    onOpenLink: (String, String) -> Unit, modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var file by remember(target.source) { mutableStateOf<File?>(null) }
+    var text by remember(target.source) { mutableStateOf<WorkspacePreviewText?>(null) }
+    var error by remember(target.source) { mutableStateOf("") }
+    var status by remember(target.source) { mutableStateOf("") }
+    var attempt by remember(target.source) { mutableIntStateOf(0) }
+    var raw by rememberSaveable(target.source) { mutableStateOf(false) }
+    val isMarkdown = target.extension in workspaceMarkdownExtensions
+    val isText = target.extension in workspaceTextExtensions || target.name.startsWith('.') || '.' !in target.name
+    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        val source = file
+        if (uri != null && source != null) scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    checkNotNull(context.contentResolver.openOutputStream(uri, "w")) { "无法写入文件" }.use { output ->
+                        source.inputStream().use { it.copyTo(output) }
+                    }
+                }
+                status = "已保存到手机"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { status = "保存失败：${failure.message}" }
+        }
+    }
+    LaunchedEffect(target.source, attempt, vm.connected) {
+        error = ""
+        file = null
+        text = null
+        try {
+            val cached = if (target.remote) downloadWorkspacePreviewUrl(target.source, File(context.cacheDir, "workspace-files"))
+                else vm.cacheWorkspaceFile(target.source, target.linkBase)
+            file = cached
+            if (isText) text = withContext(Dispatchers.IO) { readWorkspacePreviewText(cached) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = failure.message ?: "文件读取失败" }
+    }
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            if (isMarkdown) TextButton({ raw = !raw }) { Text(if (raw) "阅读模式" else "查看源码") }
+            TextButton({ saveLauncher.launch(target.name) }, enabled = file != null) { ActionLabel("download", "保存到手机") }
+            TextButton(onClick = {
+                val cached = file ?: return@TextButton
+                runCatching {
+                    val uri = FileProvider.getUriForFile(context, context.packageName + ".files", cached)
+                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                        type = URLConnection.guessContentTypeFromName(target.name) ?: "application/octet-stream"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_TITLE, target.name)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }, "分享文件"))
+                }.onFailure { status = "分享失败：${it.message}" }
+            }, enabled = file != null) { ActionLabel("share", "分享") }
+            if (file != null) Text(formatVideoSize(file!!.length()), fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (status.isNotBlank()) Text(status, Modifier.padding(horizontal = 16.dp), fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        when {
+            error.isNotBlank() -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(error, color = MaterialTheme.colorScheme.error)
+                TextButton({ attempt++ }) { ActionLabel("refresh", "重试") }
+            }
+            file == null || (isText && text == null) -> LinearProgressIndicator(Modifier.fillMaxWidth())
+            isText -> {
+                val content = text!!
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                    if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
+                        onOpenLink = { onOpenLink(it, target.linkBase) })
+                    else SelectionContainer {
+                        Text(content.text, Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).widthIn(max = 8000.dp),
+                            fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp)
+                    }
+                    if (content.truncated) Text("文件较长，当前只预览开头部分；保存可获取完整文件。",
+                        Modifier.padding(top = 12.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            else -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("该格式暂不支持直接阅读，可以保存或使用手机上的兼容应用打开。", fontSize = 13.sp)
+                TextButton(onClick = {
+                    runCatching {
+                        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", checkNotNull(file))
+                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, URLConnection.guessContentTypeFromName(target.name) ?: "application/octet-stream")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        })
+                    }.onFailure { status = "无法打开：${it.message}" }
+                }) { ActionLabel("link", "用其他应用打开") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceVideoPlayer(source: String, initialRatio: Float? = null, modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var ratio by remember(source, initialRatio) { mutableFloatStateOf(initialRatio ?: (16f / 9f)) }
+    var error by remember(source) { mutableStateOf("") }
+    var attempt by remember(source) { mutableIntStateOf(0) }
+    val player = remember(context) { android.widget.VideoView(context) }
+    DisposableEffect(player) { onDispose { player.stopPlayback() } }
+    LaunchedEffect(player, source, attempt) {
+        error = ""
+        player.setOnPreparedListener { media ->
+            if (initialRatio == null && media.videoWidth > 0 && media.videoHeight > 0) ratio = (media.videoWidth.toFloat() / media.videoHeight).coerceIn(0.1f, 10f)
+        }
+        player.setOnErrorListener { _, _, _ -> error = "视频暂时无法播放，请检查链接或编码格式。"; true }
+        player.setVideoURI(Uri.parse(source))
+        player.setMediaController(android.widget.MediaController(context).also { it.setAnchorView(player) })
+    }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AndroidView(factory = { player }, modifier = Modifier.fillMaxWidth().aspectRatio(ratio).clip(RoundedCornerShape(14.dp)))
+        if (error.isNotBlank()) {
+            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            TextButton({ attempt++ }) { ActionLabel("refresh", "重试") }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceSideChat(vm: MobileViewModel, threadId: String, modifier: Modifier = Modifier,
+    onOpenLink: (String) -> Unit) {
     val chat = vm.sideChatFor(threadId)
     val pending = chat.pendingQuestion
     var confirmReset by rememberSaveable(threadId) { mutableStateOf(false) }
@@ -2623,7 +2740,7 @@ private fun WorkspaceSideChat(vm: MobileViewModel, threadId: String, modifier: M
             items(chat.exchanges.asReversed()) { exchange ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SideChatBubble("你", exchange.question)
-                    SideChatBubble("Codex", exchange.answer)
+                    SideChatBubble("Codex", exchange.answer, onOpenLink)
                 }
             }
             if (chat.exchanges.isEmpty() && pending == null) item {
@@ -2650,13 +2767,13 @@ private fun WorkspaceSideChat(vm: MobileViewModel, threadId: String, modifier: M
 }
 
 @Composable
-private fun SideChatBubble(author: String, message: String) {
+private fun SideChatBubble(author: String, message: String, onOpenLink: (String) -> Unit = {}) {
     val isAssistant = author == "Codex"
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp),
         color = if (isAssistant) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primaryContainer) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             MutedText(author)
-            if (isAssistant) MarkdownMessage(message, onOpenLink = {})
+            if (isAssistant) MarkdownMessage(message, onOpenLink = onOpenLink)
             else SelectionContainer { Text(message, fontSize = 14.sp) }
         }
     }
@@ -2695,25 +2812,6 @@ private fun WorkspaceMediaList(messages: List<ChatLine>, cwd: String, onOpen: (W
                     LineIcon(if (entry.video) "play" else "eye", color = MaterialTheme.colorScheme.primary)
                     Text(entry.label, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     MutedText(if (entry.video) "视频" else "图片")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorkspaceMediaPreview(vm: MobileViewModel, cwd: String, media: WorkspaceMedia, onClose: () -> Unit) {
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().safeDrawingPadding(), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize().padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(media.label, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TextButton(onClose) { ActionLabel("close", "关闭") }
-                }
-                if (media.video) Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    ChatVideoSource(media.source, vm, cwd)
-                } else Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black), contentAlignment = Alignment.Center) {
-                    ChatImageSource(media.source, vm, cwd, galleryPage = true)
                 }
             }
         }
@@ -2971,7 +3069,7 @@ private fun ChatImage(
                 contentScale = if (compact) ContentScale.Crop else ContentScale.Fit)
             if (!compact) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = ::openPreview) { ActionLabel("eye", "查看原图") }
+                    TextButton(onClick = { onClick?.invoke() ?: openPreview() }) { ActionLabel("eye", "查看原图") }
                     TextButton(onClick = ::saveOriginal, enabled = !saving) {
                         ActionLabel("download", if (saving) "正在保存…" else "下载原图")
                     }
@@ -3304,9 +3402,18 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     markdownImageDestinations(bounded).distinct().forEach { destination ->
-        key(destination) { ChatImageSource(destination, vm, baseDirectory) }
+        val target = workspacePreviewTarget(destination, baseDirectory)
+        val source = target?.source ?: destination
+        key(source) { ChatImageSource(source, vm, baseDirectory,
+            onClick = if (source.startsWith("data:image/", true)) null else ({ onOpenLink(target?.navigationLink ?: source) })) }
     }
-    videoAttachmentPaths(bounded).forEach { path -> ChatVideoSource(path, vm, baseDirectory) }
+    videoAttachmentPaths(bounded).forEach { path ->
+        val target = workspacePreviewTarget(path, baseDirectory)
+        if (target?.kind == WorkspacePreviewKind.VIDEO) {
+            if (target.remote) WorkspaceVideoPlayer(target.source)
+            else ChatVideoSource(target.source, vm, baseDirectory)
+        }
+    }
 }
 
 private fun videoAttachmentPaths(text: String): List<String> {
@@ -3389,19 +3496,7 @@ private fun ChatVideoSource(path: String, vm: MobileViewModel, baseDirectory: St
         when {
             videoResult == null -> Text("正在下载原画质视频…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             videoFile?.isFile != true -> Text("视频暂时无法读取：${videoResult?.exceptionOrNull()?.message ?: "请检查 SSH 连接"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> AndroidView(
-                modifier = Modifier.fillMaxWidth().aspectRatio(videoAspectRatio).clip(RoundedCornerShape(14.dp)),
-                factory = { viewContext -> android.widget.VideoView(viewContext).apply {
-                    tag = videoFile!!.absolutePath
-                    setVideoPath(videoFile!!.absolutePath)
-                    setMediaController(android.widget.MediaController(viewContext).also { it.setAnchorView(this) })
-                } },
-                update = { view -> if (view.tag != videoFile!!.absolutePath) {
-                    view.tag = videoFile!!.absolutePath
-                    view.setVideoPath(videoFile!!.absolutePath)
-                    view.setMediaController(android.widget.MediaController(context).also { it.setAnchorView(view) })
-                } }
-            )
+            else -> WorkspaceVideoPlayer(videoFile.toURI().toString(), initialRatio = videoAspectRatio)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = ::saveVideo, enabled = videoFile?.isFile == true) {
