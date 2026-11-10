@@ -24,8 +24,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.*
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
@@ -42,6 +46,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -58,6 +63,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -274,12 +280,17 @@ class MainActivity : ComponentActivity() {
                 val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     if (uri != null) receiveSharedUris(listOf(uri))
                 }
-                BackHandler(enabled = vm.activeId != null) { vm.back() }
+                var workspacePage by rememberSaveable(vm.activeId) { mutableStateOf(false) }
+                val chatState = key(vm.activeId) { rememberSaveableStateHolder() }
+                BackHandler(enabled = vm.activeId != null) {
+                    if (workspacePage) workspacePage = false else vm.back()
+                }
                 val screenKey = when {
                     !vm.connected && vm.connecting && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
                     !vm.connected && vm.activeThread == null && !vm.hasCachedSession -> "connection"
                     vm.activeThread == null -> "thread-list"
                     vm.openingThreadId != null || vm.threadOpenError.isNotBlank() -> "thread-loading:${vm.activeId}"
+                    workspacePage -> "workspace:${vm.activeId}"
                     else -> "chat"
                 }
                 LaunchedEffect(screenKey, vm.foregroundGeneration, vm.connected, vm.threads.size) {
@@ -305,7 +316,12 @@ class MainActivity : ComponentActivity() {
                                     (targetState == "chat" || targetState.startsWith("thread-loading:"))
                                 val leavingChat = targetState == "thread-list" &&
                                     (initialState == "chat" || initialState.startsWith("thread-loading:"))
-                                if (enteringChat || leavingChat) {
+                                val enteringWorkspace = initialState == "chat" && targetState.startsWith("workspace:")
+                                val leavingWorkspace = targetState == "chat" && initialState.startsWith("workspace:")
+                                if (enteringWorkspace || leavingWorkspace) {
+                                    (fadeIn(tween(180)) + slideInHorizontally(tween(250, easing = FastOutSlowInEasing)) { if (enteringWorkspace) it else -it / 8 }) togetherWith
+                                        (fadeOut(tween(160)) + slideOutHorizontally(tween(230, easing = FastOutSlowInEasing)) { if (enteringWorkspace) -it / 8 else it })
+                                } else if (enteringChat || leavingChat) {
                                     val enterOffset: (Int) -> Int = { width ->
                                         if (enteringChat) width / 10 else -width / 24
                                     }
@@ -342,7 +358,10 @@ class MainActivity : ComponentActivity() {
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
                                 screen == "thread-list" -> ThreadListScreen(vm)
                                 screen.startsWith("thread-loading:") -> ThreadLoadingScreen(vm)
-                                else -> key(vm.activeId) { ChatScreen(vm,
+                                screen.startsWith("workspace:") -> WorkspacePage(vm, onBack = { workspacePage = false })
+                                else -> chatState.SaveableStateProvider(vm.activeId.orEmpty()) { ChatScreen(vm,
+                                    workspaceOpen = workspacePage,
+                                    openWorkspace = { workspacePage = true },
                                     addImage = {
                                         if (Build.VERSION.SDK_INT >= 33) {
                                             imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -1906,7 +1925,8 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 }
 
 @Composable
-private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
+private fun ChatScreen(vm: MobileViewModel, workspaceOpen: Boolean, openWorkspace: () -> Unit,
+    addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
     val thread = vm.activeThread ?: return
     val context = androidx.compose.ui.platform.LocalContext.current
     val sidebarState = rememberDrawerState(DrawerValue.Closed)
@@ -1964,8 +1984,15 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
     }
     var leftBottom by rememberSaveable(thread.id) { mutableStateOf(false) }
     fun collapse() { expanded = false; focusComposer = false; keyboard?.hide() }
-    BackHandler(expanded) { collapse() }
-    LaunchedEffect(expanded, focusComposer) { if (expanded && focusComposer) { focus.requestFocus(); keyboard?.show() } }
+    BackHandler(expanded && !workspaceOpen) { collapse() }
+    LaunchedEffect(expanded, focusComposer, workspaceOpen) {
+        if (!workspaceOpen && expanded && focusComposer) { focus.requestFocus(); keyboard?.show() }
+    }
+    val enterWorkspace = {
+        focusComposer = false
+        keyboard?.hide()
+        openWorkspace()
+    }
     LaunchedEffect(list) {
         snapshotFlow {
             Triple(list.isScrollInProgress, list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0, expanded)
@@ -2015,6 +2042,9 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
                     Text("· " + options.mode.label + " · " + reasoningEffortLabel(options.effort),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+            }
+            IconButton(enterWorkspace, modifier = Modifier.semantics { contentDescription = "打开工作区" }) {
+                LineIcon("folder")
             }
             AppMenu(vm, thread)
         }
@@ -2085,7 +2115,7 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(Modifier.fillMaxSize(), state = list, reverseLayout = true,
+            LazyColumn(Modifier.fillMaxSize().workspaceSwipe(toWorkspace = true, onSwipe = enterWorkspace), state = list, reverseLayout = true,
                 contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.Bottom) {
                 // reverseLayout places the first item at the physical bottom. Keep a real
@@ -2334,6 +2364,167 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
     }
     serverDirectoryLinkPath?.let { path ->
         ServerWorkspaceDirectoryLinkDialog(vm, path) { serverDirectoryLinkPath = null }
+    }
+}
+
+@Composable
+private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
+    val thread = vm.activeThread ?: return
+    val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
+    var selectedTab by rememberSaveable(thread.id) { mutableIntStateOf(0) }
+    var previewPath by rememberSaveable(thread.id, cwd) { mutableStateOf<String?>(null) }
+    var filesRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
+    var diffRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(cwd, vm.connected) {
+        if (vm.connected) {
+            vm.loadProjectFiles(cwd)
+            filesRequested = true
+        }
+    }
+    LaunchedEffect(selectedTab, cwd, vm.connected) {
+        if (selectedTab == 1 && vm.connected) {
+            vm.loadGitDiff()
+            diffRequested = true
+        }
+    }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .workspaceSwipe(toWorkspace = false, onSwipe = onBack)) {
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onBack, modifier = Modifier.semantics { contentDescription = "返回聊天" }) { LineIcon("back") }
+            Column(Modifier.weight(1f)) {
+                Text("工作区", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                Text(vm.projectFor(thread.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton(onClick = {
+                if (selectedTab == 0) vm.loadProjectFiles(vm.fileBrowserPath.takeIf { filesRequested }.orEmpty().ifBlank { cwd })
+                else vm.loadGitDiff()
+            }, enabled = vm.connected && !(if (selectedTab == 0) vm.projectFilesBusy else vm.gitDiffBusy),
+                modifier = Modifier.semantics { contentDescription = "刷新工作区" }) { LineIcon("refresh") }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("文件", "改动").forEachIndexed { index, label ->
+                FilterChip(selected = selectedTab == index, onClick = { selectedTab = index }, label = { Text(label) }, leadingIcon = {
+                    LineIcon(if (index == 0) "folder" else "code", Modifier.size(17.dp))
+                })
+            }
+        }
+        when (selectedTab) {
+            0 -> {
+                val path = vm.fileBrowserPath.takeIf { filesRequested && it.isNotBlank() } ?: cwd
+                val relativePath = if (path == cwd) "项目根目录" else path.removePrefix(cwd.trimEnd('/') + "/")
+                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(relativePath, Modifier.weight(1f), fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    TextButton(onClick = { vm.loadProjectFiles(cwd) }, enabled = vm.connected && path != cwd,
+                        contentPadding = PaddingValues(horizontal = 8.dp)) { ActionLabel("folder", "根目录", fontSize = 11.sp) }
+                    TextButton(onClick = { vm.loadProjectFiles(path.substringBeforeLast('/').ifBlank { "/" }) },
+                        enabled = vm.connected && path != cwd && path.startsWith(cwd.trimEnd('/') + "/"),
+                        contentPadding = PaddingValues(horizontal = 8.dp)) { ActionLabel("arrow-up", "上级", fontSize = 11.sp) }
+                }
+                val listing = vm.projectFilesListing.takeIf { filesRequested && it?.path == path }
+                when {
+                    !vm.connected -> WorkspaceEmptyCard("连接服务器后查看项目文件。")
+                    !filesRequested || vm.projectFilesBusy -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                    vm.projectFilesError.isNotBlank() -> Text(vm.projectFilesError, Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    listing != null -> {
+                        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            if (listing.children.isEmpty() && listing.files.isEmpty()) item("empty-directory") {
+                                WorkspaceEmptyCard("这个目录里没有文件。")
+                            }
+                            items(listing.children, key = { "dir:$it" }) { name ->
+                                Surface(onClick = { vm.loadProjectFiles(listing.path.trimEnd('/') + "/" + name) },
+                                    enabled = vm.connected, shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        LineIcon("folder", Modifier.size(19.dp), MaterialTheme.colorScheme.primary)
+                                        Text(name, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        LineIcon("chevron", Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                            items(listing.files, key = { "file:$it" }) { name ->
+                                val path = listing.path.trimEnd('/') + "/" + name
+                                Surface(shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                    Row(Modifier.fillMaxWidth().padding(start = 13.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically) {
+                                        LineIcon("file", Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(name, Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        IconButton(onClick = {
+                                            vm.addWorkspaceFileContext(path, name)
+                                            android.widget.Toast.makeText(context, "已加入聊天上下文", android.widget.Toast.LENGTH_SHORT).show()
+                                        }, enabled = vm.connected,
+                                            modifier = Modifier.semantics { contentDescription = "引用 $name" }) { LineIcon("plus", Modifier.size(18.dp), MaterialTheme.colorScheme.primary) }
+                                        IconButton(onClick = { previewPath = path }, enabled = vm.connected,
+                                            modifier = Modifier.semantics { contentDescription = "预览 $name" }) { LineIcon("eye", Modifier.size(18.dp)) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                when {
+                    !vm.connected -> WorkspaceEmptyCard("连接服务器后查看代码改动。")
+                    !diffRequested || vm.gitDiffBusy -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                    vm.gitDiffError.isNotBlank() -> Text(vm.gitDiffError, Modifier.padding(18.dp),
+                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    else -> {
+                        val diff = vm.gitDiff
+                        val hasChanges = remember(diff) { diff.lineSequence().any { it.isNotBlank() && !it.startsWith("--- ") } }
+                        if (!hasChanges) WorkspaceEmptyCard("当前工作区没有 Git 改动。")
+                        else SelectionContainer {
+                            val displayedDiff = if (diff.length > 48_000) diff.take(48_000) + "\n\n… 内容过长，已截断" else diff
+                            Text(displayedDiff, Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 18.dp, vertical = 10.dp), fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    previewPath?.let { ServerWorkspaceFileLinkDialog(vm, it) { previewPath = null } }
+}
+
+private fun Modifier.workspaceSwipe(toWorkspace: Boolean, onSwipe: () -> Unit): Modifier = pointerInput(toWorkspace) {
+    val direction = if (toWorkspace) -1 else 1
+    val threshold = 64.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var travel = 0f
+        var wrongDirection = false
+        val start = awaitHorizontalTouchSlopOrCancellation(down.id) { change, overSlop ->
+            if (overSlop * direction <= 0f) wrongDirection = true
+            if (!wrongDirection) {
+                change.consume()
+                travel = overSlop * direction
+            }
+        } ?: return@awaitEachGesture
+        val completed = horizontalDrag(start.id) { change ->
+            travel += change.positionChange().x * direction
+            change.consume()
+        }
+        if (completed && travel >= threshold) onSwipe()
+    }
+}
+
+@Composable
+private fun WorkspaceEmptyCard(message: String) {
+    Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Text(message, Modifier.padding(horizontal = 16.dp, vertical = 18.dp), fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -2740,7 +2931,7 @@ private fun imageMimeType(source: String, bytes: ByteArray?): String {
         "avif" -> "image/avif"; "heic" -> "image/heic"; "heif" -> "image/heif"
         else -> when {
             bytes?.getOrNull(0) == 0xFF.toByte() && bytes.getOrNull(1) == 0xD8.toByte() -> "image/jpeg"
-            bytes?.take(8)?.toByteArray()?.contentEquals(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)) == true -> "image/png"
+            bytes != null && isPngImage(bytes) -> "image/png"
             bytes?.take(6)?.toByteArray()?.decodeToString()?.startsWith("GIF8") == true -> "image/gif"
             else -> "image/jpeg"
         }
@@ -2805,10 +2996,6 @@ private fun decodeWithImageDecoder(bytes: ByteArray, maxPixels: Long): Bitmap? =
 } catch (_: OutOfMemoryError) {
     null
 }
-
-private fun isSvgImage(bytes: ByteArray): Boolean =
-    bytes.copyOfRange(0, minOf(bytes.size, 4096)).toString(Charsets.UTF_8)
-        .contains(Regex("(?is)<svg(?:\\s|>)"))
 
 private fun decodeSvgBitmap(bytes: ByteArray, maxPixels: Long): Bitmap? {
     return try {

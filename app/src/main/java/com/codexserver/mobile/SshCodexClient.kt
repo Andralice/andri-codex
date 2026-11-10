@@ -1201,7 +1201,7 @@ class SshCodexClient(
 
 private fun isSupportedImageBytes(bytes: ByteArray): Boolean =
     bytes.size >= 12 && (
-        bytes.copyOfRange(0, 8).contentEquals(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) ||
+        isPngImage(bytes) ||
             (bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte()) ||
             bytes.copyOfRange(0, 3).toString(Charsets.US_ASCII) == "GIF" ||
             (bytes.copyOfRange(0, 4).toString(Charsets.US_ASCII) == "RIFF" && bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII) == "WEBP") ||
@@ -1209,8 +1209,7 @@ private fun isSupportedImageBytes(bytes: ByteArray): Boolean =
             (bytes.copyOfRange(4, 8).toString(Charsets.US_ASCII) == "ftyp" &&
                 bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII) in
                     setOf("avif", "avis", "heic", "heix", "hevc", "hevx", "mif1", "msf1")) ||
-            bytes.copyOfRange(0, minOf(bytes.size, 4096)).toString(Charsets.UTF_8)
-                .contains(Regex("(?is)<svg(?:\\s|>)"))
+            isSvgImage(bytes)
     )
 
 private fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
