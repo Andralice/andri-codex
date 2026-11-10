@@ -23,6 +23,23 @@ class MobileRegressionCheck {
         assertFalse(image.getJSONObject(1).has("image_url"))
     }
 
+    @Test fun multiImageInputSendsOnlyPathsAndHistoryKeepsTheirOrder() {
+        val paths = (1..10).map { "/workspace/project/codex/inbox/photo-$it.png" }
+        val input = userInput("查看图片", localImagePaths = paths)
+        assertEquals(11, input.length())
+        assertEquals("查看图片", input.getJSONObject(0).getString("text"))
+        paths.forEachIndexed { index, path ->
+            val image = input.getJSONObject(index + 1)
+            assertEquals("localImage", image.getString("type"))
+            assertEquals(path, image.getString("path"))
+            assertFalse(image.has("url"))
+        }
+        // Older messages can still carry inline image URLs.
+        input.put(JSONObject().put("type", "image").put("url", RED_IMAGE))
+        val message = parseChatItem(JSONObject().put("type", "userMessage").put("content", input))
+        assertEquals(paths + RED_IMAGE, message?.images)
+    }
+
     @Test fun realTextImageAndConversationResume() = runBlocking {
         val keyPath = System.getenv("CODEX_CHECK_KEY_FILE")
         assumeTrue("Set CODEX_CHECK_KEY_FILE for the SSH regression check", !keyPath.isNullOrBlank())

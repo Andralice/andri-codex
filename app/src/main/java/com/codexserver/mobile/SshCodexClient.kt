@@ -60,9 +60,14 @@ data class ChatLine(val role: String, val text: String, val id: String = "", val
     val questions: List<ChatQuestion> = emptyList(), val status: String = "", val images: List<String> = emptyList(),
     val processItems: List<ChatLine> = emptyList())
 // turn/start accepts UserInput, not the model provider's ContentItem wire format.
-internal fun userInput(prompt: String, imageDataUrls: List<String> = emptyList()): JSONArray =
+internal fun userInput(
+    prompt: String,
+    imageDataUrls: List<String> = emptyList(),
+    localImagePaths: List<String> = emptyList()
+): JSONArray =
     JSONArray().put(JSONObject().put("type", "text").put("text", prompt)).apply {
         imageDataUrls.forEach { put(JSONObject().put("type", "image").put("url", it)) }
+        localImagePaths.forEach { put(JSONObject().put("type", "localImage").put("path", it)) }
     }
 internal fun userInput(prompt: String, imageDataUrl: String?): JSONArray =
     userInput(prompt, listOfNotNull(imageDataUrl))
@@ -149,6 +154,9 @@ internal fun parseChatItem(item: JSONObject): ChatLine? {
             when (value) {
                 is JSONArray -> for (index in 0 until value.length()) collect(value.opt(index))
                 is JSONObject -> {
+                    if (value.text("type") == "localImage") {
+                        value.text("path").takeIf(String::isNotBlank)?.let { add(it) }
+                    }
                     if (value.text("type") == "image") {
                         val imageUrl = listOf("url", "image_url", "data").firstNotNullOfOrNull { key ->
                             when (val candidate = value.opt(key)) {
@@ -603,16 +611,19 @@ class SshCodexClient(
         )
     }
 
-    suspend fun sendTurn(threadId: String, model: String, prompt: String, imageDataUrls: List<String> = emptyList(), options: ExecutionOptions? = null): String {
-        val input = userInput(prompt, imageDataUrls)
+    suspend fun sendTurn(
+        threadId: String, model: String, prompt: String, imageDataUrls: List<String> = emptyList(),
+        options: ExecutionOptions? = null, localImagePaths: List<String> = emptyList()
+    ): String {
+        val input = userInput(prompt, imageDataUrls, localImagePaths)
         val result = request("turn/start", (options?.params(turn = true) ?: JSONObject()).put("threadId", threadId).put("model", model).put("input", input))
         return result.optJSONObject("turn")?.text("id").orEmpty()
     }
 
-    suspend fun addQueuedSubmission(threadId: String, prompt: String, imageDataUrls: List<String> = emptyList()): QueuedSubmission {
+    suspend fun addQueuedSubmission(threadId: String, prompt: String, localImagePaths: List<String> = emptyList()): QueuedSubmission {
         val userMessageId = java.util.UUID.randomUUID().toString()
         val result = request("thread/queue/add", JSONObject().put("threadId", threadId)
-            .put("clientUserMessageId", userMessageId).put("input", userInput(prompt, imageDataUrls)))
+            .put("clientUserMessageId", userMessageId).put("input", userInput(prompt, localImagePaths = localImagePaths)))
         return parseQueuedSubmission(result.optJSONObject("queuedSubmission")
             ?: error("Codex 没有返回排队消息"))
     }
@@ -1208,7 +1219,10 @@ private fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
     val input = value.optJSONArray("input") ?: JSONArray()
     val text = (0 until input.length()).mapNotNull { i -> input.optJSONObject(i)?.takeIf { it.text("type") == "text" }?.text("text") }
         .joinToString("\n")
-    val hasImage = (0 until input.length()).any { input.optJSONObject(it)?.text("type") == "image" }
+    val hasImage = (0 until input.length()).any {
+        val type = input.optJSONObject(it)?.text("type")
+        type == "image" || type == "localImage"
+    }
     return QueuedSubmission(value.text("id"), value.text("clientUserMessageId"),
         text + if (hasImage) "  ·  图片" else "")
 }

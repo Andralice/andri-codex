@@ -1920,9 +1920,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val options = threadExecution[id] ?: savedExecution(id) ?: currentExecution
         val submission = captureComposer(id)
         actions.launch {
+            var failureStage = "发送消息失败"
             try {
                 val baseDirectory = options.cwd
+                if (attachments.isNotEmpty()) failureStage = "上传图片失败"
                 val remoteImages = connection.uploadImages(attachments.map { ImageUpload(it.dataUrl, it.label) }, baseDirectory)
+                failureStage = "发送消息失败"
                 val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, baseDirectory) }
                 val remoteFiles = sharedFiles.map { file ->
                     connection.uploadSharedFile(file.file, file.label, baseDirectory)
@@ -1943,7 +1946,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
                 startingComposers += id
                 val startRevision = threadReads.revision(id)
-                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, attachments.map { it.dataUrl }, options)
+                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, options = options, localImagePaths = remoteImages)
                 requireCurrent(connection)
                 executionApplied(id, options)
                 recordChatDiagnostic("composer.turn.start.accepted", id, turnId)
@@ -1958,7 +1961,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                         JSONObject().put("reason", e.message.orEmpty().take(160)))
                     clearComposerAfterAcceptance(id)
                 } else {
-                    reportChatError(e.message ?: "未知错误", "发送消息失败", id)
+                    reportChatError(e.message ?: "未知错误", failureStage, id)
                 }
             } finally {
                 releaseComposer(id, submission)
@@ -2031,9 +2034,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val options = currentExecution
         val submission = captureComposer(id)
         actions.launch {
+            var failureStage = "加入排队失败"
             try {
                 val baseDirectory = options.cwd
+                if (attachments.isNotEmpty()) failureStage = "上传图片失败"
                 val remoteImages = connection.uploadImages(attachments.map { ImageUpload(it.dataUrl, it.label) }, baseDirectory)
+                failureStage = "加入排队失败"
                 val videoPath = video?.let { connection.uploadWorkspaceVideo(it.file, it.label, baseDirectory) }
                 val remoteFiles = sharedFiles.map { file ->
                     connection.uploadSharedFile(file.file, file.label, baseDirectory)
@@ -2053,7 +2059,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     .put("imageCount", attachments.size).put("hasVideo", video != null)
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
                 val added = withQueue(id, connection) {
-                    connection.addQueuedSubmission(id, queuedPrompt, attachments.map { it.dataUrl })
+                    connection.addQueuedSubmission(id, queuedPrompt, localImagePaths = remoteImages)
                 }
                 requireCurrent(connection)
                 settings.edit().putString("queue.${added.id}.execution", options.params().put("effort", options.effort).put("model", selectedModel).toString()).apply()
@@ -2066,7 +2072,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 clearComposerAfterAcceptance(id)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                reportChatError(e.message ?: "Codex 原生队列请求失败", "加入排队失败", id)
+                reportChatError(e.message ?: "未知错误", failureStage, id)
             } finally {
                 releaseComposer(id, submission)
                 if (client === connection) {
