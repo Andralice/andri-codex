@@ -19,7 +19,6 @@ import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import android.util.Base64
 
@@ -256,8 +255,10 @@ class SshCodexClient(
     private val onConnectionStage: (String) -> Unit = {},
     onServerMessage: (JSONObject) -> Unit
 ) {
-    private class EphemeralTitleRun {
+    private class EphemeralTextRun(val sideChat: Boolean) {
         val text = StringBuilder()
+        var finalText = ""
+        @Volatile var turnId = ""
         val completed = CompletableDeferred<String>()
     }
 
@@ -267,8 +268,7 @@ class SshCodexClient(
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JSONObject>>()
     private val pendingSettings = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
     private val ephemeralThreadIds = ConcurrentHashMap.newKeySet<String>()
-    private val ephemeralThreadStarts = AtomicInteger(0)
-    private val ephemeralTitleRuns = ConcurrentHashMap<String, EphemeralTitleRun>()
+    private val ephemeralTextRuns = ConcurrentHashMap<String, EphemeralTextRun>()
     private val closed = AtomicBoolean(false)
     internal val diagnosticId = Integer.toHexString(System.identityHashCode(this))
     private val connectionTimings = mutableListOf<JSONObject>()
@@ -394,13 +394,19 @@ class SshCodexClient(
                     val message = runCatching { JSONObject(value) }.getOrNull() ?: return
                     val method = message.text("method")
                     val params = message.optJSONObject("params")
-                    if (method == "thread/started" && ephemeralThreadStarts.get() > 0) {
-                        params?.optJSONObject("thread")?.text("id")?.takeIf { it.isNotBlank() }?.let(ephemeralThreadIds::add)
+                    val startedThread = if (method == "thread/started") params?.optJSONObject("thread") else null
+                    if (startedThread?.optBoolean("ephemeral") == true) {
+                        startedThread.text("id").takeIf { it.isNotBlank() }?.let(ephemeralThreadIds::add)
                         return
                     }
                     val notificationThreadId = params?.text("threadId").orEmpty()
                     if (notificationThreadId in ephemeralThreadIds) {
-                        handleEphemeralTitleNotification(method, params ?: JSONObject(), notificationThreadId)
+                        val run = ephemeralTextRuns[notificationThreadId]
+                        if (message.has("id")) {
+                            val requestId = message.get("id")
+                            run?.completed?.completeExceptionally(IllegalStateException("临时问答不能使用工具或发起审批"))
+                            scope.launch { runCatching { rejectUnsupportedRequest(requestId, method) } }
+                        } else if (run != null) handleEphemeralTextNotification(run, method, params ?: JSONObject())
                         return
                     }
                     if (message.optString("method") == "thread/settings/updated") {
@@ -494,23 +500,16 @@ class SshCodexClient(
             .put("approvalPolicy", "never").put("approvalsReviewer", "user").put("sandbox", "read-only")
             .put("developerInstructions", "You generate short conversation titles. Do not use tools. Output only the title, with no quotes or explanation.")
             .put("config", JSONObject().put("model_reasoning_effort", options.effort))
-        ephemeralThreadStarts.incrementAndGet()
-        val titleThreadId = try {
-            request("thread/start", startParams).optJSONObject("thread")?.text("id")
-                ?.takeIf { it.isNotBlank() } ?: error("Codex 没有返回临时标题会话 ID")
-        } finally {
-            ephemeralThreadStarts.decrementAndGet()
-        }
-        ephemeralThreadIds.add(titleThreadId)
-        val titleRun = EphemeralTitleRun()
-        check(ephemeralTitleRuns.putIfAbsent(titleThreadId, titleRun) == null) { "标题生成任务 ID 重复" }
         val titlePrompt = "为下面这条 Codex 任务生成一个简短、准确的会话标题。使用用户原文的语言，优先 4 到 16 个字；只输出标题。\n\n用户首条消息：\n${prompt.take(4000)}"
+        val titleThreadId = request("thread/start", startParams).optJSONObject("thread")?.text("id")
+            ?.takeIf { it.isNotBlank() } ?: error("Codex 没有返回临时标题会话 ID")
+        ephemeralThreadIds.add(titleThreadId)
         val completed = try {
-            sendTurn(titleThreadId, model, titlePrompt)
-            withTimeout(90_000) { titleRun.completed.await() }
+            ephemeralTextAnswer(titleThreadId, model, titlePrompt, sideChat = false)
         } finally {
-            ephemeralTitleRuns.remove(titleThreadId, titleRun)
-            runCatching { request("thread/archive", JSONObject().put("threadId", titleThreadId)) }
+            withContext(NonCancellable) {
+                withTimeoutOrNull(3_000) { runCatching { archiveThread(titleThreadId) } }
+            }
             ephemeralThreadIds.remove(titleThreadId)
         }
         val title = completed.lineSequence().firstOrNull().orEmpty().trim()
@@ -520,28 +519,92 @@ class SshCodexClient(
         return title
     }
 
-    private fun handleEphemeralTitleNotification(method: String, params: JSONObject, threadId: String) {
-        val run = ephemeralTitleRuns[threadId] ?: return
+    internal suspend fun forkSideChat(parentId: String, cwd: String, model: String): String {
+        val result = request("thread/fork", sideChatForkParams(parentId, cwd, model))
+        val id = requireSideChatFork(parentId, result)
+        ephemeralThreadIds.add(id)
+        try {
+            check(result.text("approvalPolicy") == "never" &&
+                result.optJSONObject("sandbox")?.text("type") == "readOnly") {
+                "Codex 未确认侧聊的只读权限，未发送侧边问题"
+            }
+            // A live fork can retain the parent's instructions. Mark the boundary in the child history too.
+            val instruction = JSONObject().put("type", "message").put("role", "developer")
+                .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", SIDE_CHAT_INSTRUCTIONS)))
+            request("thread/inject_items", JSONObject().put("threadId", id).put("items", JSONArray().put(instruction)))
+            return id
+        } catch (failure: Exception) {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(3_000) { runCatching { closeSideChat(id) } }
+            }
+            throw failure
+        }
+    }
+
+    internal suspend fun askSideChat(threadId: String, model: String, question: String): String {
+        check(threadId in ephemeralThreadIds) { "临时侧边聊天已关闭" }
+        return ephemeralTextAnswer(threadId, model, question, sideChat = true).trim().also {
+            check(it.isNotBlank()) { "Codex 没有返回回答" }
+        }
+    }
+
+    internal suspend fun closeSideChat(threadId: String) {
+        if (threadId !in ephemeralThreadIds) return
+        request("thread/unsubscribe", JSONObject().put("threadId", threadId))
+        ephemeralThreadIds.remove(threadId)
+    }
+
+    private suspend fun ephemeralTextAnswer(threadId: String, model: String, prompt: String, sideChat: Boolean): String {
+        val run = EphemeralTextRun(sideChat)
+        check(ephemeralTextRuns.putIfAbsent(threadId, run) == null) { "临时会话 ID 重复" }
+        var turnId = ""
+        var finished = false
+        try {
+            turnId = sendTurn(threadId, model, prompt)
+            if (turnId.isNotBlank()) run.turnId = turnId
+            val reply = withTimeoutOrNull(90_000) { run.completed.await() } ?: error("Codex 回答超时，请重试")
+            finished = true
+            return reply
+        } finally {
+            withContext(NonCancellable) {
+                if (!finished && turnId.isNotBlank()) withTimeoutOrNull(3_000) { runCatching { interrupt(threadId, turnId) } }
+            }
+            ephemeralTextRuns.remove(threadId, run)
+        }
+    }
+
+    private fun handleEphemeralTextNotification(run: EphemeralTextRun, method: String, params: JSONObject) {
+        val eventTurnId = params.text("turnId").ifBlank { params.optJSONObject("turn")?.text("id").orEmpty() }
+        if (method == "turn/started" && run.turnId.isBlank()) run.turnId = eventTurnId
+        if (eventTurnId.isNotBlank() && run.turnId.isNotBlank() && eventTurnId != run.turnId) return
         when (method) {
-            "item/agentMessage/delta" -> synchronized(run.text) { run.text.append(params.text("delta")) }
+            "item/agentMessage/delta" -> synchronized(run.text) {
+                run.text.append(params.text("delta").take(MAX_SIDE_CHAT_ANSWER - run.text.length))
+            }
+            "item/started" -> {
+                val type = params.optJSONObject("item")?.text("type")
+                if (run.sideChat && type != null && type !in setOf("userMessage", "agentMessage", "reasoning", "plan")) {
+                    run.completed.completeExceptionally(IllegalStateException("侧边聊天仅支持问答，已停止工具请求"))
+                }
+            }
             "item/completed" -> {
                 val item = params.optJSONObject("item") ?: return
                 val message = parseChatItem(item)
                 if (message?.role == "assistant" && message.text.isNotBlank()) synchronized(run.text) {
-                    if (run.text.isBlank()) run.text.append(message.text)
+                    run.finalText = message.text.take(MAX_SIDE_CHAT_ANSWER)
                 }
             }
             "turn/completed" -> {
                 val turn = params.optJSONObject("turn")
                 if (turn?.text("status") == "completed") {
-                    val value = synchronized(run.text) { run.text.toString() }
+                    val value = synchronized(run.text) { run.finalText.ifBlank { run.text.toString() } }
                     run.completed.complete(value)
                 } else {
-                    run.completed.completeExceptionally(IllegalStateException("Codex 标题生成未完成"))
+                    run.completed.completeExceptionally(IllegalStateException("Codex 临时问答未完成"))
                 }
             }
-            "error" -> run.completed.completeExceptionally(IllegalStateException(
-                params.optJSONObject("error")?.text("message").orEmpty().ifBlank { "Codex 标题生成失败" }
+            "error" -> if (!params.optBoolean("willRetry")) run.completed.completeExceptionally(IllegalStateException(
+                params.optJSONObject("error")?.text("message").orEmpty().ifBlank { "Codex 临时问答失败" }
             ))
         }
     }
@@ -1173,6 +1236,7 @@ class SshCodexClient(
         pending.clear()
         pendingSettings.values.forEach { it.completeExceptionally(error) }
         pendingSettings.clear()
+        ephemeralTextRuns.values.forEach { it.completed.completeExceptionally(error) }
         runCatching { websocket?.closeConnection(1000, "Client disconnected") }
         runCatching { channel?.disconnect() }
         runCatching { session?.disconnect() }

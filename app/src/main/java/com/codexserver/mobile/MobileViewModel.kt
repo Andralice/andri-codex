@@ -170,6 +170,57 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private val readyThreadIds = mutableStateListOf<String>()
     fun canSendToThread(id: String): Boolean = connected && id in readyThreadIds && !operationPending("归档对话", id)
     val messages = mutableStateMapOf<String, List<ChatLine>>()
+    private val sideChats = mutableStateMapOf<String, SideChatState>()
+    private data class SideChatSession(val connection: SshCodexClient, val threadId: String, val model: String)
+    private val sideChatSessions = mutableMapOf<String, SideChatSession>()
+
+    internal fun sideChatFor(id: String): SideChatState = sideChats[id] ?: SideChatState()
+
+    internal fun editSideChat(id: String, draft: String) {
+        val current = sideChatFor(id)
+        if (current.pendingQuestion == null) sideChats[id] = current.copy(draft = draft.take(MAX_SIDE_CHAT_QUESTION), error = "")
+    }
+
+    internal fun resetSideChat(id: String) {
+        if (sideChatFor(id).pendingQuestion != null) return
+        sideChats.remove(id)
+        sideChatSessions.remove(id)?.takeIf { it.connection === client }?.let { old ->
+            viewModelScope.launch { runCatching { old.connection.closeSideChat(old.threadId) } }
+        }
+    }
+
+    internal fun sendSideChat(id: String) {
+        val connection = client ?: return
+        val thread = activeThread?.takeIf { connected && it.id == id } ?: return
+        val current = sideChatFor(id)
+        val question = current.draft.trim()
+        if (question.isBlank() || current.pendingQuestion != null) return
+        val cwd = currentExecution.cwd
+        val selectedModel = thread.model.ifBlank { model }
+        val existing = sideChatSessions[id]?.takeIf { it.connection === connection }
+        val base = if (existing == null && current.exchanges.isNotEmpty()) current.copy(
+            exchanges = emptyList(), notice = "连接已变化，这次会从主任务重新开聊。"
+        ) else current
+        sideChats[id] = base.copy(draft = "", pendingQuestion = question, error = "")
+        viewModelScope.launch {
+            try {
+                val session = existing ?: SideChatSession(connection, connection.forkSideChat(id, cwd, selectedModel), selectedModel).also {
+                    requireCurrent(connection)
+                    sideChatSessions[id] = it
+                }
+                val answer = connection.askSideChat(session.threadId, session.model, question)
+                requireCurrent(connection)
+                sideChats[id] = base.copy(draft = "", error = "", exchanges =
+                    (base.exchanges + SideChatExchange(question, answer)).takeLast(MAX_SIDE_CHAT_EXCHANGES))
+            } catch (cancelled: CancellationException) {
+                sideChats[id] = base
+                throw cancelled
+            } catch (failure: Exception) {
+                sideChats[id] = base.copy(error = failure.message.orEmpty().take(220).ifBlank { "侧边聊天暂时无法回答" })
+            }
+        }
+    }
+
     val queuedTasks = mutableStateMapOf<String, List<QueuedTask>>()
     val historyCursors = mutableStateMapOf<String, String>()
     val drafts = mutableStateMapOf<String, String>()
@@ -415,6 +466,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resetActions() {
+        sideChatSessions.clear()
         actions.cancel()
         actions = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
         operations.clear()

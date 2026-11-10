@@ -982,14 +982,36 @@ private fun WebPageContextDialog(
     onAdd: (String, String) -> Unit,
     allowContextImport: Boolean = true
 ) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().padding(10.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (allowContextImport) "网页上下文" else "网页预览", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    TextButton(onDismiss) { ActionLabel("close", "关闭") }
+                }
+                WorkspaceBrowser(initialUrl, onAdd.takeIf { allowContextImport }, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceBrowser(
+    initialUrl: String = "",
+    onAdd: ((String, String) -> Unit)?,
+    modifier: Modifier = Modifier
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var address by remember(initialUrl) { mutableStateOf(initialUrl) }
-    var currentUrl by remember { mutableStateOf("") }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var address by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
+    var currentUrl by rememberSaveable(initialUrl) { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var canGoBack by remember { mutableStateOf(false) }
     var extracting by remember { mutableStateOf(false) }
-    var extractedPage by remember { mutableStateOf("") }
-    val pageView = remember {
+    var navigation by remember { mutableIntStateOf(0) }
+    val pageView = remember(context) {
         WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -998,85 +1020,133 @@ private fun WebPageContextDialog(
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                WebView.startSafeBrowsing(context) { }
-            }
+            settings.safeBrowsingEnabled = true
             webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val scheme = request.url.scheme?.lowercase()
-                    if (scheme != "https") return true
-                    currentUrl = request.url.toString()
-                    address = currentUrl
-                    return false
-                }
-                override fun onPageFinished(view: WebView, url: String) {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                    httpsBrowserUrl(request.url.toString()) == null
+
+                override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                    navigation++
+                    extracting = false
+                    loading = true
+                    error = ""
+                    title = ""
+                    if (httpsBrowserUrl(url) == null) {
+                        view.stopLoading()
+                        error = "浏览器仅支持 HTTPS 地址"
+                        loading = false
+                        return
+                    }
                     currentUrl = url
                     address = url
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    if (url != view.url || httpsBrowserUrl(url) == null) return
+                    loading = false
+                    currentUrl = url
                     title = view.title.orEmpty()
-                    error = ""
+                    canGoBack = view.canGoBack()
+                }
+
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, detail: android.webkit.WebResourceError) {
+                    if (request.isForMainFrame) {
+                        error = "无法打开网页：${detail.description}"
+                        loading = false
+                        canGoBack = view.canGoBack()
+                    }
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                    if (httpsBrowserUrl(url) != null) {
+                        if (url != currentUrl) {
+                            navigation++
+                            extracting = false
+                        }
+                        currentUrl = url
+                        address = url
+                        canGoBack = view.canGoBack()
+                    }
                 }
             }
             webChromeClient = WebChromeClient()
         }
     }
-    DisposableEffect(pageView) { onDispose { pageView.stopLoading(); pageView.destroy() } }
-    LaunchedEffect(pageView, initialUrl) {
-        if (initialUrl.startsWith("https://", true)) {
-            currentUrl = initialUrl
-            pageView.loadUrl(initialUrl)
+    DisposableEffect(pageView) {
+        onDispose {
+            navigation++
+            pageView.stopLoading()
+            pageView.destroy()
         }
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().padding(10.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (allowContextImport) "网页上下文" else "网页预览", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    TextButton(onDismiss) { ActionLabel("close", "关闭") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(address, { address = it }, Modifier.weight(1f), singleLine = true,
-                        label = { Text("网页地址") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-                    Button(onClick = {
-                        val url = address.trim().let { if (it.startsWith("http://", true) || it.startsWith("https://", true)) it else "https://$it" }
-                        val scheme = runCatching { URI(url).scheme?.lowercase() }.getOrNull()
-                        if (scheme != "https") error = "网页上下文仅支持 HTTPS 地址"
-                        else { error = ""; extractedPage = ""; currentUrl = url; pageView.loadUrl(url) }
-                    }) { ActionLabel("link", "打开") }
-                }
-                if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                AndroidView(factory = { pageView }, modifier = Modifier.weight(1f).fillMaxWidth())
-                if (allowContextImport) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(title.ifBlank { currentUrl }, Modifier.weight(1f), fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Button(onClick = {
-                        extracting = true
-                        pageView.evaluateJavascript("(function(){return JSON.stringify({title:document.title,url:location.href,text:document.body?document.body.innerText:''})})()") { raw ->
-                            extracting = false
-                            runCatching {
-                                val json = JSONTokener(raw ?: "null").nextValue() as? String ?: error("页面没有返回可读内容")
-                                JSONObject(json)
-                            }.onSuccess { page ->
-                                val text = page.text("text").take(24_000)
-                                if (text.isBlank()) error = "页面没有可读取的正文"
-                                else {
-                                    title = page.text("title").ifBlank { page.text("url") }
-                                    extractedPage = "网页标题：${page.text("title")}\n网页地址：${page.text("url")}\n页面文字：\n$text"
-                                }
-                            }.onFailure { error = "读取页面失败：${it.message}" }
-                        }
-                    }, enabled = !extracting && currentUrl.isNotBlank() && extractedPage.isBlank()) {
-                        ActionLabel("download", if (extracting) "读取中…" else "读取当前页面")
+    LaunchedEffect(pageView, initialUrl) {
+        httpsBrowserUrl(currentUrl.ifBlank { initialUrl })?.let(pageView::loadUrl)
+    }
+
+    fun openAddress() {
+        val entered = address.trim()
+        val url = httpsBrowserUrl(if ("://" in entered) entered else "https://$entered")
+        if (url == null) error = "请输入有效的 HTTPS 网址"
+        else {
+            keyboard?.hide()
+            pageView.loadUrl(url)
+        }
+    }
+
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(address, { address = it }, Modifier.weight(1f), singleLine = true,
+                label = { Text("网页地址") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri,
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Go),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { openAddress() }))
+            Button(onClick = ::openAddress, enabled = address.isNotBlank()) { Text("打开") }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ pageView.goBack() }, enabled = canGoBack,
+                modifier = Modifier.semantics { contentDescription = "返回上一网页" }) { LineIcon("back") }
+            IconButton({ pageView.reload() }, enabled = currentUrl.isNotBlank() && !loading,
+                modifier = Modifier.semantics { contentDescription = "刷新网页" }) { LineIcon("refresh") }
+            Text(title.ifBlank { currentUrl }, Modifier.weight(1f), fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            AndroidView(factory = { pageView }, modifier = Modifier.fillMaxSize())
+            if (currentUrl.isBlank() && !loading) Text("输入网址，在工作区打开网页。", Modifier.align(Alignment.Center),
+                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (onAdd != null) TextButton(onClick = {
+            extracting = true
+            val request = navigation
+            val expectedUrl = currentUrl
+            pageView.evaluateJavascript("(function(){return JSON.stringify({title:document.title,url:location.href,text:document.body?document.body.innerText.slice(0,24000):''})})()") { raw ->
+                if (navigation != request) return@evaluateJavascript
+                extracting = false
+                runCatching {
+                    val json = JSONTokener(raw ?: "null").nextValue() as? String ?: error("页面没有返回可读内容")
+                    JSONObject(json)
+                }.onSuccess { page ->
+                    val url = page.text("url")
+                    val text = page.text("text").take(24_000)
+                    if (url != expectedUrl) error = "网页已切换，请重试"
+                    else if (text.isBlank()) error = "页面没有可读取的正文"
+                    else {
+                        val label = page.text("title").ifBlank { url }
+                        onAdd(label, "网页标题：$label\n网页地址：$url\n页面文字：\n$text")
                     }
-                    if (extractedPage.isNotBlank()) Button(onClick = {
-                        onAdd(title.ifBlank { currentUrl }, extractedPage)
-                    }) { ActionLabel("plus", "加入任务") }
-                } else Text(title.ifBlank { currentUrl }, Modifier.fillMaxWidth(), fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }.onFailure { error = "读取页面失败：${it.message}" }
             }
+        }, enabled = !loading && !extracting && currentUrl.isNotBlank(), modifier = Modifier.align(Alignment.End)) {
+            ActionLabel("plus", if (extracting) "读取中…" else "将网页正文加入聊天")
         }
     }
 }
+
+private fun httpsBrowserUrl(value: String): String? = runCatching {
+    val uri = URI(value)
+    value.takeIf { uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null }
+}.getOrNull()
 
 @Composable
 private fun ContextRow(title: String, detail: String, onRemove: () -> Unit, onOpen: (() -> Unit)? = null) {
@@ -2373,6 +2443,8 @@ private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
     val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
     var selectedTab by rememberSaveable(thread.id) { mutableIntStateOf(0) }
     var previewPath by rememberSaveable(thread.id, cwd) { mutableStateOf<String?>(null) }
+    var mediaPreview by remember(thread.id, cwd) { mutableStateOf<WorkspaceMedia?>(null) }
+    val browserState = rememberSaveableStateHolder()
     var filesRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     var diffRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -2398,17 +2470,22 @@ private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
                 Text(vm.projectFor(thread.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            IconButton(onClick = {
-                if (selectedTab == 0) vm.loadProjectFiles(vm.fileBrowserPath.takeIf { filesRequested }.orEmpty().ifBlank { cwd })
-                else vm.loadGitDiff()
-            }, enabled = vm.connected && !(if (selectedTab == 0) vm.projectFilesBusy else vm.gitDiffBusy),
-                modifier = Modifier.semantics { contentDescription = "刷新工作区" }) { LineIcon("refresh") }
+            if (selectedTab == 0 || selectedTab == 1) {
+                IconButton(onClick = {
+                    if (selectedTab == 0) vm.loadProjectFiles(vm.fileBrowserPath.takeIf { filesRequested }.orEmpty().ifBlank { cwd })
+                    else vm.loadGitDiff()
+                }, enabled = vm.connected && !(if (selectedTab == 0) vm.projectFilesBusy else vm.gitDiffBusy),
+                    modifier = Modifier.semantics { contentDescription = "刷新工作区" }) { LineIcon("refresh") }
+            }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("文件", "改动").forEachIndexed { index, label ->
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(0 to ("文件" to "folder"), 4 to ("侧边聊天" to "chat"), 1 to ("改动" to "code"),
+                2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
+                val (label, icon) = tab
                 FilterChip(selected = selectedTab == index, onClick = { selectedTab = index }, label = { Text(label) }, leadingIcon = {
-                    LineIcon(if (index == 0) "folder" else "code", Modifier.size(17.dp))
+                    LineIcon(icon, Modifier.size(17.dp))
                 })
             }
         }
@@ -2463,7 +2540,14 @@ private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
                                             android.widget.Toast.makeText(context, "已加入聊天上下文", android.widget.Toast.LENGTH_SHORT).show()
                                         }, enabled = vm.connected,
                                             modifier = Modifier.semantics { contentDescription = "引用 $name" }) { LineIcon("plus", Modifier.size(18.dp), MaterialTheme.colorScheme.primary) }
-                                        IconButton(onClick = { previewPath = path }, enabled = vm.connected,
+                                        IconButton(onClick = {
+                                            val extension = name.substringAfterLast('.', "").lowercase()
+                                            when (extension) {
+                                                in SshCodexClient.VIDEO_EXTENSIONS -> mediaPreview = WorkspaceMedia(path, video = true, name)
+                                                in chatImageExtensions -> mediaPreview = WorkspaceMedia(path, video = false, name)
+                                                else -> previewPath = path
+                                            }
+                                        }, enabled = vm.connected,
                                             modifier = Modifier.semantics { contentDescription = "预览 $name" }) { LineIcon("eye", Modifier.size(18.dp)) }
                                     }
                                 }
@@ -2472,7 +2556,7 @@ private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
                     }
                 }
             }
-            else -> {
+            1 -> {
                 when {
                     !vm.connected -> WorkspaceEmptyCard("连接服务器后查看代码改动。")
                     !diffRequested || vm.gitDiffBusy -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
@@ -2491,9 +2575,147 @@ private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+            2 -> browserState.SaveableStateProvider(thread.id) {
+                WorkspaceBrowser(onAdd = { title, text ->
+                    vm.addContextReference(title, text)
+                    android.widget.Toast.makeText(context, "网页正文已加入聊天上下文", android.widget.Toast.LENGTH_SHORT).show()
+                }, modifier = Modifier.weight(1f).padding(horizontal = 16.dp))
+            }
+            3 -> WorkspaceMediaList(vm.messages[thread.id].orEmpty(), cwd, onOpen = { mediaPreview = it })
+            else -> WorkspaceSideChat(vm, thread.id, Modifier.weight(1f))
         }
     }
     previewPath?.let { ServerWorkspaceFileLinkDialog(vm, it) { previewPath = null } }
+    mediaPreview?.let { media -> WorkspaceMediaPreview(vm, cwd, media) { mediaPreview = null } }
+}
+
+@Composable
+private fun WorkspaceSideChat(vm: MobileViewModel, threadId: String, modifier: Modifier = Modifier) {
+    val chat = vm.sideChatFor(threadId)
+    val pending = chat.pendingQuestion
+    var confirmReset by rememberSaveable(threadId) { mutableStateOf(false) }
+    val list = rememberLazyListState()
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(pending, chat.exchanges.lastOrNull()) {
+        if (pending != null || chat.exchanges.isNotEmpty()) list.scrollToItem(0)
+    }
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            MutedText("从主对话临时分出，可以继续追问，不执行终端命令。", Modifier.weight(1f))
+            if (chat.exchanges.isNotEmpty() || chat.error.isNotBlank()) {
+                TextButton({ confirmReset = true }, enabled = pending == null) { Text("结束侧聊") }
+            }
+        }
+        if (chat.notice.isNotBlank()) MutedText(chat.notice, Modifier.padding(top = 6.dp))
+        if (!vm.connected) MutedText("连接 Codex 后可以发送侧边问题。", Modifier.padding(top = 6.dp))
+        LazyColumn(state = list, reverseLayout = true, modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (pending != null) item {
+                SideChatBubble("你", pending)
+                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    MutedText("Codex 正在回答…")
+                }
+            }
+            items(chat.exchanges.asReversed()) { exchange ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SideChatBubble("你", exchange.question)
+                    SideChatBubble("Codex", exchange.answer)
+                }
+            }
+            if (chat.exchanges.isEmpty() && pending == null) item {
+                WorkspaceEmptyCard("可以问「刚才为什么这样改？」或「这个结果还有什么限制？」")
+            }
+        }
+        if (chat.error.isNotBlank()) Text(chat.error, fontSize = 12.sp, color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(bottom = 6.dp))
+        Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(chat.draft, { vm.editSideChat(threadId, it) }, Modifier.weight(1f),
+                enabled = pending == null, maxLines = 3, placeholder = { Text("问一个与当前任务有关的问题") },
+                shape = RoundedCornerShape(16.dp))
+            FilledIconButton(onClick = { keyboard?.hide(); vm.sendSideChat(threadId) },
+                enabled = vm.connected && pending == null && chat.draft.isNotBlank(),
+                modifier = Modifier.semantics { contentDescription = "发送侧边问题" }) { LineIcon("send") }
+        }
+    }
+    if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false },
+        title = { Text("结束这条侧聊？") },
+        text = { Text("这条临时侧聊的问答将清除。下次提问时会从主对话重新分出。") },
+        confirmButton = { TextButton({ confirmReset = false; vm.resetSideChat(threadId) }) { Text("结束侧聊") } },
+        dismissButton = { TextButton({ confirmReset = false }) { Text("取消") } })
+}
+
+@Composable
+private fun SideChatBubble(author: String, message: String) {
+    val isAssistant = author == "Codex"
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp),
+        color = if (isAssistant) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primaryContainer) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            MutedText(author)
+            if (isAssistant) MarkdownMessage(message, onOpenLink = {})
+            else SelectionContainer { Text(message, fontSize = 14.sp) }
+        }
+    }
+}
+
+private data class WorkspaceMedia(val source: String, val video: Boolean, val label: String)
+
+@Composable
+private fun WorkspaceMediaList(messages: List<ChatLine>, cwd: String, onOpen: (WorkspaceMedia) -> Unit) {
+    val media = remember(messages, cwd) {
+        buildList {
+            messages.asReversed().forEach { message ->
+                if (message.role == "assistant" || message.role == "user") {
+                    val text = truncateChatText(message.text)
+                    (message.images + markdownImageDestinations(text)).forEach { source ->
+                        val label = if (source.startsWith("data:", true)) "聊天图片"
+                        else source.substringBefore('?').substringBefore('#').substringAfterLast('/').take(100).ifBlank { "聊天图片" }
+                        add(WorkspaceMedia(source, video = false, label))
+                    }
+                    videoAttachmentPaths(text).forEach { source ->
+                        val path = (chatLinkTarget(source, cwd) as? ChatLinkTarget.Workspace)?.path
+                        if (path != null) add(WorkspaceMedia(path, video = true, path.substringAfterLast('/')))
+                    }
+                }
+            }
+        }.distinctBy { it.video to it.source }
+    }
+    if (media.isEmpty()) WorkspaceEmptyCard("已加载的聊天消息里还没有图片或视频。项目里的媒体也可以在「文件」中打开。")
+    else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        items(media) { entry ->
+            Surface(onClick = { onOpen(entry) }, shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LineIcon(if (entry.video) "play" else "eye", color = MaterialTheme.colorScheme.primary)
+                    Text(entry.label, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    MutedText(if (entry.video) "视频" else "图片")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceMediaPreview(vm: MobileViewModel, cwd: String, media: WorkspaceMedia, onClose: () -> Unit) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().safeDrawingPadding(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(media.label, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    TextButton(onClose) { ActionLabel("close", "关闭") }
+                }
+                if (media.video) Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    ChatVideoSource(media.source, vm, cwd)
+                } else Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black), contentAlignment = Alignment.Center) {
+                    ChatImageSource(media.source, vm, cwd, galleryPage = true)
+                }
+            }
+        }
+    }
 }
 
 private fun Modifier.workspaceSwipe(toWorkspace: Boolean, onSwipe: () -> Unit): Modifier = pointerInput(toWorkspace) {
