@@ -2453,7 +2453,7 @@ private fun ChatImage(
                     else -> null
                 }
                 check(bytes != null) { "图片来源格式不受支持" }
-                val decoded = decodeChatBitmap(bytes)
+                val decoded = imageDecodeSemaphore.withPermit { decodeChatBitmap(bytes) }
                 check(decoded != null) { "图片格式无法解码" }
                 ChatImageLoad(bytes = bytes, bitmap = decoded)
             } catch (cancelled: CancellationException) {
@@ -2762,6 +2762,7 @@ private fun imageFileName(source: String, mimeType: String): String {
 
 private const val MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
 private val remoteImageLoadSemaphore = Semaphore(permits = 4)
+private val imageDecodeSemaphore = Semaphore(permits = 2)
 private const val MAX_CHAT_IMAGE_SOURCE_PIXELS = 100_000_000L
 private const val MAX_CHAT_IMAGE_DECODE_PIXELS = 2_500_000L
 private const val MAX_CHAT_IMAGE_PREVIEW_PIXELS = 20_000_000L
@@ -2803,6 +2804,8 @@ private fun decodeWithImageDecoder(bytes: ByteArray, maxPixels: Long): Bitmap? =
     }
 } catch (_: Exception) {
     null
+} catch (_: OutOfMemoryError) {
+    null
 }
 
 private fun isSvgImage(bytes: ByteArray): Boolean =
@@ -2825,6 +2828,8 @@ private fun decodeSvgBitmap(bytes: ByteArray, maxPixels: Long): Bitmap? {
             svg.renderToCanvas(canvas)
         }
     } catch (_: Exception) {
+        null
+    } catch (_: OutOfMemoryError) {
         null
     }
 }
@@ -3058,7 +3063,7 @@ private fun loadCachedRemoteImage(url: String, cacheDir: File): ByteArray {
     val contentType = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
     val pathExtension = runCatching { URI(url).path.orEmpty().substringAfterLast('.', "").lowercase() }
         .getOrDefault("")
-    check(contentType.startsWith("image/") || pathExtension in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif")) {
+    check(contentType.startsWith("image/") || pathExtension in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic", "heif")) {
         "链接返回的不是图片（${contentType.ifBlank { "未知类型" }}）"
     }
     val bytes = connection.getInputStream().use { input ->
@@ -3195,15 +3200,17 @@ private fun QuestionFields(title: String, options: List<Pair<String, String>>, v
     var customInputExpanded by rememberSaveable(title) { mutableStateOf(hasCustomValue) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, fontSize = 14.sp, lineHeight = 21.sp)
-        if (options.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        if (options.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()) {
             options.forEach { (label, _) ->
                 val selected = value == label
                 Surface(onClick = { onChange(if (selected) "" else label) }, enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(11.dp),
                     color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)) {
-                    Text(label, Modifier.padding(horizontal = 16.dp, vertical = 9.dp), fontSize = 13.5.sp,
+                    Text(label, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
+                        fontSize = 13.5.sp, lineHeight = 20.sp,
                         color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                 }
