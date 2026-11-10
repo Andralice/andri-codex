@@ -3014,36 +3014,6 @@ private fun truncateChatText(value: String): String =
     if (value.codePointCount(0, value.length) <= MAX_MARKDOWN_RENDER_CHARS) value
     else value.substring(0, value.offsetByCodePoints(0, MAX_MARKDOWN_RENDER_CHARS))
 
-private fun markdownImageDestinations(markdown: String): List<String> {
-    val definitions = Regex("""(?im)^ {0,3}\[([^]]+)]\s*:\s*(?:<([^>]+)>|(\S+?))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$""")
-        .findAll(markdown).associate { match ->
-            match.groupValues[1].trim().replace(Regex("\\s+"), " ").lowercase() to
-                (match.groups[2]?.value ?: match.groupValues[3]).trim()
-        }
-    val inline = Regex("!\\[([^]]*)]\\s*\\(\\s*(?:<([^>]+)>|((?:\\\\.|[^\\s)])+))(?:\\s+(?:\"[^\"]*\"|'[^']*'|\\([^)]*\\)))?\\s*\\)")
-        .findAll(markdown).map { it.groupValues[2].ifBlank { it.groupValues[3] } }.toList()
-    val reference = Regex("!\\[([^]]*)]\\s*(?:\\[([^]]*)])?").findAll(markdown).mapNotNull { match ->
-        val key = (match.groupValues[2].ifBlank { match.groupValues[1] }).trim().replace(Regex("\\s+"), " ").lowercase()
-        definitions[key]
-    }.toList()
-    val markdownImages = (inline + reference)
-    // Also treat direct HTTPS links ending in a known image extension as images.
-    // Query strings are allowed, which covers common signed CDN links.
-    val directImageLinks = Regex("https://[^\\s<>\\\"']+", RegexOption.IGNORE_CASE)
-        .findAll(markdown)
-        .map { it.value.trimEnd('.', ',', ';', ':', ')', ']', '}') }
-        .filter { raw ->
-            val path = runCatching { URI(raw).path.orEmpty() }.getOrDefault("")
-            path.substringAfterLast('.', "").lowercase() in
-                setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif", "svg")
-        }
-        .toList()
-    return (markdownImages + directImageLinks).distinct().mapNotNull { raw ->
-        val value = if (raw.startsWith("file:", true)) runCatching { URI(raw).path }.getOrNull() ?: raw else raw
-        value.takeIf { it.isNotBlank() && !it.contains('\u0000') }
-    }
-}
-
 private fun loadCachedRemoteImage(url: String, cacheDir: File): ByteArray {
     val folder = File(cacheDir, "linked-images").apply { mkdirs() }
     val key = MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
@@ -3063,7 +3033,7 @@ private fun loadCachedRemoteImage(url: String, cacheDir: File): ByteArray {
     val contentType = connection.contentType.orEmpty().substringBefore(';').trim().lowercase()
     val pathExtension = runCatching { URI(url).path.orEmpty().substringAfterLast('.', "").lowercase() }
         .getOrDefault("")
-    check(contentType.startsWith("image/") || pathExtension in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic", "heif")) {
+    check(contentType.startsWith("image/") || pathExtension in chatImageExtensions) {
         "链接返回的不是图片（${contentType.ifBlank { "未知类型" }}）"
     }
     val bytes = connection.getInputStream().use { input ->

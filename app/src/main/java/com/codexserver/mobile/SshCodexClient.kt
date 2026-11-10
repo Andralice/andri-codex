@@ -983,9 +983,7 @@ class SshCodexClient(
             val resolved = sftp.realpath(candidate)
             val root = WORKSPACE_ROOT.trimEnd('/')
             check(resolved == root || resolved.startsWith("$root/")) { "只允许读取工作区中的图片" }
-            check(resolved.substringAfterLast('.', "").lowercase() in setOf(
-                "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "heic", "heif"
-            )) {
+            check(resolved.substringAfterLast('.', "").lowercase() in chatImageExtensions) {
                 "本地图片仅支持 PNG、JPEG、GIF、WebP、BMP、SVG、AVIF、HEIC 或 HEIF 文件"
             }
             val attrs = sftp.lstat(resolved)

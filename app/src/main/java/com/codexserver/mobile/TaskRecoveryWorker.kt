@@ -81,14 +81,11 @@ internal class TaskRecoveryWorker(context: Context, params: WorkerParameters) : 
     }
 
     private fun taskImagePaths(lines: List<ChatLine>): List<String> {
-        val markdownImage = Regex("!\\[[^\\]]*]\\((<[^>]+>|[^)]+)\\)")
         val result = linkedSetOf<String>()
         lines.asSequence().filter { it.role == "assistant" }.forEach { line ->
             line.images.forEach { value -> addWorkspacePath(result, value) }
-            markdownImage.findAll(line.text).forEach { match ->
-                val value = match.groupValues[1].trim().removePrefix("<").removeSuffix(">")
-                    .substringBefore(" \"").substringBefore(" '")
-                addWorkspacePath(result, value)
+            markdownImageDestinations(line.text).forEach { value ->
+                if (!value.startsWith("data:", true) && !value.startsWith("http://", true)) result += value
             }
         }
         return result.toList()
