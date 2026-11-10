@@ -7,13 +7,14 @@ export ANDROID_HOME ANDROID_SDK_ROOT="$ANDROID_HOME"
 APK_SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
 APK="$PROJECT_ROOT/app/build/outputs/apk/release/app-release.apk"
 METADATA="$PROJECT_ROOT/app/build/outputs/apk/release/output-metadata.json"
-OUT_DIR="$PROJECT_ROOT/codex"
+OUT_DIR="${ANDRI_RELEASE_OUT_DIR:-$PROJECT_ROOT/codex}"
 RELEASE_NOTES_FILE="${1:-}"
 
 cd "$PROJECT_ROOT"
 ./gradlew assembleRelease --no-daemon --max-workers=1
 test -x "$APK_SIGNER"
 test -f "$APK"
+mkdir -p "$OUT_DIR"
 "$APK_SIGNER" verify --print-certs "$APK"
 
 VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["elements"][0]["versionName"])' "$METADATA")"

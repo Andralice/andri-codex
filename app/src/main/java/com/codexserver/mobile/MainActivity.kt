@@ -281,18 +281,20 @@ class MainActivity : ComponentActivity() {
                     if (uri != null) receiveSharedUris(listOf(uri))
                 }
                 var workspacePage by rememberSaveable(vm.activeId) { mutableStateOf(false) }
-                val chatState = key(vm.activeId) { rememberSaveableStateHolder() }
+                val chatState = rememberSaveableStateHolder()
                 BackHandler(enabled = vm.activeId != null) {
                     if (workspacePage) workspacePage = false else vm.back()
                 }
-                val screenKey = when {
+                val destination = when {
                     !vm.connected && vm.connecting && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
                     !vm.connected && vm.activeThread == null && !vm.hasCachedSession -> "connection"
                     vm.activeThread == null -> "thread-list"
-                    vm.openingThreadId != null || vm.threadOpenError.isNotBlank() -> "thread-loading:${vm.activeId}"
-                    workspacePage -> "workspace:${vm.activeId}"
+                    vm.openingThreadId != null || vm.threadOpenError.isNotBlank() -> "thread-loading"
+                    workspacePage -> "workspace"
                     else -> "chat"
                 }
+                val mainScreen = MainScreen(destination, vm.activeThread)
+                val screenKey = mainScreen.key
                 LaunchedEffect(screenKey, vm.foregroundGeneration, vm.connected, vm.threads.size) {
                     withFrameNanos { }
                     vm.recordScreenFrame(screenKey)
@@ -309,15 +311,16 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                         AnimatedContent(
-                            targetState = screenKey,
+                            targetState = mainScreen,
+                            contentKey = { it.key },
                             modifier = Modifier.fillMaxSize(),
                             transitionSpec = {
-                                val enteringChat = initialState == "thread-list" &&
-                                    (targetState == "chat" || targetState.startsWith("thread-loading:"))
-                                val leavingChat = targetState == "thread-list" &&
-                                    (initialState == "chat" || initialState.startsWith("thread-loading:"))
-                                val enteringWorkspace = initialState == "chat" && targetState.startsWith("workspace:")
-                                val leavingWorkspace = targetState == "chat" && initialState.startsWith("workspace:")
+                                val enteringChat = initialState.destination == "thread-list" &&
+                                    targetState.destination in setOf("chat", "thread-loading")
+                                val leavingChat = targetState.destination == "thread-list" &&
+                                    initialState.destination in setOf("chat", "thread-loading")
+                                val enteringWorkspace = initialState.destination == "chat" && targetState.destination == "workspace"
+                                val leavingWorkspace = targetState.destination == "chat" && initialState.destination == "workspace"
                                 if (enteringWorkspace || leavingWorkspace) {
                                     (fadeIn(tween(180)) + slideInHorizontally(tween(250, easing = FastOutSlowInEasing)) { if (enteringWorkspace) it else -it / 8 }) togetherWith
                                         (fadeOut(tween(160)) + slideOutHorizontally(tween(230, easing = FastOutSlowInEasing)) { if (enteringWorkspace) -it / 8 else it })
@@ -342,7 +345,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             label = "main-screen-transition"
-                        ) { screen ->
+                        ) { page ->
+                            val screen = page.destination
                             when {
                                 screen == "connecting" -> Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center) {
@@ -357,10 +361,10 @@ class MainActivity : ComponentActivity() {
                                 }
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
                                 screen == "thread-list" -> ThreadListScreen(vm)
-                                screen.startsWith("thread-loading:") -> ThreadLoadingScreen(vm)
-                                screen.startsWith("workspace:") -> WorkspacePage(vm, onBack = { workspacePage = false })
-                                else -> chatState.SaveableStateProvider(vm.activeId.orEmpty()) { ChatScreen(vm,
-                                    workspaceOpen = workspacePage,
+                                screen == "thread-loading" -> ThreadLoadingScreen(vm)
+                                screen == "workspace" -> WorkspacePage(vm, checkNotNull(page.thread), onBack = { workspacePage = false })
+                                else -> chatState.SaveableStateProvider(page.key) { ChatScreen(vm, checkNotNull(page.thread),
+                                    isActive = page.key == screenKey,
                                     openWorkspace = { workspacePage = true },
                                     addImage = {
                                         if (Build.VERSION.SDK_INT >= 33) {
@@ -1995,9 +1999,8 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 }
 
 @Composable
-private fun ChatScreen(vm: MobileViewModel, workspaceOpen: Boolean, openWorkspace: () -> Unit,
+private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boolean, openWorkspace: () -> Unit,
     addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
-    val thread = vm.activeThread ?: return
     val context = androidx.compose.ui.platform.LocalContext.current
     val sidebarState = rememberDrawerState(DrawerValue.Closed)
     val sidebarScope = rememberCoroutineScope()
@@ -2054,9 +2057,9 @@ private fun ChatScreen(vm: MobileViewModel, workspaceOpen: Boolean, openWorkspac
     }
     var leftBottom by rememberSaveable(thread.id) { mutableStateOf(false) }
     fun collapse() { expanded = false; focusComposer = false; keyboard?.hide() }
-    BackHandler(expanded && !workspaceOpen) { collapse() }
-    LaunchedEffect(expanded, focusComposer, workspaceOpen) {
-        if (!workspaceOpen && expanded && focusComposer) { focus.requestFocus(); keyboard?.show() }
+    BackHandler(expanded && isActive) { collapse() }
+    LaunchedEffect(expanded, focusComposer, isActive) {
+        if (isActive && expanded && focusComposer) { focus.requestFocus(); keyboard?.show() }
     }
     val enterWorkspace = {
         focusComposer = false
@@ -2438,8 +2441,7 @@ private fun ChatScreen(vm: MobileViewModel, workspaceOpen: Boolean, openWorkspac
 }
 
 @Composable
-private fun WorkspacePage(vm: MobileViewModel, onBack: () -> Unit) {
-    val thread = vm.activeThread ?: return
+private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, onBack: () -> Unit) {
     val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
     var selectedTab by rememberSaveable(thread.id) { mutableIntStateOf(0) }
     var previewPath by rememberSaveable(thread.id, cwd) { mutableStateOf<String?>(null) }

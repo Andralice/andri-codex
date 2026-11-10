@@ -25,7 +25,11 @@ internal val ChatLine.isReasoningSummary: Boolean
 
 // Keep empty protocol items for incoming deltas, but never allocate a visible row for them.
 internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
-    lines.filterNot { it.isReasoningSummary && it.text.isBlank() }
+    lines.filterNot { line ->
+        (line.isReasoningSummary && line.text.isBlank()) ||
+            (line.role == "assistant" && line.text.isBlank() &&
+                line.images.isEmpty() && line.questions.isEmpty())
+    }
 
 /** Fold completed tool/reasoning records into one expandable process row before the final answer. */
 internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {

@@ -115,6 +115,41 @@ class ComposerBehaviorCheck {
         assertEquals(listOf("命令执行"), visibleChatLines(listOf(ChatLine("tool", "", "cmd", stage = "命令执行"))).map { it.stage })
     }
 
+    @Test fun longConversationDoesNotRenderWhitespaceRepliesRetainedByLiveHistoryMerge() {
+        var live = listOf(ChatLine("assistant", "上一轮答复", "previous", "old-turn"))
+        repeat(11) { index ->
+            live = applyChatNotification(live, "item/completed", JSONObject().put("turnId", "old-turn")
+                .put("item", JSONObject().put("id", "blank-$index").put("type", "agentMessage").put("text", " ")))
+        }
+        val prompt = ChatLine("user", "打包并发布", "prompt", "new-turn")
+        live = live + prompt
+        // Server history omits blank replies; live/cache-only items survive reconciliation.
+        val merged = mergeHistory(listOf(live.first(), prompt), live, latestPage = true)
+        assertEquals(13, merged.size)
+        val displayed = foldCompletedProcessLines(visibleChatLines(merged), null, false)
+        assertEquals(listOf("上一轮答复", "打包并发布"), displayed.map { it.text })
+    }
+
+    @Test fun hiddenStreamingPlaceholderAppearsWhenItsTextArrives() {
+        val params = JSONObject().put("turnId", "turn").put("itemId", "reply")
+        var lines = applyChatNotification(emptyList(), "item/started", params.put("item",
+            JSONObject().put("id", "reply").put("type", "agentMessage").put("text", "")))
+        lines = applyChatNotification(lines, "item/agentMessage/delta", params.put("delta", " "))
+        assertTrue(visibleChatLines(lines).isEmpty())
+        assertEquals(" ", lines.single().text)
+        lines = applyChatNotification(lines, "item/agentMessage/delta", params.put("delta", "答复内容"))
+        assertEquals(" 答复内容", visibleChatLines(lines).single().text)
+        assertTrue(lines.single().streaming)
+    }
+
+    @Test fun blankReplyFilteringPreservesImagesQuestionsAndToolCards() {
+        val image = parseChatItem(JSONObject("""{"id":"image","type":"agentMessage","content":[{"type":"image","url":"https://example.com/image.png"}]}"""))!!
+        val question = parseChatItem(JSONObject("""{"id":"question","type":"agentMessage","text":" ","questions":[{"title":"选择项目","options":["安卓","网页"]}]}"""))!!
+        val tool = ChatLine("tool", "", "command", stage = "命令执行")
+        val lines = listOf(ChatLine("assistant", "\n\t ", "blank"), image, question, tool)
+        assertEquals(listOf("image", "question", "command"), visibleChatLines(lines).map { it.id })
+    }
+
     @Test fun reasoningFollowsItsWholeTurnAndKeepsTheFinalAnswerSeparate() {
         fun params() = JSONObject().put("turnId", "long").put("itemId", "r")
         var lines = applyChatNotification(emptyList(), "item/started", params().put("item",
