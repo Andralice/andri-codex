@@ -10,6 +10,8 @@ import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.content.ContentValues
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -164,6 +166,13 @@ class MainActivity : ComponentActivity() {
     private var notificationThreadId by mutableStateOf<String?>(null)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Compose owns safeDrawing/IME insets on every page, including after fullscreen preview.
+        // Keep the window layout stable so the decor view never adds a second system-bar inset.
+        val systemBarColor = LightColors.background.toArgb()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(systemBarColor, systemBarColor),
+            navigationBarStyle = SystemBarStyle.light(systemBarColor, LightColors.onBackground.toArgb())
+        )
         notificationThreadId = intent?.getStringExtra("threadId")
         setContent {
             MaterialTheme(colorScheme = LightColors) {
@@ -2396,16 +2405,9 @@ private fun FullscreenPreviewWindow(enabled: Boolean, window: android.view.Windo
         val statusVisible = insets?.isVisible(statusBars) ?: true
         val navigationVisible = insets?.isVisible(navigationBars) ?: true
         val behavior = controller.systemBarsBehavior
-        val cutoutMode = if (Build.VERSION.SDK_INT >= 28) window.attributes.layoutInDisplayCutoutMode else 0
-        if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
-            layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.hide(statusBars or navigationBars)
         onDispose {
-            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
-            if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = cutoutMode }
             controller.systemBarsBehavior = behavior
             if (statusVisible) controller.show(statusBars) else controller.hide(statusBars)
             if (navigationVisible) controller.show(navigationBars) else controller.hide(navigationBars)
