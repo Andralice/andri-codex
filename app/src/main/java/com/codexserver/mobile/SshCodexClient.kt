@@ -983,8 +983,7 @@ class SshCodexClient(
         sftp.connect(15_000)
         try {
             val resolved = sftp.realpath(candidate)
-            val root = WORKSPACE_ROOT.trimEnd('/')
-            check(resolved.startsWith("$root/")) { "只允许下载工作区内的文件" }
+            check(isReadableWorkspacePath(resolved)) { "只允许下载工作区或大文件区内的文件" }
             val attrs = sftp.lstat(resolved)
             check(attrs.isReg && !attrs.isLink) { "只能下载普通文件" }
             check(attrs.size in 1..MAX_DOWNLOAD_FILE_BYTES) { "文件为空或超过 512 MB" }
@@ -1044,8 +1043,7 @@ class SshCodexClient(
         sftp.connect(15_000)
         try {
             val resolved = sftp.realpath(candidate)
-            val root = WORKSPACE_ROOT.trimEnd('/')
-            check(resolved == root || resolved.startsWith("$root/")) { "只允许读取工作区中的图片" }
+            check(isReadableWorkspacePath(resolved)) { "只允许读取工作区或大文件区中的图片" }
             check(resolved.substringAfterLast('.', "").lowercase() in chatImageExtensions) {
                 "本地图片仅支持 PNG、JPEG、GIF、WebP、BMP、SVG、AVIF、HEIC 或 HEIF 文件"
             }
@@ -1122,8 +1120,7 @@ class SshCodexClient(
         sftp.connect(15_000)
         try {
             val resolved = sftp.realpath(candidate)
-            val root = WORKSPACE_ROOT.trimEnd('/')
-            check(resolved.startsWith("$root/")) { "只允许下载工作区中的视频" }
+            check(isReadableWorkspacePath(resolved)) { "只允许下载工作区或大文件区中的视频" }
             check(resolved.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS) { "文件不是受支持的视频格式" }
             val attrs = sftp.lstat(resolved)
             check(attrs.isReg && !attrs.isLink) { "视频路径不是普通文件" }

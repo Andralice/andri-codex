@@ -42,7 +42,7 @@ internal fun workspacePreviewTarget(value: String, base: String): WorkspacePrevi
     }
     val target = WorkspacePreviewTarget(source, WorkspacePreviewKind.FILE)
     val kind = when {
-        !target.remote && (source.endsWith('/') || source == WORKSPACE_ROOT) -> WorkspacePreviewKind.DIRECTORY
+        !target.remote && (source.endsWith('/') || source in workspaceReadRoots) -> WorkspacePreviewKind.DIRECTORY
         // Keep the browser's existing HTTPS policy for cleartext links.
         source.startsWith("http://", true) -> WorkspacePreviewKind.WEB
         target.extension in chatImageExtensions -> WorkspacePreviewKind.IMAGE

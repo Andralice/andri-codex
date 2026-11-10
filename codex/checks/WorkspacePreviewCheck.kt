@@ -8,6 +8,48 @@ import org.junit.Test
 class WorkspacePreviewCheck {
     private val project = "$WORKSPACE_ROOT/自媒体"
 
+    @Test fun storageImageLinksResolveAndSurvivePreviewNavigation() {
+        val image = "$CODEX_STORAGE_ROOT/云间小味雨夜三十秒/第二轮角色卡/鹿头风衣怪人_第二轮候选.png"
+        for (link in listOf(image, "file://$image", workspaceFileLink(image))) {
+            val target = workspacePreviewTarget(link, project)!!
+            assertEquals(image, target.source)
+            assertEquals(WorkspacePreviewKind.IMAGE, target.kind)
+            assertFalse(target.remote)
+            assertTrue(isReadableWorkspacePath(target.source))
+            assertEquals(target, workspacePreviewTarget(target.navigationLink, project))
+            assertEquals(listOf(image), markdownImageDestinations("[鹿头风衣怪人]($link)"))
+        }
+    }
+
+    @Test fun storageDocumentsResolveRelativeImagesVideosAndParentDirectories() {
+        val folder = "$CODEX_STORAGE_ROOT/作品/角色卡"
+        val document = workspacePreviewTarget("$folder/索引.md", project)!!
+        assertEquals(WorkspacePreviewKind.FILE, document.kind)
+        for ((link, kind) in mapOf("图%201.png" to WorkspacePreviewKind.IMAGE,
+            "../成品.mp4" to WorkspacePreviewKind.VIDEO, "../文稿.md" to WorkspacePreviewKind.FILE,
+            "../" to WorkspacePreviewKind.DIRECTORY)) {
+            val target = workspacePreviewTarget(link, document.linkBase)!!
+            assertEquals(kind, target.kind)
+            assertTrue(isReadableWorkspacePath(target.source))
+            assertEquals(target, workspacePreviewTarget(target.navigationLink, project))
+        }
+        assertEquals("$folder/图 1.png", workspacePreviewTarget("图%201.png", document.linkBase)?.source)
+        assertEquals(WorkspacePreviewKind.DIRECTORY, workspacePreviewTarget(CODEX_STORAGE_ROOT, project)?.kind)
+    }
+
+    @Test fun storageReadPolicyRejectsSiblingDirectoriesAndTraversalOutsideAllowedRoots() {
+        for (path in listOf("/etc/passwd", "/mnt/codex-storage-backup/图.png", "$CODEX_STORAGE_ROOT/../图.png",
+            "$CODEX_STORAGE_ROOT/../../etc/passwd", "$CODEX_STORAGE_ROOT/图\u0000.png", "codex/图.png")) {
+            assertFalse(path, isReadableWorkspacePath(path))
+        }
+        for (link in listOf("$CODEX_STORAGE_ROOT/../图.png", "/mnt/codex-storage-backup/图.png",
+            "file://other-host$CODEX_STORAGE_ROOT/图.png", "%2e%2e/%2e%2e/etc/passwd")) {
+            assertNull(link, workspacePreviewTarget(link, CODEX_STORAGE_ROOT))
+        }
+        assertTrue(isReadableWorkspacePath("$CODEX_STORAGE_ROOT/子目录/../图.png"))
+        assertTrue(isReadableWorkspacePath("$WORKSPACE_ROOT/自媒体/codex/图.png"))
+    }
+
     @Test fun inlineChatImagesRemainImagesAcrossPreviewNavigation() {
         val source = "data:image/png;base64,aGVsbG8="
         val target = workspacePreviewTarget(source, project)!!

@@ -30,7 +30,7 @@ private fun workspacePathFromLink(uri: URI, baseDirectory: String?): String? {
         baseDirectory.trimEnd('/') + "/" + path
     }
     val normalized = Paths.get(absolute).normalize().toString()
-    if (normalized != WORKSPACE_ROOT && !normalized.startsWith("$WORKSPACE_ROOT/")) return null
+    if (!isReadableWorkspacePath(normalized)) return null
     return if (path.endsWith('/')) "$normalized/" else normalized
 }
 
