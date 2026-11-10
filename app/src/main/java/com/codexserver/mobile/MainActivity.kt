@@ -29,6 +29,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -59,6 +62,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.key.*
@@ -287,18 +291,19 @@ class MainActivity : ComponentActivity() {
                         save = { sources -> sources.filterNot { it.startsWith("data:image/", true) } },
                         restore = { it }
                     )) { mutableStateOf(emptyList<String>()) }
-                var previewRequest by rememberSaveable(vm.activeId) { mutableIntStateOf(0) }
+                var workspaceTab by rememberSaveable(vm.activeId) { mutableIntStateOf(0) }
                 val openWorkspaceLink: (String, String) -> Unit = { link, base ->
                     val target = workspacePreviewTarget(link, base)
                     if (target == null) android.widget.Toast.makeText(this@MainActivity, "无法打开此链接", android.widget.Toast.LENGTH_SHORT).show()
                     else {
                         if (previewSources.lastOrNull() != target.navigationLink) previewSources = (previewSources + target.navigationLink).takeLast(40)
-                        previewRequest++
+                        workspaceTab = 5
                         workspacePage = true
                     }
                 }
                 BackHandler(enabled = vm.activeId != null) {
-                    if (workspacePage) workspacePage = false else vm.back()
+                    if (workspacePage && workspaceTab == 5 && previewSources.size > 1) previewSources = previewSources.dropLast(1)
+                    else if (workspacePage) workspacePage = false else vm.back()
                 }
                 val destination = when {
                     !vm.connected && vm.connecting && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
@@ -308,6 +313,8 @@ class MainActivity : ComponentActivity() {
                     workspacePage -> "workspace"
                     else -> "chat"
                 }
+                val fullscreenPreview = destination == "workspace" && workspaceTab == 5 && previewSources.isNotEmpty()
+                FullscreenPreviewWindow(fullscreenPreview, window)
                 val mainScreen = MainScreen(destination, vm.activeThread)
                 val screenKey = mainScreen.key
                 LaunchedEffect(screenKey, vm.foregroundGeneration, vm.connected, vm.threads.size) {
@@ -324,7 +331,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                    Box(Modifier.fillMaxSize().then(if (fullscreenPreview) Modifier else Modifier.safeDrawingPadding().imePadding())) {
                         AnimatedContent(
                             targetState = mainScreen,
                             contentKey = { it.key },
@@ -378,10 +385,10 @@ class MainActivity : ComponentActivity() {
                                 screen == "thread-list" -> ThreadListScreen(vm)
                                 screen == "thread-loading" -> ThreadLoadingScreen(vm)
                                 screen == "workspace" -> chatState.SaveableStateProvider(page.key) {
-                                    WorkspacePage(vm, checkNotNull(page.thread), previewSources, previewRequest,
-                                        onOpenLink = openWorkspaceLink,
+                                    WorkspacePage(vm, checkNotNull(page.thread), previewSources, workspaceTab,
+                                        onSelectTab = { workspaceTab = it }, onOpenLink = openWorkspaceLink,
                                         onPreviewBack = { previewSources = previewSources.dropLast(1) },
-                                        onClosePreview = { previewSources = emptyList() },
+                                        onClosePreview = { previewSources = emptyList(); workspaceTab = 4 },
                                         onBack = { workspacePage = false })
                                 }
                                 else -> chatState.SaveableStateProvider(page.key) { ChatScreen(vm, checkNotNull(page.thread),
@@ -1041,6 +1048,9 @@ private fun WorkspaceBrowser(
         WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
@@ -2376,20 +2386,48 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
 }
 
 @Composable
-private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSources: List<String>, previewRequest: Int,
-    onOpenLink: (String, String) -> Unit, onPreviewBack: () -> Unit, onClosePreview: () -> Unit, onBack: () -> Unit) {
-    val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
-    var selectedTab by rememberSaveable(thread.id) { mutableIntStateOf(0) }
-    var handledPreviewRequest by rememberSaveable(thread.id) { mutableIntStateOf(-1) }
-    val preview = previewSources.lastOrNull()?.let { workspacePreviewTarget(it, cwd) }
-    LaunchedEffect(previewRequest) {
-        if (handledPreviewRequest != previewRequest) {
-            if (preview != null) selectedTab = 5
-            handledPreviewRequest = previewRequest
+private fun FullscreenPreviewWindow(enabled: Boolean, window: android.view.Window) {
+    DisposableEffect(enabled, window) {
+        if (!enabled) return@DisposableEffect onDispose { }
+        val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        val insets = androidx.core.view.ViewCompat.getRootWindowInsets(window.decorView)
+        val statusBars = androidx.core.view.WindowInsetsCompat.Type.statusBars()
+        val navigationBars = androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+        val statusVisible = insets?.isVisible(statusBars) ?: true
+        val navigationVisible = insets?.isVisible(navigationBars) ?: true
+        val behavior = controller.systemBarsBehavior
+        val cutoutMode = if (Build.VERSION.SDK_INT >= 28) window.attributes.layoutInDisplayCutoutMode else 0
+        if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(statusBars or navigationBars)
+        onDispose {
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
+            if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = cutoutMode }
+            controller.systemBarsBehavior = behavior
+            if (statusVisible) controller.show(statusBars) else controller.hide(statusBars)
+            if (navigationVisible) controller.show(navigationBars) else controller.hide(navigationBars)
         }
     }
+}
+
+@Composable
+private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSources: List<String>, selectedTab: Int,
+    onSelectTab: (Int) -> Unit, onOpenLink: (String, String) -> Unit, onPreviewBack: () -> Unit,
+    onClosePreview: () -> Unit, onBack: () -> Unit) {
+    val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
+    val preview = previewSources.lastOrNull()?.let { workspacePreviewTarget(it, cwd) }
     val browserState = rememberSaveableStateHolder()
     val previewState = rememberSaveableStateHolder()
+    if (selectedTab == 5 && preview != null) {
+        previewState.SaveableStateProvider(preview.source) {
+            WorkspaceLinkPreview(vm, preview, previewSources.size > 1, onOpenLink, onPreviewBack,
+                onClose = onClosePreview, onReturnToChat = onBack, modifier = Modifier.fillMaxSize())
+        }
+        return
+    }
     var filesRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     var diffRequested by remember(cwd, vm.connected) { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -2429,7 +2467,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
             listOf(5 to ("预览" to "eye"), 4 to ("侧边聊天" to "chat"), 0 to ("文件" to "folder"),
                 1 to ("改动" to "code"), 2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
                 val (label, icon) = tab
-                FilterChip(selected = selectedTab == index, onClick = { selectedTab = index }, label = { Text(label) }, leadingIcon = {
+                FilterChip(selected = selectedTab == index, onClick = { onSelectTab(index) }, label = { Text(label) }, leadingIcon = {
                     LineIcon(icon, Modifier.size(17.dp))
                 })
             }
@@ -2525,9 +2563,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
                 val target = if (media.source.startsWith("/")) workspaceFileLink(media.source) else media.source
                 onOpenLink(target, cwd)
             })
-            5 -> if (preview == null) WorkspaceEmptyCard("点击聊天里的链接，在这里阅读文件、浏览网页或预览图片和视频。")
-                else previewState.SaveableStateProvider(preview.source) { WorkspaceLinkPreview(vm, preview, previewSources.size > 1,
-                    onOpenLink, onPreviewBack, onClose = { onClosePreview(); selectedTab = 4 }, modifier = Modifier.weight(1f)) }
+            5 -> WorkspaceEmptyCard("点击聊天里的链接，在这里全屏阅读文件、浏览网页或预览图片和视频。")
             else -> WorkspaceSideChat(vm, thread.id, Modifier.weight(1f), onOpenLink = { onOpenLink(it, cwd) })
         }
     }
@@ -2535,10 +2571,27 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
 
 @Composable
 private fun WorkspaceLinkPreview(vm: MobileViewModel, target: WorkspacePreviewTarget, canGoBack: Boolean,
-    onOpenLink: (String, String) -> Unit, onBack: () -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth()) {
+    onOpenLink: (String, String) -> Unit, onBack: () -> Unit, onClose: () -> Unit,
+    onReturnToChat: () -> Unit, modifier: Modifier = Modifier) {
+    val back = if (canGoBack) onBack else onReturnToChat
+    if (target.kind == WorkspacePreviewKind.IMAGE) {
+        Box(modifier.fillMaxSize().background(Color.Black)) {
+            ChatImageSource(target.source, vm, target.linkBase, galleryPage = true)
+            Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding().padding(8.dp)
+                .background(Color.Black.copy(alpha = .5f), RoundedCornerShape(16.dp)),
+                verticalAlignment = Alignment.CenterVertically) {
+                IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回聊天" }) {
+                    LineIcon("back", color = Color.White)
+                }
+                Text(target.name, Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClose, modifier = Modifier.semantics { contentDescription = "关闭预览" }) { LineIcon("close", color = Color.White) }
+            }
+        }
+        return
+    }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (canGoBack) IconButton(onBack, modifier = Modifier.semantics { contentDescription = "返回上一个预览" }) { LineIcon("back") }
+            IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回聊天" }) { LineIcon("back") }
             Text(target.name, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             TextButton(onClose) { ActionLabel("close", "关闭预览") }
@@ -2547,15 +2600,13 @@ private fun WorkspaceLinkPreview(vm: MobileViewModel, target: WorkspacePreviewTa
         when (target.kind) {
             WorkspacePreviewKind.WEB -> WorkspaceBrowser(target.source, onAdd = null,
                 modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
-            WorkspacePreviewKind.IMAGE -> Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
-                ChatImageSource(target.source, vm, target.linkBase, galleryPage = true)
-            }
             WorkspacePreviewKind.VIDEO -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp)) {
                 if (target.remote) WorkspaceVideoPlayer(target.source)
                 else ChatVideoSource(target.source, vm, target.linkBase)
             }
             WorkspacePreviewKind.FILE -> WorkspaceDocumentPreview(vm, target, onOpenLink, Modifier.weight(1f))
             WorkspacePreviewKind.DIRECTORY -> WorkspaceDirectoryPreview(vm, target, onOpenLink, Modifier.weight(1f))
+            WorkspacePreviewKind.IMAGE -> Unit
         }
     }
 }
@@ -2596,6 +2647,8 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
     var status by remember(target.source) { mutableStateOf("") }
     var attempt by remember(target.source) { mutableIntStateOf(0) }
     var raw by rememberSaveable(target.source) { mutableStateOf(false) }
+    var textZoom by rememberSaveable(target.source) { mutableFloatStateOf(1f) }
+    val textDensity = LocalDensity.current
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isText = target.extension in workspaceTextExtensions || target.name.startsWith('.') || '.' !in target.name
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
@@ -2628,6 +2681,13 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             if (isMarkdown) TextButton({ raw = !raw }) { Text(if (raw) "阅读模式" else "查看源码") }
+            if (isText) {
+                TextButton({ textZoom = (textZoom - .25f).coerceAtLeast(.75f) }, enabled = textZoom > .75f,
+                    modifier = Modifier.semantics { contentDescription = "缩小文字" }) { Text("A−") }
+                TextButton({ textZoom = (textZoom + .25f).coerceAtMost(2.5f) }, enabled = textZoom < 2.5f,
+                    modifier = Modifier.semantics { contentDescription = "放大文字" }) { Text("A+") }
+                if (textZoom != 1f) TextButton({ textZoom = 1f }) { Text("复原") }
+            }
             TextButton({ saveLauncher.launch(target.name) }, enabled = file != null) { ActionLabel("download", "保存到手机") }
             TextButton(onClick = {
                 val cached = file ?: return@TextButton
@@ -2655,11 +2715,13 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
             isText -> {
                 val content = text!!
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
-                        onOpenLink = { onOpenLink(it, target.linkBase) })
-                    else SelectionContainer {
-                        Text(content.text, Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).widthIn(max = 8000.dp),
-                            fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp)
+                    CompositionLocalProvider(LocalDensity provides androidx.compose.ui.unit.Density(textDensity.density, textDensity.fontScale * textZoom)) {
+                        if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
+                            onOpenLink = { onOpenLink(it, target.linkBase) })
+                        else SelectionContainer {
+                            Text(content.text, Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).widthIn(max = 8000.dp),
+                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp)
+                        }
                     }
                     if (content.truncated) Text("文件较长，当前只预览开头部分；保存可获取完整文件。",
                         Modifier.padding(top = 12.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3050,8 +3112,7 @@ private fun ChatImage(
 
     if (bitmap != null && galleryPage) {
         Box(Modifier.fillMaxSize()) {
-            Image((previewBitmap ?: bitmap)!!.asImageBitmap(), contentDescription = "图片预览",
-                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            ZoomablePreviewImage((previewBitmap ?: bitmap)!!, source)
             Column(Modifier.align(Alignment.BottomStart).safeDrawingPadding().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = ::saveOriginal, enabled = !saving) {
@@ -3166,6 +3227,60 @@ private fun ChatImage(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ZoomablePreviewImage(bitmap: Bitmap, source: String) {
+    var transform by remember(source) { mutableStateOf(PreviewImageTransform()) }
+    var viewport by remember(source) { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    fun applyGesture(zoom: Float, pan: Offset, focus: Offset) {
+        transform = transformPreviewImage(transform, zoom, pan.x, pan.y, focus.x, focus.y,
+            viewport.width.toFloat(), viewport.height.toFloat(), bitmap.width.toFloat(), bitmap.height.toFloat())
+    }
+    fun toggleZoom(focus: Offset) {
+        if (transform.scale > 1f) transform = PreviewImageTransform()
+        else applyGesture(3f, Offset.Zero, focus)
+    }
+    Box(Modifier.fillMaxSize().clipToBounds().onSizeChanged {
+        viewport = it
+        applyGesture(1f, Offset.Zero, Offset(it.width / 2f, it.height / 2f))
+    }) {
+        Box(Modifier.fillMaxSize()
+                .pointerInput(source, bitmap) {
+                    detectTapGestures(onDoubleTap = { toggleZoom(it) })
+                }
+                .pointerInput(source, bitmap) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            // At 1x, leave a single-finger swipe to the attachment gallery pager.
+                            if (event.changes.count { it.pressed } > 1 || transform.scale > 1f) {
+                                val focus = event.calculateCentroid(useCurrent = false)
+                                if (focus.x.isFinite() && focus.y.isFinite()) {
+                                    applyGesture(event.calculateZoom(), event.calculatePan(), focus)
+                                    event.changes.forEach { change ->
+                                        if (change.position != change.previousPosition) change.consume()
+                                    }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }) {
+            Image(bitmap.asImageBitmap(), contentDescription = "图片预览，可双指缩放、拖动和双击放大复原",
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = transform.scale
+                    scaleY = transform.scale
+                    translationX = transform.x
+                    translationY = transform.y
+                }, contentScale = ContentScale.Fit)
+        }
+        TextButton(onClick = { toggleZoom(Offset(viewport.width / 2f, viewport.height / 2f)) },
+            modifier = Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(16.dp)
+                .background(Color.Black.copy(alpha = .5f), RoundedCornerShape(12.dp))) {
+            ActionLabel(if (transform.scale > 1f) "refresh" else "plus", if (transform.scale > 1f) "复原" else "放大", Color.White)
         }
     }
 }
@@ -3744,6 +3859,7 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
 @Composable
 private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val textSizePx = with(LocalDensity.current) { 15.sp.toPx() }
     val color = MaterialTheme.colorScheme.onSurface
     val linkColor = MaterialTheme.colorScheme.primary
     val codeBg = MaterialTheme.colorScheme.primaryContainer
@@ -3774,7 +3890,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
     }
     AndroidView(
         factory = { viewContext -> TextView(viewContext).apply {
-            textSize = 15f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSizePx)
             setTextColor(color.toArgb())
             setLineSpacing(0f, 1.45f)
             setTextIsSelectable(true)
@@ -3782,6 +3898,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
             setLinkTextColor(linkColor.toArgb())
         } },
         update = { textView ->
+            textView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSizePx)
             textView.setTextColor(color.toArgb())
             textView.setLinkTextColor(linkColor.toArgb())
             markwon.setMarkdown(textView, filterGfmDisallowedHtml(repairCommonMarkdownSpacing(truncateChatText(value))))
