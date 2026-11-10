@@ -122,13 +122,9 @@ import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.text.method.LinkMovementMethod
-import android.text.Spannable
-import android.text.Spanned
-import android.text.Selection
-import android.text.style.URLSpan
-import android.view.MotionEvent
+import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
-import io.noties.markwon.MarkwonPlugin
+import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.linkify.LinkifyPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
@@ -1185,21 +1181,6 @@ private fun ServerWorkspaceFileLinkDialog(vm: MobileViewModel, path: String, onD
     } }
 }
 
-private fun serverWorkspacePathFromLink(value: String): String? = runCatching {
-    val uri = URI(value)
-    val path = when {
-        uri.host.equals("home", ignoreCase = true) -> "/home" + uri.path.orEmpty()
-        uri.scheme.equals("file", ignoreCase = true) -> uri.path.orEmpty()
-        uri.scheme == null && uri.path?.startsWith("$WORKSPACE_ROOT/") == true -> uri.path
-        else -> return@runCatching null
-    }
-    path.takeIf { it.startsWith("$WORKSPACE_ROOT/") && '\u0000' !in it }
-}.getOrNull()
-
-private fun serverWorkspaceLinkIsDirectory(value: String): Boolean = runCatching {
-    URI(value).path?.endsWith('/') == true
-}.getOrDefault(false)
-
 @Composable
 private fun ServerWorkspaceDirectoryLinkDialog(vm: MobileViewModel, path: String, onDismiss: () -> Unit) {
     LaunchedEffect(path) { vm.loadProjectFiles(path) }
@@ -1927,6 +1908,7 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 @Composable
 private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -> Unit, addFiles: () -> Unit) {
     val thread = vm.activeThread ?: return
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sidebarState = rememberDrawerState(DrawerValue.Closed)
     val sidebarScope = rememberCoroutineScope()
     var serverFileLinkPath by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
@@ -1967,12 +1949,18 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
     val references = vm.contextFor(thread.id)
     var contextDrawerOpen by rememberSaveable(thread.id) { mutableStateOf(false) }
     var webLinkToOpen by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
+    var imageLinkToOpen by rememberSaveable(thread.id) { mutableStateOf<String?>(null) }
     fun openChatLink(url: String) {
-        val serverPath = serverWorkspacePathFromLink(url)
-        if (serverPath != null) {
-            if (serverWorkspaceLinkIsDirectory(url)) serverDirectoryLinkPath = serverPath.trimEnd('/')
-            else serverFileLinkPath = serverPath
-        } else webLinkToOpen = url
+        when (val target = chatLinkTarget(url, thread.cwd.ifBlank { vm.cwd })) {
+            is ChatLinkTarget.Workspace -> {
+                if (target.path.endsWith('/') || target.path == WORKSPACE_ROOT) {
+                    serverDirectoryLinkPath = target.path.trimEnd('/')
+                } else serverFileLinkPath = target.path
+            }
+            is ChatLinkTarget.Image -> imageLinkToOpen = target.url
+            is ChatLinkTarget.Web -> webLinkToOpen = target.url
+            null -> android.widget.Toast.makeText(context, "无法打开此链接", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
     var leftBottom by rememberSaveable(thread.id) { mutableStateOf(false) }
     fun collapse() { expanded = false; focusComposer = false; keyboard?.hide() }
@@ -2330,6 +2318,16 @@ private fun ChatScreen(vm: MobileViewModel, addImage: () -> Unit, addVideo: () -
             vm.addContextReference(title, prompt)
             webLinkToOpen = null
         }, allowContextImport = false)
+    }
+    imageLinkToOpen?.let { url ->
+        Dialog(onDismissRequest = { imageLinkToOpen = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                ChatImageSource(url, vm, thread.cwd.ifBlank { vm.cwd }, galleryPage = true)
+                TextButton(onClick = { imageLinkToOpen = null }, modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding()) {
+                    ActionLabel("close", "关闭", Color.White)
+                }
+            }
+        }
     }
     serverFileLinkPath?.let { path ->
         ServerWorkspaceFileLinkDialog(vm, path) { serverFileLinkPath = null }
@@ -3241,20 +3239,20 @@ private fun AsyncQuestionCard(vm: MobileViewModel, line: ChatLine, latestQuestio
 private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val color = MaterialTheme.colorScheme.onSurface
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val linkColor = MaterialTheme.colorScheme.primary
     val codeBg = MaterialTheme.colorScheme.primaryContainer
     val codeFg = MaterialTheme.colorScheme.primary
-    val markwon = remember(context, color, muted, linkColor, codeBg, codeFg) {
+    val currentOpenLink by rememberUpdatedState(onOpenLink)
+    val markwon = remember(context, codeBg, codeFg) {
         val serif = android.graphics.Typeface.create("serif", android.graphics.Typeface.BOLD)
         Markwon.builder(context)
             .usePlugin(TablePlugin.create(context))
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TaskListPlugin.create(context))
             .usePlugin(LinkifyPlugin.create())
-            .usePlugin(object : io.noties.markwon.AbstractMarkwonPlugin() {
-                override fun beforeSetText(tv: TextView, markdown: Spanned) {
-                    tv.setTextIsSelectable(true)
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                    builder.linkResolver { _, link -> currentOpenLink(link) }
                 }
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder
@@ -3274,26 +3272,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
             setTextColor(color.toArgb())
             setLineSpacing(0f, 1.45f)
             setTextIsSelectable(true)
-            movementMethod = object : LinkMovementMethod() {
-                override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
-                    if (event.action != MotionEvent.ACTION_UP && event.action != MotionEvent.ACTION_DOWN) {
-                        return super.onTouchEvent(widget, buffer, event)
-                    }
-                    val x = (event.x - widget.totalPaddingLeft + widget.scrollX).toInt()
-                    val y = (event.y - widget.totalPaddingTop + widget.scrollY).toInt()
-                    val layout = widget.layout ?: return false
-                    if (x < 0 || y < 0 || y > layout.height) return false
-                    val line = layout.getLineForVertical(y)
-                    val offset = layout.getOffsetForHorizontal(line, x.toFloat())
-                    val span = buffer.getSpans(offset, (offset + 1).coerceAtMost(buffer.length), URLSpan::class.java).firstOrNull()
-                    if (span != null) {
-                        if (event.action == MotionEvent.ACTION_UP) onOpenLink(span.url)
-                        else Selection.setSelection(buffer, buffer.getSpanStart(span), buffer.getSpanEnd(span))
-                        return true
-                    }
-                    return super.onTouchEvent(widget, buffer, event)
-                }
-            }
+            movementMethod = LinkMovementMethod.getInstance()
             setLinkTextColor(linkColor.toArgb())
         } },
         update = { textView ->

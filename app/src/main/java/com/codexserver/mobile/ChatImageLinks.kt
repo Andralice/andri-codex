@@ -1,6 +1,7 @@
 package com.codexserver.mobile
 
 import java.net.URI
+import java.nio.file.Paths
 import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Image
@@ -12,26 +13,59 @@ internal val chatImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "b
 private val chatImageParser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 private val bareImageUrl = Regex("""https://[^\s<>"']+""", RegexOption.IGNORE_CASE)
 
+private fun parseChatLink(value: String): URI? =
+    runCatching { URI(value.replace(" ", "%20")) }.getOrNull()
+
+private fun workspacePathFromLink(uri: URI, baseDirectory: String?): String? {
+    val path = when {
+        uri.scheme.equals("file", true) && (uri.host == null || uri.host.equals("localhost", true)) ->
+            uri.path?.takeIf { it.startsWith('/') }
+        uri.scheme == null && uri.rawAuthority == null -> uri.path
+        uri.scheme == null && uri.host.equals("home", true) -> "/home" + uri.path.orEmpty()
+        else -> null
+    }?.takeIf { it.isNotBlank() && '\u0000' !in it } ?: return null
+
+    val absolute = if (path.startsWith('/')) path else {
+        if (baseDirectory == null) return path
+        baseDirectory.trimEnd('/') + "/" + path
+    }
+    val normalized = Paths.get(absolute).normalize().toString()
+    if (normalized != WORKSPACE_ROOT && !normalized.startsWith("$WORKSPACE_ROOT/")) return null
+    return if (path.endsWith('/')) "$normalized/" else normalized
+}
+
+internal sealed interface ChatLinkTarget {
+    data class Workspace(val path: String) : ChatLinkTarget
+    data class Image(val url: String) : ChatLinkTarget
+    data class Web(val url: String) : ChatLinkTarget
+}
+
+internal fun chatLinkTarget(value: String, baseDirectory: String): ChatLinkTarget? {
+    val uri = parseChatLink(value) ?: return null
+    workspacePathFromLink(uri, baseDirectory)?.let { return ChatLinkTarget.Workspace(it) }
+    if (uri.host == null) return null
+    val url = uri.toASCIIString()
+    return when {
+        uri.scheme.equals("https", true) && isImagePath(uri.path) -> ChatLinkTarget.Image(url)
+        uri.scheme.equals("https", true) || uri.scheme.equals("http", true) -> ChatLinkTarget.Web(url)
+        else -> null
+    }
+}
+
+private fun isImagePath(path: String?): Boolean =
+    path?.substringAfterLast('/')?.substringAfterLast('.', "")?.lowercase() in chatImageExtensions
+
 /** Keep the URL for web images; decode workspace links to paths that SFTP can open. */
 private fun chatImageSource(destination: String, explicitImage: Boolean): String? {
     if (destination.isBlank() || '\u0000' in destination) return null
     if (explicitImage && destination.startsWith("data:image/", true)) return destination
 
-    val uri = runCatching { URI(destination.replace(" ", "%20")) }.getOrNull() ?: return null
-    val path = uri.path?.takeIf { it.isNotBlank() && '\u0000' !in it }
-    fun supportedImagePath(value: String?) =
-        value?.substringAfterLast('/')?.substringAfterLast('.', "")?.lowercase() in chatImageExtensions
-
+    val uri = parseChatLink(destination) ?: return null
     return when {
-        uri.scheme.equals("https", true) -> destination.replace(" ", "%20")
-            .takeIf { explicitImage || supportedImagePath(path) }
+        uri.scheme.equals("https", true) -> uri.toASCIIString()
+            .takeIf { explicitImage || isImagePath(uri.path) }
         uri.scheme.equals("http", true) -> destination.takeIf { explicitImage }
-        uri.scheme.equals("file", true) && (uri.host == null || uri.host.equals("localhost", true)) ->
-            path?.takeIf { it.startsWith("$WORKSPACE_ROOT/") && (explicitImage || supportedImagePath(it)) }
-        uri.scheme == null && uri.rawAuthority == null ->
-            path?.takeIf { (!it.startsWith('/') || it.startsWith("$WORKSPACE_ROOT/")) &&
-                (explicitImage || supportedImagePath(it)) }
-        else -> null
+        else -> workspacePathFromLink(uri, baseDirectory = null)?.takeIf { explicitImage || isImagePath(it) }
     }
 }
 
