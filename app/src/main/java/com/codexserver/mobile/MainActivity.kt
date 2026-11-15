@@ -278,7 +278,7 @@ class MainActivity : ComponentActivity() {
                                         val count = input.read(buffer)
                                         if (count < 0) break
                                         total += count
-                                        check(total <= SshCodexClient.MAX_CHAT_VIDEO_BYTES) { "视频超过 1 GB" }
+                                        check(total <= SshCodexClient.MAX_CHAT_VIDEO_BYTES) { "视频超过 4 GB" }
                                         output.write(buffer, 0, count)
                                     }
                                     check(total > 0) { "视频文件为空" }

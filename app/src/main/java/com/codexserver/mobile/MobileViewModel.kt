@@ -1318,7 +1318,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun importVideo(file: File, label: String) {
         val id = activeId ?: return
-        check(file.isFile && file.length() in 1..SshCodexClient.MAX_CHAT_VIDEO_BYTES) { "视频文件无效或超过 1 GB" }
+        check(file.isFile && file.length() in 1..SshCodexClient.MAX_CHAT_VIDEO_BYTES) { "视频文件无效或超过 4 GB" }
         check(label.substringAfterLast('.', "").lowercase() in SshCodexClient.VIDEO_EXTENSIONS) { "暂不支持该视频格式" }
         videoAttachments[id] = VideoAttachment(file, label.take(100), file.length())
         imageAttachments.remove(id)

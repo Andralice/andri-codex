@@ -175,7 +175,9 @@ internal object TaskRecoveryScheduler {
 internal object CacheMaintenance {
     private const val MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
     private const val MAX_IMAGE_BYTES = 200L * 1024 * 1024
-    private const val MAX_VIDEO_BYTES = 1_100L * 1024 * 1024
+    // Leave headroom for a little more than one maximum-size video, so a 4 GB
+    // download is not removed immediately after it is cached.
+    private const val MAX_VIDEO_BYTES = SshCodexClient.MAX_CHAT_VIDEO_BYTES + 512L * 1024 * 1024
     private const val MAX_FILE_BYTES = 200L * 1024 * 1024
 
     fun trim(cacheDir: File, now: Long = System.currentTimeMillis()) {

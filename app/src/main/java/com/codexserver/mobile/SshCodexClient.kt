@@ -1088,7 +1088,7 @@ class SshCodexClient(
     }
 
     suspend fun uploadWorkspaceVideo(source: File, name: String, baseDirectory: String): String = withContext(Dispatchers.IO) {
-        check(source.isFile && source.length() in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件无效或超过 1 GB" }
+        check(source.isFile && source.length() in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件无效或超过 4 GB" }
         val root = WORKSPACE_ROOT.trimEnd('/')
         val base = baseDirectory.trimEnd('/').ifBlank { root }
         require(base == root || base.startsWith("$root/")) { "当前工作区不在允许的项目目录中" }
@@ -1124,7 +1124,7 @@ class SshCodexClient(
             check(resolved.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS) { "文件不是受支持的视频格式" }
             val attrs = sftp.lstat(resolved)
             check(attrs.isReg && !attrs.isLink) { "视频路径不是普通文件" }
-            check(attrs.size in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件为空或超过 1 GB" }
+            check(attrs.size in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件为空或超过 4 GB" }
             destination.parentFile?.mkdirs()
             var total = 0L
             sftp.get(resolved).use { input -> destination.outputStream().use { output ->
@@ -1133,7 +1133,7 @@ class SshCodexClient(
                     val count = input.read(buffer)
                     if (count < 0) break
                     total += count
-                    check(total <= MAX_CHAT_VIDEO_BYTES) { "视频超过 1 GB" }
+                    check(total <= MAX_CHAT_VIDEO_BYTES) { "视频超过 4 GB" }
                     output.write(buffer, 0, count)
                 }
             } }
@@ -1251,7 +1251,8 @@ class SshCodexClient(
         const val RELEASE_ROOT = "/home/ubuntu/codex/mobile-client/releases/"
         const val MAX_UPDATE_BYTES = 200L * 1024 * 1024
         const val MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
-        const val MAX_CHAT_VIDEO_BYTES = 1024L * 1024 * 1024
+        /** Keep video transfers bounded while allowing large generated videos to be downloaded. */
+        const val MAX_CHAT_VIDEO_BYTES = 4L * 1024 * 1024 * 1024
         const val MAX_SHARED_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_DOWNLOAD_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_GIT_DIFF_BYTES = 512 * 1024
