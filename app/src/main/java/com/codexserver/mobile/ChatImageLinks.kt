@@ -12,6 +12,7 @@ import org.commonmark.parser.Parser
 internal val chatImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif", "svg")
 private val chatImageParser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 private val bareImageUrl = Regex("""https://[^\s<>"']+""", RegexOption.IGNORE_CASE)
+private val bareWorkspaceImagePath = Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""")
 
 private fun parseChatLink(value: String): URI? =
     runCatching { URI(value.replace(" ", "%20")) }.getOrNull()
@@ -94,4 +95,23 @@ internal fun markdownImageDestinations(markdown: String): List<String> {
         }
     })
     return sources.toList()
+}
+
+/** Find image paths written as plain text by a server response. */
+internal fun plainWorkspaceImagePaths(markdown: String, baseDirectory: String): List<String> =
+    bareWorkspaceImagePath.findAll(markdown).mapNotNull { match ->
+        if (isInsideMarkdownCode(markdown, match.range.first)) return@mapNotNull null
+        val raw = match.groupValues[1].trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
+        val target = chatLinkTarget(raw, baseDirectory) as? ChatLinkTarget.Workspace ?: return@mapNotNull null
+        target.path.takeIf { it.substringAfterLast('/').substringAfterLast('.').lowercase() in chatImageExtensions }
+    }.distinct().toList()
+
+internal fun isInsideMarkdownCode(markdown: String, offset: Int): Boolean {
+    var ticks = 0
+    var index = 0
+    while (index < offset) {
+        if (markdown[index] == '`') ticks++
+        index++
+    }
+    return ticks % 2 == 1
 }

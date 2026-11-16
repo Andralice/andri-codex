@@ -2645,6 +2645,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
     val scope = rememberCoroutineScope()
     var file by remember(target.source) { mutableStateOf<File?>(null) }
     var text by remember(target.source) { mutableStateOf<WorkspacePreviewText?>(null) }
+    var html by remember(target.source) { mutableStateOf<String?>(null) }
     var error by remember(target.source) { mutableStateOf("") }
     var status by remember(target.source) { mutableStateOf("") }
     var attempt by remember(target.source) { mutableIntStateOf(0) }
@@ -2652,6 +2653,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
     var textZoom by rememberSaveable(target.source) { mutableFloatStateOf(1f) }
     val textDensity = LocalDensity.current
     val isMarkdown = target.extension in workspaceMarkdownExtensions
+    val isHtml = target.extension in setOf("html", "htm")
     val isText = target.extension in workspaceTextExtensions || target.name.startsWith('.') || '.' !in target.name
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val source = file
@@ -2671,19 +2673,25 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
         error = ""
         file = null
         text = null
+        html = null
         try {
             val cached = if (target.remote) downloadWorkspacePreviewUrl(target.source, File(context.cacheDir, "workspace-files"))
                 else vm.cacheWorkspaceFile(target.source, target.linkBase)
             file = cached
             if (isText) text = withContext(Dispatchers.IO) { readWorkspacePreviewText(cached) }
+            if (isHtml) html = withContext(Dispatchers.IO) {
+                workspaceHtmlDocument(readWorkspaceHtml(cached),
+                    context.assets.open("preview/visualize.css").bufferedReader().use { it.readText() },
+                    context.assets.open("preview/visualize.html").bufferedReader().use { it.readText() })
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { error = failure.message ?: "文件读取失败" }
     }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            if (isMarkdown) TextButton({ raw = !raw }) { Text(if (raw) "阅读模式" else "查看源码") }
-            if (isText) {
+            if (isMarkdown || isHtml) TextButton({ raw = !raw }) { Text(if (raw) (if (isHtml) "网页预览" else "阅读模式") else "查看源码") }
+            if (isText && (!isHtml || raw)) {
                 TextButton({ textZoom = (textZoom - .25f).coerceAtLeast(.75f) }, enabled = textZoom > .75f,
                     modifier = Modifier.semantics { contentDescription = "缩小文字" }) { Text("A−") }
                 TextButton({ textZoom = (textZoom + .25f).coerceAtMost(2.5f) }, enabled = textZoom < 2.5f,
@@ -2714,6 +2722,9 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
                 TextButton({ attempt++ }) { ActionLabel("refresh", "重试") }
             }
             file == null || (isText && text == null) -> LinearProgressIndicator(Modifier.fillMaxWidth())
+            isHtml && !raw -> html?.let { document ->
+                WorkspaceHtmlPreview(document, target, vm, onOpenLink, Modifier.weight(1f))
+            }
             isText -> {
                 val content = text!!
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -3512,24 +3523,41 @@ private fun ChatImageSource(
 
 @Composable
 private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: String, onOpenLink: (String) -> Unit = {}) {
-    val bounded = truncateChatText(markdown)
-    MarkdownMessage(bounded, onOpenLink)
+    val bounded = truncateChatText(visualizationPreviewLinks(markdown))
+    val plainImagePaths = remember(bounded, baseDirectory) { plainWorkspaceImagePaths(bounded, baseDirectory) }
+    val compacted = remember(bounded, plainImagePaths) {
+        compactPlainWorkspaceImagePaths(bounded, plainImagePaths, baseDirectory)
+    }
+    MarkdownMessage(compacted, onOpenLink)
     if (markdown.codePointCount(0, markdown.length) > MAX_MARKDOWN_RENDER_CHARS) {
         Text("内容较长，仅展示前 ${MAX_MARKDOWN_RENDER_CHARS / 1000} 千字符。", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    markdownImageDestinations(bounded).distinct().forEach { destination ->
+    markdownImageDestinations(compacted).distinct().forEach { destination ->
         val target = workspacePreviewTarget(destination, baseDirectory)
         val source = target?.source ?: destination
         key(source) { ChatImageSource(source, vm, baseDirectory,
             onClick = if (source.startsWith("data:image/", true)) null else ({ onOpenLink(target?.navigationLink ?: source) })) }
     }
-    videoAttachmentPaths(bounded).forEach { path ->
+    videoAttachmentPaths(compacted).forEach { path ->
         val target = workspacePreviewTarget(path, baseDirectory)
         if (target?.kind == WorkspacePreviewKind.VIDEO) {
             if (target.remote) WorkspaceVideoPlayer(target.source)
             else ChatVideoSource(target.source, vm, baseDirectory)
         }
+    }
+}
+
+private fun compactPlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
+    if (paths.isEmpty()) return markdown
+    return Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""").replace(markdown) { match ->
+        if (isInsideMarkdownCode(markdown, match.range.first)) return@replace match.value
+        val raw = match.groupValues[1]
+        val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
+        val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path
+            ?.takeIf { it in paths } ?: return@replace match.value
+        val name = path.substringAfterLast('/').ifBlank { "聊天图片" }
+        "[图片附件：$name](${workspaceFileLink(path)})" + raw.removePrefix(trimmed)
     }
 }
 
@@ -3903,7 +3931,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit) {
             textView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSizePx)
             textView.setTextColor(color.toArgb())
             textView.setLinkTextColor(linkColor.toArgb())
-            markwon.setMarkdown(textView, filterGfmDisallowedHtml(repairCommonMarkdownSpacing(truncateChatText(value))))
+            markwon.setMarkdown(textView, filterGfmDisallowedHtml(repairCommonMarkdownSpacing(truncateChatText(visualizationPreviewLinks(value)))))
         }
     )
 }

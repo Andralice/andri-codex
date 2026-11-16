@@ -1,0 +1,3 @@
+visualize.css and visualize.html are the visualization rendering resources from
+OpenAI's installed visualize plugin, version 1.0.91. They provide the base
+styles and browser interactions expected by visualize HTML fragments.
