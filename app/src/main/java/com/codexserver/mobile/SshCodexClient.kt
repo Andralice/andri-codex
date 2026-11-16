@@ -819,6 +819,50 @@ class SshCodexClient(
             ?: error("无法打开 SSH 文件通道")
     }
 
+    /**
+     * Large media transfers must not share the app-server SSH session. That
+     * session can be replaced when the WebSocket reconnects, which would close
+     * an otherwise healthy SFTP transfer halfway through a video.
+     */
+    private fun openDedicatedSftp(): Pair<Session, ChannelSftp> {
+        val jsch = JSch()
+        JSch.setConfig("ssh-ed25519", "com.jcraft.jsch.bc.SignatureEd25519")
+        JSch.setConfig("keypairgen.eddsa", "com.jcraft.jsch.bc.KeyPairGenEdDSA")
+        val knownHost = if (port == 22) host else "[$host]:$port"
+        jsch.setKnownHosts(ByteArrayInputStream(
+            (knownHost + " ssh-ed25519 " + PINNED_HOST_KEY + "\n").toByteArray(Charsets.UTF_8)
+        ))
+        jsch.addIdentity(
+            "codex-video-download", privateKey.toByteArray(Charsets.UTF_8), null,
+            passphrase.takeIf { it.isNotEmpty() }?.toByteArray(Charsets.UTF_8)
+        )
+        val transferSession = jsch.getSession(username, host, port).apply {
+            setConfig("StrictHostKeyChecking", "yes")
+            setConfig("PreferredAuthentications", "publickey")
+            setConfig("server_host_key", "ssh-ed25519")
+            // Keepalive packets keep a slow transfer alive without applying a
+            // short socket read timeout to a large file.
+            serverAliveInterval = 20_000
+            serverAliveCountMax = 3
+            timeout = 0
+        }
+        try {
+            transferSession.connect(15_000)
+            val sftp = (transferSession.openChannel("sftp") as? ChannelSftp)
+                ?: error("无法打开独立视频文件通道")
+            try {
+                sftp.connect(15_000)
+                return transferSession to sftp
+            } catch (error: Exception) {
+                sftp.disconnect()
+                throw error
+            }
+        } catch (error: Exception) {
+            transferSession.disconnect()
+            throw error
+        }
+    }
+
     private fun readGlobalInstructionsFile(sftp: ChannelSftp, path: String): String? {
         val attrs = try { sftp.lstat(path) } catch (e: com.jcraft.jsch.SftpException) {
             if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) return null else throw e
@@ -1116,33 +1160,50 @@ class SshCodexClient(
     suspend fun downloadWorkspaceVideo(path: String, baseDirectory: String, destination: File): String = withContext(Dispatchers.IO) {
         require(path.isNotBlank() && '\u0000' !in path) { "视频路径无效" }
         val candidate = if (path.startsWith("/")) path else baseDirectory.trimEnd('/') + "/" + path
-        val sftp = openSftp()
-        sftp.connect(15_000)
-        try {
-            val resolved = sftp.realpath(candidate)
-            check(isReadableWorkspacePath(resolved)) { "只允许下载工作区或大文件区中的视频" }
-            check(resolved.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS) { "文件不是受支持的视频格式" }
-            val attrs = sftp.lstat(resolved)
-            check(attrs.isReg && !attrs.isLink) { "视频路径不是普通文件" }
-            check(attrs.size in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件为空或超过 4 GB" }
-            destination.parentFile?.mkdirs()
-            var total = 0L
-            sftp.get(resolved).use { input -> destination.outputStream().use { output ->
-                val buffer = ByteArray(128 * 1024)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    check(total <= MAX_CHAT_VIDEO_BYTES) { "视频超过 4 GB" }
-                    output.write(buffer, 0, count)
+        destination.parentFile?.mkdirs()
+        var lastFailure: Exception? = null
+        repeat(MAX_VIDEO_DOWNLOAD_ATTEMPTS) { attempt ->
+            currentCoroutineContext().ensureActive()
+            var transferSession: Session? = null
+            var sftp: ChannelSftp? = null
+            try {
+                val opened = openDedicatedSftp()
+                transferSession = opened.first
+                sftp = opened.second
+                val resolved = sftp.realpath(candidate)
+                check(isReadableWorkspacePath(resolved)) { "只允许下载工作区或大文件区中的视频" }
+                check(resolved.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS) { "文件不是受支持的视频格式" }
+                val attrs = sftp.lstat(resolved)
+                check(attrs.isReg && !attrs.isLink) { "视频路径不是普通文件" }
+                check(attrs.size in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件为空或超过 4 GB" }
+                val existing = destination.length()
+                check(existing <= attrs.size) { "本地视频临时文件大于服务器文件" }
+                if (existing == attrs.size) return@withContext resolved.substringAfterLast('/')
+
+                if (existing > 0L) {
+                    // Keep the partial file and resume from its current length
+                    // after a transient SSH/SFTP failure.
+                    FileOutputStream(destination, true).use { output ->
+                        sftp.get(resolved, output, null, ChannelSftp.RESUME, existing)
+                    }
+                } else {
+                    destination.outputStream().use { output ->
+                        sftp.get(resolved, output)
+                    }
                 }
-            } }
-            check(total == attrs.size) { "视频下载不完整" }
-            resolved.substringAfterLast('/')
-        } catch (error: Exception) {
-            destination.delete()
-            throw error
-        } finally { sftp.disconnect() }
+                check(destination.length() == attrs.size) { "视频下载不完整" }
+                return@withContext resolved.substringAfterLast('/')
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                lastFailure = error
+                if (attempt + 1 < MAX_VIDEO_DOWNLOAD_ATTEMPTS) delay((attempt + 1) * 1_000L)
+            } finally {
+                sftp?.disconnect()
+                transferSession?.disconnect()
+            }
+        }
+        throw lastFailure ?: IOException("视频下载失败")
     }
 
     private fun ensureSftpDirectory(sftp: ChannelSftp, path: String) {
@@ -1253,6 +1314,7 @@ class SshCodexClient(
         const val MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
         /** Keep video transfers bounded while allowing large generated videos to be downloaded. */
         const val MAX_CHAT_VIDEO_BYTES = 4L * 1024 * 1024 * 1024
+        private const val MAX_VIDEO_DOWNLOAD_ATTEMPTS = 3
         const val MAX_SHARED_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_DOWNLOAD_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_GIT_DIFF_BYTES = 512 * 1024
