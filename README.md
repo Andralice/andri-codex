@@ -1,6 +1,6 @@
 # Andri Android
 
-通过 SSH 操作 82 上 Codex 的 Andri Android 原生客户端，当前源码版本为 0.1.62（versionCode 63），最低 Android 8.0。
+通过 SSH 操作 82 上 Codex 的 Andri Android 原生客户端，当前源码版本为 0.1.63（versionCode 64），最低 Android 8.0。
 
 ## 安装和连接
 
@@ -123,6 +123,8 @@ Android 通常禁止旧 versionCode 覆盖新版；历史原包可以下载并�
 服务器 release 密钥已配置，无需再次生成。打包 ZIP 运行 `codex/build-release.sh`；发布到自动更新目录运行 `codex/publish-server-update.sh`。ZIP 内的 APK 可用于手动安装；同一证书签名且 versionCode 递增的版本也可通过应用自动更新。若上架 Google Play，应另行使用 Play App Signing。
 
 可用 `ANDRI_RELEASE_OUT_DIR` 指定 ZIP、安装说明和校验文件的输出目录；服务器大文件产物优先写入已核验挂载可用的远端存储。此参数不改变 APK 构建目录或自动更新发布目录。
+
+Linux 打包脚本还需要 Python 3 和系统 ICU 库。打包时会导出检查用类路径，再通过 `codex/checks/regex_icu_check.py` 验证编译后的可视化预览及图片路径正则是否兼容 ICU；失败时不生成发布 ZIP，避免只在桌面 Java 上通过的正则被发布。
 
 检查脚本位于 codex/checks。当前 Windows/JDK 17 对中文路径的 Gradle 测试 worker 参数文件存在编码问题，因此使用以下脚本编译检查后直接运行 JUnit：
 

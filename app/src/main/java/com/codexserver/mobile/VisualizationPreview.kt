@@ -4,7 +4,8 @@ import java.io.File
 import java.net.URI
 import org.json.JSONObject
 
-private val visualizationToken = Regex("\uE200visualize\uE202(\\{[^\\r\\n]*?})\uE201")
+// Android's ICU rejects an unescaped closing brace even though desktop Java accepts it.
+private val visualizationToken = Regex("\uE200visualize\uE202(\\{[^\\r\\n]*?\\})\uE201")
 private val markdownCodeOrPreview = Regex(
     "(?m)^ {0,3}(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?(?:^ {0,3}\\1[ \\t]*$|\\z)|(`+)[\\s\\S]*?\\2|${visualizationToken.pattern}"
 )

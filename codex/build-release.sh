@@ -11,7 +11,8 @@ OUT_DIR="${ANDRI_RELEASE_OUT_DIR:-$PROJECT_ROOT/codex}"
 RELEASE_NOTES_FILE="${1:-}"
 
 cd "$PROJECT_ROOT"
-./gradlew assembleRelease --no-daemon --max-workers=1
+./gradlew assembleRelease :app:exportCheckClasspath --no-daemon --max-workers=1
+python3 "$PROJECT_ROOT/codex/checks/regex_icu_check.py"
 test -x "$APK_SIGNER"
 test -f "$APK"
 mkdir -p "$OUT_DIR"
