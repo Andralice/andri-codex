@@ -22,6 +22,13 @@ data class ExecutionOptions(val cwd: String, val mode: ExecutionMode = Execution
     }
 }
 
+internal fun resolveThreadExecution(
+    current: ExecutionOptions?,
+    saved: ExecutionOptions?,
+    threadCwd: String?,
+    defaults: ExecutionOptions
+): ExecutionOptions = current ?: saved ?: defaults.copy(cwd = threadCwd?.takeIf { it.isNotBlank() } ?: defaults.cwd)
+
 internal fun executionOptions(result: JSONObject, fallback: ExecutionOptions): ExecutionOptions {
     val access = result.optJSONObject("sandboxPolicy")?.text("type").orEmpty()
         .ifBlank { result.optJSONObject("sandbox")?.text("type").orEmpty().ifBlank { result.text("sandbox") } }

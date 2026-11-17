@@ -347,11 +347,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-    fun projectFor(id: String): String = projectNameForPath(
-        savedExecution(id)?.cwd?.takeIf { it.isNotBlank() }
-            ?: threads.firstOrNull { it.id == id }?.cwd?.takeIf { it.isNotBlank() }
-            ?: threadExecution[id]?.cwd.orEmpty()
+    fun executionFor(id: String): ExecutionOptions = resolveThreadExecution(
+        threadExecution[id], savedExecution(id), threads.firstOrNull { it.id == id }?.cwd,
+        ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
     )
+
+    fun projectFor(id: String): String = projectNameForPath(executionFor(id).cwd)
 
     fun isPinned(id: String): Boolean = pinnedThreadIds[id]
         ?: settings.getBoolean("thread.$id.pinned", false)
@@ -404,7 +405,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         settings.edit().putStringSet("thread.$threadId.autoStartQueueIds", ids).apply()
     }
     val currentExecution: ExecutionOptions
-        get() = activeId?.let { threadExecution[it] ?: savedExecution(it) } ?: ExecutionOptions(activeThread?.cwd?.ifBlank { cwd } ?: cwd, defaultMode, defaultReasoningEffort)
+        get() = activeId?.let(::executionFor) ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
     val approvalPolicy: String get() = currentExecution.mode.policy
     val approvalsReviewer: String get() = currentExecution.mode.reviewer
     val sandbox: String get() = currentExecution.mode.sandbox

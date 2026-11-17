@@ -869,14 +869,20 @@ private fun ContextDrawer(
                     Text("任务工作区", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     MutedText("集中管理本次任务的网页、文件、附件和代码改动。")
                 }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp).semantics {
+                    contentDescription = "关闭任务工作区"
+                }) { LineIcon("close", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf("上下文", "服务器文件", "网页", "代码改动").forEachIndexed { index, label ->
-                    FilterChip(selected = selectedTab == index, onClick = {
-                        selectedTab = index
-                        if (index == 1) vm.loadProjectFiles(cwd)
-                        if (index == 3) vm.loadGitDiff()
-                    }, label = { Text(label) })
+            Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    listOf("上下文", "服务器文件", "网页", "代码改动").forEachIndexed { index, label ->
+                        FilterChip(selected = selectedTab == index, onClick = {
+                            selectedTab = index
+                            if (index == 1) vm.loadProjectFiles(cwd)
+                            if (index == 3) vm.loadGitDiff()
+                        }, label = { Text(label) })
+                    }
                 }
             }
             when (selectedTab) {
@@ -1617,8 +1623,14 @@ private fun ThreadListScreen(vm: MobileViewModel) {
                 }
                 Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { AppMenu(vm) }
             }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("对话", fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.5).sp, modifier = Modifier.weight(1f))
+                Text("${matchingRows.size} 个会话", fontSize = 12.sp, color = colors.onSurfaceVariant)
+            }
             Surface(Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, colors.outlineVariant)) {
                 Column {
                     AnimatedVisibility(searchExpanded, enter = fadeIn(tween(140)) + expandVertically(),
@@ -1679,8 +1691,8 @@ private fun ThreadListScreen(vm: MobileViewModel) {
 
             LazyColumn(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned {
                 if (layoutReported.compareAndSet(false, true)) vm.recordScreenFrame("thread-list-layout")
-            }, contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            }, contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 if (rows.isEmpty()) item(key = "thread-empty-state") {
                     if (vm.busy) {
                         Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -1834,10 +1846,12 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
     val taskStatus = vm.lastTaskStatus(thread.id)
 
     Surface(onClick = { vm.openThread(thread.id) },
-        modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-        color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.secondaryContainer else colors.outline)) {
-        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 12.dp),
+        modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(if (active) 14.dp else 0.dp),
+        color = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+        border = if (active) BorderStroke(1.dp, MaterialTheme.colorScheme.secondaryContainer) else null) {
+        Column(Modifier.fillMaxWidth().padding(start = if (active) 14.dp else 2.dp,
+            end = if (active) 14.dp else 2.dp, top = if (active) 6.dp else 10.dp,
+            bottom = if (active) 10.dp else 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1898,6 +1912,7 @@ private fun ThreadListRow(thread: CodexThread, vm: MobileViewModel, active: Bool
             }
         }
     }
+    if (!active) HorizontalDivider(color = colors.outlineVariant)
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text("删除这个会话？") },
         text = { Text("会话将从列表中移除，并在服务器上归档。") },
@@ -2419,7 +2434,7 @@ private fun FullscreenPreviewWindow(enabled: Boolean, window: android.view.Windo
 private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSources: List<String>, selectedTab: Int,
     onSelectTab: (Int) -> Unit, onOpenLink: (String, String) -> Unit, onPreviewBack: () -> Unit,
     onClosePreview: () -> Unit, onBack: () -> Unit) {
-    val cwd = vm.currentExecution.cwd.trimEnd('/').ifBlank { "/" }
+    val cwd = vm.executionFor(thread.id).cwd.trimEnd('/').ifBlank { "/" }
     val preview = previewSources.lastOrNull()?.let { workspacePreviewTarget(it, cwd) }
     val browserState = rememberSaveableStateHolder()
     val previewState = rememberSaveableStateHolder()
@@ -2452,7 +2467,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
             IconButton(onBack, modifier = Modifier.semantics { contentDescription = "返回聊天" }) { LineIcon("back") }
             Column(Modifier.weight(1f)) {
                 Text("工作区", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text(vm.projectFor(thread.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text(projectNameForPath(cwd), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (selectedTab == 0 || selectedTab == 1) {
@@ -2464,14 +2479,17 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(5 to ("预览" to "eye"), 4 to ("侧边聊天" to "chat"), 0 to ("文件" to "folder"),
-                1 to ("改动" to "code"), 2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
-                val (label, icon) = tab
-                FilterChip(selected = selectedTab == index, onClick = { onSelectTab(index) }, label = { Text(label) }, leadingIcon = {
-                    LineIcon(icon, Modifier.size(17.dp))
-                })
+        Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5 to ("预览" to "eye"), 4 to ("侧边聊天" to "chat"), 0 to ("文件" to "folder"),
+                    1 to ("改动" to "code"), 2 to ("浏览器" to "link"), 3 to ("媒体" to "play")).forEach { (index, tab) ->
+                    val (label, icon) = tab
+                    FilterChip(selected = selectedTab == index, onClick = { onSelectTab(index) }, label = { Text(label) }, leadingIcon = {
+                        LineIcon(icon, Modifier.size(17.dp))
+                    })
+                }
             }
         }
         when (selectedTab) {
@@ -2501,20 +2519,21 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
                             }
                             items(listing.children, key = { "dir:$it" }) { name ->
                                 Surface(onClick = { vm.loadProjectFiles(listing.path.trimEnd('/') + "/" + name) },
-                                    enabled = vm.connected, shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                    enabled = vm.connected, shape = RoundedCornerShape(12.dp), color = Color.Transparent,
+                                    border = null) {
                                     Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         LineIcon("folder", Modifier.size(19.dp), MaterialTheme.colorScheme.primary)
                                         Text(name, Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         LineIcon("chevron", Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                 }
                             }
                             items(listing.files, key = { "file:$it" }) { name ->
                                 val path = listing.path.trimEnd('/') + "/" + name
-                                Surface(shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                Surface(shape = RoundedCornerShape(12.dp), color = Color.Transparent,
+                                    border = null) {
                                     Row(Modifier.fillMaxWidth().padding(start = 13.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
                                         verticalAlignment = Alignment.CenterVertically) {
                                         LineIcon("file", Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2530,6 +2549,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
                                         }, enabled = vm.connected,
                                             modifier = Modifier.semantics { contentDescription = "预览 $name" }) { LineIcon("eye", Modifier.size(18.dp)) }
                                     }
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                 }
                             }
                         }
@@ -3526,7 +3546,7 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
     val bounded = truncateChatText(visualizationPreviewLinks(markdown))
     val plainImagePaths = remember(bounded, baseDirectory) { plainWorkspaceImagePaths(bounded, baseDirectory) }
     val compacted = remember(bounded, plainImagePaths) {
-        compactPlainWorkspaceImagePaths(bounded, plainImagePaths, baseDirectory)
+        removePlainWorkspaceImagePaths(bounded, plainImagePaths, baseDirectory)
     }
     MarkdownMessage(compacted, onOpenLink)
     if (markdown.codePointCount(0, markdown.length) > MAX_MARKDOWN_RENDER_CHARS) {
@@ -3539,6 +3559,11 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
         key(source) { ChatImageSource(source, vm, baseDirectory,
             onClick = if (source.startsWith("data:image/", true)) null else ({ onOpenLink(target?.navigationLink ?: source) })) }
     }
+    plainImagePaths.forEach { path ->
+        key("plain-image-attachment:$path") {
+            ChatWorkspaceImageAttachment(path, vm, baseDirectory, onOpenLink)
+        }
+    }
     videoAttachmentPaths(compacted).forEach { path ->
         val target = workspacePreviewTarget(path, baseDirectory)
         if (target?.kind == WorkspacePreviewKind.VIDEO) {
@@ -3548,16 +3573,76 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
     }
 }
 
-private fun compactPlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
+private fun removePlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
     if (paths.isEmpty()) return markdown
-    return Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""").replace(markdown) { match ->
+    val withoutPaths = Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""").replace(markdown) { match ->
         if (isInsideMarkdownCode(markdown, match.range.first)) return@replace match.value
         val raw = match.groupValues[1]
         val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
         val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path
             ?.takeIf { it in paths } ?: return@replace match.value
-        val name = path.substringAfterLast('/').ifBlank { "聊天图片" }
-        "[图片附件：$name](${workspaceFileLink(path)})" + raw.removePrefix(trimmed)
+        raw.removePrefix(trimmed)
+    }
+    return Regex("""(?:手机)?图片\s*[（(]已保存至项目\s*codex/inbox[)）]\s*[：:]?\s*""")
+        .replace(withoutPaths, "")
+}
+
+@Composable
+private fun ChatWorkspaceImageAttachment(
+    path: String,
+    vm: MobileViewModel,
+    baseDirectory: String,
+    onOpenLink: (String) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var expanded by rememberSaveable(path) { mutableStateOf(false) }
+    val fileName = path.substringAfterLast('/').ifBlank { "聊天图片" }
+    val extension = fileName.substringAfterLast('.', "图片").uppercase()
+    Surface(
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().animateContentSize(tween(180))
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ChatImageSource(
+                    workspaceFileLink(path), vm, baseDirectory, compact = true,
+                    onClick = { onOpenLink(workspaceFileLink(path)) },
+                    modifier = Modifier.size(58.dp)
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("图片附件", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("$extension 图片 · 点击查看", fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(if (expanded) "⌃" else "⌄", fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            AnimatedVisibility(expanded, enter = fadeIn(tween(120)) + expandVertically(),
+                exit = fadeOut(tween(100)) + shrinkVertically()) {
+                Column(Modifier.padding(start = 77.dp, end = 12.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SelectionContainer {
+                        Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            fontSize = 10.sp, lineHeight = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("图片路径", path))
+                    }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
+                        ActionLabel("link", "复制路径", iconSize = 13.dp, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
