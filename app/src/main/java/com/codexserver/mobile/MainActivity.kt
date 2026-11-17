@@ -1053,6 +1053,7 @@ private fun WorkspaceBrowser(
     val keyboard = LocalSoftwareKeyboardController.current
     var address by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
     var currentUrl by rememberSaveable(initialUrl) { mutableStateOf("") }
+    var browserOpened by rememberSaveable(initialUrl) { mutableStateOf(initialUrl.isNotBlank()) }
     var title by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -1061,6 +1062,8 @@ private fun WorkspaceBrowser(
     var navigation by remember { mutableIntStateOf(0) }
     val pageView = remember(context) {
         WebView(context).apply {
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS
+            clipToOutline = true
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.setSupportZoom(true)
@@ -1140,14 +1143,16 @@ private fun WorkspaceBrowser(
         if (url == null) error = "请输入有效的 HTTPS 网址"
         else {
             keyboard?.hide()
+            browserOpened = true
             pageView.loadUrl(url)
         }
     }
 
-    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier.fillMaxSize().clipToBounds(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedTextField(address, { address = it }, Modifier.weight(1f), singleLine = true,
-                label = { Text("网页地址") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri,
+                label = { Text("输入网址") }, placeholder = { Text("https://example.com") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri,
                     imeAction = androidx.compose.ui.text.input.ImeAction.Go),
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { openAddress() }))
             Button(onClick = ::openAddress, enabled = address.isNotBlank()) { Text("打开") }
@@ -1162,10 +1167,19 @@ private fun WorkspaceBrowser(
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            AndroidView(factory = { pageView }, modifier = Modifier.fillMaxSize())
-            if (currentUrl.isBlank() && !loading) Text("输入网址，在工作区打开网页。", Modifier.align(Alignment.Center),
-                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+            if (browserOpened) {
+                AndroidView(factory = { pageView }, modifier = Modifier.fillMaxSize().clipToBounds())
+            } else {
+                Column(Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LineIcon("link", Modifier.size(32.dp), MaterialTheme.colorScheme.primary)
+                    Text("打开网页", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("在上方输入网址，点击“打开”。", fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         if (onAdd != null) TextButton(onClick = {
             extracting = true
