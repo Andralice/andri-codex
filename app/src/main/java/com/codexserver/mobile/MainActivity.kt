@@ -2453,7 +2453,7 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, previewSourc
     val browserState = rememberSaveableStateHolder()
     val previewState = rememberSaveableStateHolder()
     if (selectedTab == 5 && preview != null) {
-        previewState.SaveableStateProvider(preview.source) {
+        previewState.SaveableStateProvider(preview.navigationLink) {
             WorkspaceLinkPreview(vm, preview, previewSources.size > 1, onOpenLink, onPreviewBack,
                 onClose = onClosePreview, onReturnToChat = onBack, modifier = Modifier.fillMaxSize())
         }
@@ -2628,7 +2628,7 @@ private fun WorkspaceLinkPreview(vm: MobileViewModel, target: WorkspacePreviewTa
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回聊天" }) { LineIcon("back") }
-            Text(target.name, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
+            Text(target.displayName, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             TextButton(onClose) { ActionLabel("close", "关闭预览") }
         }
@@ -2683,8 +2683,11 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
     var error by remember(target.source) { mutableStateOf("") }
     var status by remember(target.source) { mutableStateOf("") }
     var attempt by remember(target.source) { mutableIntStateOf(0) }
-    var raw by rememberSaveable(target.source) { mutableStateOf(false) }
+    var raw by rememberSaveable(target.navigationLink) { mutableStateOf(target.location != null) }
     var textZoom by rememberSaveable(target.source) { mutableFloatStateOf(1f) }
+    val sourceScroll = rememberScrollState()
+    val sourceHorizontalScroll = rememberScrollState()
+    var sourcePositioned by rememberSaveable(target.navigationLink) { mutableStateOf(false) }
     val textDensity = LocalDensity.current
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isHtml = target.extension in setOf("html", "htm")
@@ -2761,13 +2764,34 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, target: WorkspacePrevi
             }
             isText -> {
                 val content = text!!
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                val sourceOffset = remember(content.text, target.location) {
+                    target.location?.let { workspaceSourceOffset(content.text, it) }
+                }
+                if (target.location != null && sourceOffset == null) Text(
+                    if (content.truncated) "目标行不在当前预览范围内；保存完整文件可查看。"
+                    else "当前文件没有第 ${target.location.line} 行，文件内容可能已更新。",
+                    Modifier.padding(horizontal = 16.dp), fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(sourceScroll).padding(16.dp)) {
                     CompositionLocalProvider(LocalDensity provides androidx.compose.ui.unit.Density(textDensity.density, textDensity.fontScale * textZoom)) {
                         if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
                             onOpenLink = { onOpenLink(it, target.linkBase) })
                         else SelectionContainer {
-                            Text(content.text, Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).widthIn(max = 8000.dp),
-                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp)
+                            Text(content.text, Modifier.fillMaxWidth().horizontalScroll(sourceHorizontalScroll).widthIn(max = 8000.dp),
+                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp,
+                                onTextLayout = { layout ->
+                                    if (sourceOffset != null && !sourcePositioned) {
+                                        sourcePositioned = true
+                                        val line = layout.getLineForOffset(sourceOffset)
+                                        val top = layout.getLineTop(line).roundToInt()
+                                        val left = layout.getCursorRect(sourceOffset).left.roundToInt()
+                                        scope.launch {
+                                            withFrameNanos { }
+                                            sourceScroll.scrollTo(top)
+                                            sourceHorizontalScroll.scrollTo(left)
+                                        }
+                                    }
+                                })
                         }
                     }
                     if (content.truncated) Text("文件较长，当前只预览开头部分；保存可获取完整文件。",

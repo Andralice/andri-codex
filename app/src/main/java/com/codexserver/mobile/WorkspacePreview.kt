@@ -16,15 +16,18 @@ internal val workspaceTextExtensions = setOf(
 internal val workspaceMarkdownExtensions = setOf("md", "markdown", "mdown")
 internal enum class WorkspacePreviewKind { FILE, IMAGE, VIDEO, WEB, DIRECTORY }
 
-internal fun workspaceFileLink(path: String): String = URI(null, null, path, null).toASCIIString()
+internal fun workspaceFileLink(path: String): String = URI(null, null, path, null).toASCIIString().replace(":", "%3A")
 
-internal data class WorkspacePreviewTarget(val source: String, val kind: WorkspacePreviewKind) {
+internal data class WorkspacePreviewTarget(val source: String, val kind: WorkspacePreviewKind,
+    val location: WorkspaceSourceLocation? = null) {
     val remote: Boolean get() = source.startsWith("https://", true) || source.startsWith("http://", true)
     private val inlineImage: Boolean get() = source.startsWith("data:image/", true)
-    val navigationLink: String get() = if (remote || inlineImage) source else workspaceFileLink(source)
+    val navigationLink: String get() = if (remote || inlineImage) source else workspaceFileLink(source) +
+        (location?.let { "#L${it.line}" + (it.column?.let { column -> "C$column" } ?: "") } ?: "")
     val name: String get() = if (inlineImage) "聊天图片" else (if (remote) URI(source).path.orEmpty() else source)
         .trimEnd('/').substringAfterLast('/').ifBlank { "文件" }
     val extension: String get() = name.substringAfterLast('.', "").lowercase()
+    val displayName: String get() = name + (location?.let { ":${it.line}" + (it.column?.let { column -> ":$column" } ?: "") } ?: "")
     val linkBase: String get() = if (remote) source else source.substringBeforeLast('/').ifBlank { "/" }
 }
 
@@ -34,13 +37,15 @@ internal fun workspacePreviewTarget(value: String, base: String): WorkspacePrevi
     val resolved = if (base.startsWith("https://", true) || base.startsWith("http://", true)) {
         runCatching { URI(base).resolve(value.replace(" ", "%20")).toString() }.getOrNull() ?: return null
     } else value
-    val link = chatLinkTarget(resolved, base) ?: return null
+    val reference = workspaceSourceReference(resolved)
+    val link = chatLinkTarget(reference.link, base) ?: return null
     val source = when (link) {
         is ChatLinkTarget.Workspace -> link.path
         is ChatLinkTarget.Image -> link.url
         is ChatLinkTarget.Web -> link.url
     }
-    val target = WorkspacePreviewTarget(source, WorkspacePreviewKind.FILE)
+    val target = WorkspacePreviewTarget(source, WorkspacePreviewKind.FILE,
+        reference.location.takeIf { link is ChatLinkTarget.Workspace })
     val kind = when {
         !target.remote && (source.endsWith('/') || source in workspaceReadRoots) -> WorkspacePreviewKind.DIRECTORY
         // Keep the browser's existing HTTPS policy for cleartext links.
