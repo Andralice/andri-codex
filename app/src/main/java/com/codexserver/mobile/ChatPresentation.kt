@@ -31,20 +31,25 @@ internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
                 line.images.isEmpty() && line.questions.isEmpty())
     }
 
-/** The assistant commentary is a separate level from command/tool details. */
-internal val ChatLine.isProgressCommentary: Boolean
-    get() = role == "assistant"
-
-internal data class ProcessItemGroups(
-    val progress: List<ChatLine>,
-    val commands: List<ChatLine>
+/** Keep contiguous progress commentary together without changing execution order. */
+internal data class ProcessTimelineEntry(
+    val progress: Boolean,
+    val items: List<ChatLine>
 )
 
-internal fun groupProcessItems(items: List<ChatLine>): ProcessItemGroups =
-    ProcessItemGroups(
-        progress = items.filter { it.isProgressCommentary },
-        commands = items.filterNot { it.isProgressCommentary }
-    )
+internal fun processTimelineEntries(items: List<ChatLine>): List<ProcessTimelineEntry> {
+    val entries = mutableListOf<ProcessTimelineEntry>()
+    items.forEach { item ->
+        val progress = item.role == "assistant"
+        if (entries.lastOrNull()?.progress == progress) {
+            val last = entries.removeAt(entries.lastIndex)
+            entries += last.copy(items = last.items + item)
+        } else {
+            entries += ProcessTimelineEntry(progress, listOf(item))
+        }
+    }
+    return entries
+}
 
 /** One expanded answer per turn; preceding commentary and tools share a folded record.
  * Older servers omit phase, so their last non-commentary message is the answer. */

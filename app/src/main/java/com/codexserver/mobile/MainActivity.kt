@@ -3704,8 +3704,7 @@ private const val MAX_LINKED_IMAGE_CACHE_BYTES = 100L * 1024 * 1024
 private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
     val running = line.status == "inProgress" || line.status == "pending"
     var expanded by rememberSaveable(line.id, running) { mutableStateOf(running) }
-    val processGroups = remember(line.processItems) { groupProcessItems(line.processItems) }
-    var progressExpanded by rememberSaveable("${line.id}:progress", running) { mutableStateOf(running) }
+    val processEntries = remember(line.processItems) { processTimelineEntries(line.processItems) }
     val pending = vm.requests.firstOrNull { "request:" + it.opt("id") == line.id }
     val status = when (line.status) {
         "pending" -> "待处理"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
@@ -3738,45 +3737,16 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
             AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                 Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 13.dp, vertical = 8.dp)) {
                     androidx.compose.foundation.text.selection.DisableSelection {
-                        if (processGroups.progress.isNotEmpty() || processGroups.commands.isNotEmpty()) {
+                        if (processEntries.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                if (processGroups.progress.isNotEmpty()) {
-                                    Surface(color = MaterialTheme.colorScheme.surface,
-                                        shape = RoundedCornerShape(11.dp),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                                        Column(Modifier.fillMaxWidth()) {
-                                            Surface(onClick = { progressExpanded = !progressExpanded }, color = Color.Transparent) {
-                                                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                                    Text("进度说明", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
-                                                        color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
-                                                    Text("${processGroups.progress.size} 段", fontSize = 10.5.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
-                                                        rotationZ = if (progressExpanded) 90f else 0f
-                                                    }, MaterialTheme.colorScheme.onSurfaceVariant)
-                                                }
-                                            }
-                                            AnimatedVisibility(progressExpanded,
-                                                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                                                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                                    processGroups.progress.forEachIndexed { index, item ->
-                                                        TimelineProcessItem(item, index + 1, vm, onOpenLink)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (processGroups.commands.isNotEmpty()) {
-                                    Column(Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                                        verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        Text("命令与工具", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        processGroups.commands.forEachIndexed { index, item ->
-                                            TimelineProcessItem(item, index + 1, vm, onOpenLink, collapsible = true)
+                                var commandNumber = 0
+                                processEntries.forEachIndexed { entryIndex, entry ->
+                                    if (entry.progress) {
+                                        TimelineProgressSegment(line.id, entryIndex, entry.items, running, vm, onOpenLink)
+                                    } else {
+                                        entry.items.forEach { item ->
+                                            commandNumber += 1
+                                            TimelineProcessItem(item, commandNumber, vm, onOpenLink, collapsible = true)
                                         }
                                     }
                                 }
@@ -3791,6 +3761,42 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                     }
                     if (pending != null) TextButton({ vm.openPendingRequest(pending.get("id").toString()) }) {
                         Text("处理此问答或审批", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineProgressSegment(turnId: String, entryIndex: Int, items: List<ChatLine>, running: Boolean,
+    vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    val key = "${turnId}:progress:$entryIndex:${items.firstOrNull()?.id.orEmpty()}"
+    var expanded by rememberSaveable(key, running) { mutableStateOf(running) }
+    Surface(color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(11.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth()) {
+            Surface(onClick = { expanded = !expanded }, color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("进度说明", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
+                    Text("${items.size} 段", fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
+                        rotationZ = if (expanded) 90f else 0f
+                    }, MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            AnimatedVisibility(expanded,
+                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                    items.forEachIndexed { index, item ->
+                        TimelineProcessItem(item, index + 1, vm, onOpenLink)
                     }
                 }
             }

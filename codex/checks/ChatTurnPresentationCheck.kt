@@ -92,11 +92,15 @@ class ChatTurnPresentationCheck {
         assertEquals(unscoped, foldCompletedProcessLines(unscoped, null, false))
     }
 
-    @Test fun progressCommentaryGetsItsOwnLevelAboveCommandDetails() {
-        val progress = ChatLine("assistant", "正在检查", "progress", "turn", phase = "commentary")
-        val command = ChatLine("tool", "BUILD SUCCESSFUL", "command", "turn", stage = "命令执行")
-        val groups = groupProcessItems(listOf(progress, command))
-        assertEquals(listOf(progress), groups.progress)
-        assertEquals(listOf(command), groups.commands)
+    @Test fun progressAndCommandsKeepTheirOriginalExecutionOrder() {
+        val firstProgress = ChatLine("assistant", "先检查", "progress-1", "turn", phase = "commentary")
+        val firstProgressContinuation = ChatLine("assistant", "继续检查", "progress-1b", "turn", phase = "commentary")
+        val firstCommand = ChatLine("tool", "检查目录", "command-1", "turn", stage = "命令执行")
+        val secondProgress = ChatLine("assistant", "再修改", "progress-2", "turn", phase = "commentary")
+        val secondCommand = ChatLine("tool", "运行测试", "command-2", "turn", stage = "命令执行")
+        val entries = processTimelineEntries(listOf(firstProgress, firstProgressContinuation, firstCommand, secondProgress, secondCommand))
+        assertEquals(listOf(true, false, true, false), entries.map { it.progress })
+        assertEquals(listOf(listOf("progress-1", "progress-1b"), listOf("command-1"), listOf("progress-2"), listOf("command-2")),
+            entries.map { it.items.map(ChatLine::id) })
     }
 }
