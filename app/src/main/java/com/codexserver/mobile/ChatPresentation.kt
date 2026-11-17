@@ -31,13 +31,22 @@ internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
                 line.images.isEmpty() && line.questions.isEmpty())
     }
 
-/** Keep tool/reasoning details behind one expandable row per turn, including the active turn. */
+/** One expanded answer per turn; preceding commentary and tools share a folded record.
+ * Older servers omit phase, so their last non-commentary message is the answer. */
 internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {
-    fun fold(line: ChatLine): Boolean = line.role == "tool" && line.turnId.isNotBlank()
-    val groups = lines.withIndex().filter { fold(it.value) }.groupBy { it.value.turnId }
-    val firstIndices = groups.mapValues { (_, rows) -> rows.minOf { it.index } }
+    val turns = lines.withIndex().filter { it.value.turnId.isNotBlank() }.groupBy { it.value.turnId }
+    val answers = turns.mapValues { (_, rows) ->
+        val candidates = rows.filter { it.value.role == "assistant" &&
+            (it.value.text.isNotBlank() || it.value.images.isNotEmpty() || it.value.questions.isNotEmpty()) }
+        (candidates.lastOrNull { it.value.phase == "final_answer" }
+            ?: candidates.lastOrNull { it.value.phase != "commentary" })?.index
+    }
+    fun fold(index: Int, line: ChatLine): Boolean = line.turnId.isNotBlank() &&
+        (line.role == "tool" || line.role == "assistant" && line.questions.isEmpty() && answers[line.turnId] != index)
+    val groups = lines.withIndex().filter { fold(it.index, it.value) }.groupBy { it.value.turnId }
+    val firstIndices = groups.mapValues { (_, rows) -> rows.first().index }
     return lines.mapIndexedNotNull { index, line ->
-        if (!fold(line)) line
+        if (!fold(index, line)) line
         else if (firstIndices[line.turnId] == index) ChatLine(
             role = "thought", text = "", id = "thought:${line.turnId}", turnId = line.turnId,
             stage = "执行记录", status = when {
@@ -49,6 +58,11 @@ internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: Stri
         ) else null
     }
 }
+
+/** Called after folding: progress, streaming and interactive questions have no copy action. */
+internal fun assistantReplyCanCopy(line: ChatLine, activeTurnId: String?, threadRunning: Boolean): Boolean =
+    line.role == "assistant" && line.phase != "commentary" && !line.streaming && line.questions.isEmpty() &&
+        line.text.isNotBlank() && !(threadRunning && (activeTurnId.isNullOrBlank() || line.turnId == activeTurnId))
 
 internal fun reasoningSummaryActive(line: ChatLine, activeTurnId: String?): Boolean =
     line.isReasoningSummary && line.turnId.isNotBlank() && line.turnId == activeTurnId
@@ -75,7 +89,8 @@ internal fun applyChatNotification(current: List<ChatLine>, method: String, para
             val existing = current.firstOrNull { it.id == line.id }
             put(line.copy(streaming = line.role == "assistant" && method == "item/started",
                 status = item.text("status").ifBlank { if (method == "item/started") "inProgress" else "completed" },
-                text = if (line.text.isEmpty()) existing?.text.orEmpty() else line.text))
+                text = if (line.text.isEmpty()) existing?.text.orEmpty() else line.text,
+                phase = line.phase.ifBlank { existing?.phase.orEmpty() }))
         }
         "item/agentMessage/delta" -> {
             if (itemId.isBlank()) return current

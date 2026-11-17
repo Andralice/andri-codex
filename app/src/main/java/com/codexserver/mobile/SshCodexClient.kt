@@ -57,7 +57,7 @@ internal suspend fun awaitWorkspaceSettingsConfirmation(updated: Deferred<JSONOb
 data class ChatLine(val role: String, val text: String, val id: String = "", val turnId: String = "",
     val stage: String = "", val afterId: String = "", val streaming: Boolean = false,
     val questions: List<ChatQuestion> = emptyList(), val status: String = "", val images: List<String> = emptyList(),
-    val processItems: List<ChatLine> = emptyList())
+    val processItems: List<ChatLine> = emptyList(), val phase: String = "")
 // turn/start accepts UserInput, not the model provider's ContentItem wire format.
 internal fun userInput(
     prompt: String,
@@ -182,7 +182,7 @@ internal fun parseChatItem(item: JSONObject): ChatLine? {
         val question = questions.optJSONObject(index) ?: return@mapNotNull null
         val options = question.optJSONArray("options") ?: JSONArray()
         ChatQuestion(question.text("title"), (0 until options.length()).map { options.optString(it) })
-    }, images = imageValues)
+    }, images = imageValues, phase = item.text("phase"))
 }
 
 internal fun toolChatLine(item: JSONObject, output: String = "", completed: Boolean = true): ChatLine? {

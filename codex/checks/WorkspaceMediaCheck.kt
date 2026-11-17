@@ -6,6 +6,18 @@ import org.junit.Test
 class WorkspaceMediaCheck {
     private val project = "$WORKSPACE_ROOT/media-check"
 
+    @Test fun mediaTypesAndFormatsAreRecognizableBeforeDownloading() {
+        val video = WorkspaceMedia("https://example.invalid/成品.MP4?token=secret&name=photo.png", true, "成品.MP4")
+        assertEquals("视频", video.typeLabel)
+        assertEquals("MP4", video.formatLabel)
+        val image = WorkspaceMedia("$project/codex/图 1.webp", false, "图 1.webp")
+        assertEquals("图片", image.typeLabel)
+        assertEquals("WEBP", image.formatLabel)
+        assertEquals("JPG", WorkspaceMedia("data:image/jpeg;base64,aGVsbG8=", false, "图片").formatLabel)
+        assertEquals("SVG", WorkspaceMedia("data:image/svg+xml;base64,aGVsbG8=", false, "图片").formatLabel)
+        assertEquals("", WorkspaceMedia("https://example.invalid/download?id=1.mp4", true, "成品").formatLabel)
+    }
+
     @Test fun undownloadedImagesAndRemoteVideosAreListedWithoutLocalFiles() {
         val video = "https://example.invalid/成品.MP4?download=1&sig=test#play"
         val lines = listOf(ChatLine("assistant", "[原视频](<$video>)\n![图片](codex/not-downloaded.png)"))

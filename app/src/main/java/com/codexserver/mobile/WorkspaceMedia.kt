@@ -10,6 +10,17 @@ import org.commonmark.parser.Parser
 
 internal data class WorkspaceMedia(val source: String, val video: Boolean, val label: String) {
     val key: String = mediaSourceHash(source)
+    val typeLabel: String get() = if (video) "视频" else "图片"
+    val formatLabel: String get() {
+        val extension = if (source.startsWith("data:image/", true)) {
+            source.substringAfter('/').substringBefore(';').lowercase().let {
+                when (it) { "jpeg" -> "jpg"; "svg+xml" -> "svg"; else -> it }
+            }
+        } else runCatching { URI(source.replace(" ", "%20")).path.orEmpty()
+            .substringAfterLast('/').substringAfterLast('.', "").lowercase() }.getOrDefault("")
+        return extension.takeIf { it in (if (video) SshCodexClient.VIDEO_EXTENSIONS else chatImageExtensions) }
+            ?.uppercase().orEmpty()
+    }
     val downloadName: String get() = if (source.startsWith("data:image/", true)) {
         val subtype = source.substringAfter("data:image/").substringBefore(';').lowercase()
         "图片." + when (subtype) { "jpeg" -> "jpg"; "svg+xml" -> "svg"; else -> subtype.takeIf { it in chatImageExtensions } ?: "png" }

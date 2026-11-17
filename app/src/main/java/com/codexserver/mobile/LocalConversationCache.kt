@@ -105,7 +105,7 @@ internal class LocalConversationCache(context: Context) {
     private fun encodeLine(line: ChatLine): JSONObject = JSONObject()
         .put("role", line.role).put("text", line.text).put("id", line.id).put("turnId", line.turnId)
         .put("stage", line.stage).put("afterId", line.afterId).put("streaming", line.streaming)
-        .put("status", line.status)
+        .put("status", line.status).put("phase", line.phase)
         .put("questions", JSONArray().apply {
             line.questions.forEach { put(JSONObject().put("title", it.title).put("options", JSONArray(it.options))) }
         })
@@ -130,7 +130,7 @@ internal class LocalConversationCache(context: Context) {
                     }))
                 }
             },
-            status = value.optString("status"),
+            status = value.optString("status"), phase = value.optString("phase"),
             images = buildList { for (index in 0 until images.length()) add(images.optString(index)) },
             processItems = buildList {
                 for (index in 0 until processItems.length()) {
