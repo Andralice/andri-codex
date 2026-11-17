@@ -1058,7 +1058,7 @@ class SshCodexClient(
         val root = WORKSPACE_ROOT.trimEnd('/')
         check(resolved == root || resolved.startsWith("$root/")) { "只能查看工作区中的 Git 改动" }
         val quoted = "'" + resolved.replace("'", "'\\''") + "'"
-        val command = "repo_root=\$(git -C $quoted rev-parse --show-toplevel 2>/dev/null) || { printf '当前目录不属于 Git 仓库：%s\\n请切换到项目目录后重试。\\n' $quoted; exit 2; }; set -e; printf '%s\\n' \"--- Git 仓库：\$repo_root ---\"; git -C \"\$repo_root\" status --short 2>&1; printf '\\n--- 已暂存的改动 ---\\n'; git -C \"\$repo_root\" diff --cached --no-ext-diff --no-color 2>&1; printf '\\n--- 未暂存的改动 ---\\n'; git -C \"\$repo_root\" diff --no-ext-diff --no-color 2>&1"
+        val command = "repo_root=\$(git -C $quoted rev-parse --show-toplevel 2>/dev/null) || { printf '当前目录不属于 Git 仓库：%s\\n请切换到项目目录后重试。\\n' $quoted; exit 2; }; set -e; printf '%s\\n' \"--- Git 仓库：\$repo_root ---\"; git -c core.quotepath=false -C \"\$repo_root\" status --short 2>&1; printf '\\n--- 已暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --cached --no-ext-diff --no-color 2>&1; printf '\\n--- 未暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --no-ext-diff --no-color 2>&1"
         val channel = session?.openChannel("exec") as? ChannelExec ?: error("无法打开 SSH 命令通道")
         try {
             channel.setCommand(command)
@@ -1068,7 +1068,9 @@ class SshCodexClient(
             val input = channel.inputStream
             while (true) {
                 val count = input.read(buffer)
-                if (count < 0) break
+                if (count < 0) {
+                    break
+                }
                 check(output.size() + count <= MAX_GIT_DIFF_BYTES) { "改动内容超过 512 KiB，请缩小审阅范围" }
                 output.write(buffer, 0, count)
             }

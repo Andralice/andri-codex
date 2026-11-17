@@ -43,9 +43,9 @@ class ComposerBehaviorCheck {
         while (visible != burst) { visible = nextStreamText(visible, burst); assertTrue(++frames < 150) }
     }
 
-    @Test fun collapsedComposerReservesItsRaisedPositionAndReadingGap() {
-        assertEquals(160f, chatBottomInset(58f, false))
-        assertTrue(chatBottomInset(58f, false) > 58f + 60f + 18f)
+    @Test fun collapsedComposerReservesOnlyTheVisibleControlAndReadingGap() {
+        assertEquals(98f, chatBottomInset(58f, false))
+        assertTrue(chatBottomInset(58f, false) < chatBottomInset(180f, true))
         assertEquals(106f, chatBottomInset(64f, true))
         assertEquals(222f, chatBottomInset(180f, true))
     }

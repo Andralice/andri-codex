@@ -46,6 +46,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         const val PENDING_SHARED_FILES = "__pending_shared_files__"
     }
     private val settings = application.getSharedPreferences("connection", 0)
+    private val updateReminders = UpdateReminderPolicy(
+        read = { settings.getStringSet("update.remindedVersions", emptySet()).orEmpty().toSet() },
+        write = { settings.edit().putStringSet("update.remindedVersions", it).apply() }
+    )
+    fun shouldRemindUpdate(info: UpdateInfo): Boolean = updateReminders.shouldRemind(info.versionCode)
+    fun markUpdateReminded(info: UpdateInfo) = updateReminders.markReminded(info.versionCode)
     private val conversationCache = LocalConversationCache(application)
     private val workspaceVideoJobs = ConcurrentHashMap<String, Deferred<File>>()
     private var cacheWriteJob: Job? = null
@@ -298,7 +304,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private var foregroundStartedAt = System.nanoTime()
     private var uploadedConnectionTimingId: String? = null
     private fun connectionTime() = System.nanoTime() / 1_000_000
-    private var reconnectOnForeground = settings.getBoolean("autoReconnect", privateKey.isNotBlank())
+    private var reconnectOnForeground by mutableStateOf(settings.getBoolean("autoReconnect", privateKey.isNotBlank()))
+    val recoveringConnection: Boolean get() = !connected && reconnectOnForeground && privateKey.isNotBlank()
     val queueSubmitting = mutableStateListOf<String>()
     val activeThread: CodexThread? get() = threads.firstOrNull { it.id == activeId }
 
@@ -570,8 +577,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     recovery.failed(token, connectionTime())
                     client = null
                     connected = false
-                    error = if (e is TimeoutCancellationException)
-                        "连接超时（45 秒）：" + connectionStageLabel(connectionStage).removeSuffix("…") + "。可重试或打开历史版本。"
+                    error = if (!connectionFailureNeedsAttention(automatic, e)) ""
+                        else if (e is TimeoutCancellationException)
+                            "连接超时（45 秒）：" + connectionStageLabel(connectionStage).removeSuffix("…") + "。可重试或打开历史版本。"
                         else e.message ?: "连接失败"
                     status = "连接失败，可重试或查看历史版本"
                 }
@@ -1795,7 +1803,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openUpdates() { updateDialog = true; checkForUpdate(manual = true) }
+    fun openUpdates() {
+        updateInfo?.let(::markUpdateReminded)
+        updateDialog = true
+        checkForUpdate(manual = true)
+    }
 
     private suspend fun readLiveUpdate(connection: SshCodexClient): UpdateInfo? {
         val info = connection.readUpdateInfo(UPDATE_MANIFEST)
@@ -1808,6 +1820,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (downloadedUpdate?.info?.samePackage(info) == false) clearUpdateFile()
         updateInfo = info
+        if (updateDialog) markUpdateReminded(info)
         updateMessage = "发现新版本 " + info.versionName
         return info
     }
@@ -2313,7 +2326,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         if (event.has("localError")) {
             resetActions()
             flushAllAgentDeltas()
-            (running.keys.toList() + listOfNotNull(activeId)).distinct().forEach { target ->
+            if (!reconnectOnForeground) (running.keys.toList() + listOfNotNull(activeId)).distinct().forEach { target ->
                 reportChatError(event.text("localError"), "SSH 连接中断", target, running[target].orEmpty(), "connectionError:$target")
             }
             cancelUpdates()
@@ -2330,7 +2343,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             sending.clear()
             requests.clear()
             status = "SSH 已断开，正在自动恢复连接"
-            error = event.text("localError")
+            error = if (reconnectOnForeground) "" else event.text("localError")
             scheduleReconnect()
             return
         }

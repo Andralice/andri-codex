@@ -31,8 +31,8 @@ android {
         applicationId = "com.codexserver.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 67
-        versionName = "0.1.66"
+        versionCode = 68
+        versionName = "0.1.67"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -69,6 +69,8 @@ android {
     sourceSets.getByName("test").java.srcDir("../codex/checks")
 }
 tasks.withType<Test>().configureEach {
+    // Checks resolve project fixtures and temporary files from the repository root.
+    workingDir(rootProject.projectDir)
     jvmArgs("-Dfile.encoding=UTF-8")
     maxHeapSize = "256m"
     maxParallelForks = 1

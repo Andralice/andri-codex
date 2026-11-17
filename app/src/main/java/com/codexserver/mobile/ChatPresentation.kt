@@ -18,7 +18,7 @@ internal fun nextStreamText(visible: String, target: String): String {
 }
 
 internal fun chatBottomInset(composerHeight: Float, expanded: Boolean): Float =
-    if (expanded) composerHeight + 18f + 24f else 58f + 60f + 18f + 24f
+    if (expanded) composerHeight + 18f + 24f else 56f + 18f + 24f
 
 internal val ChatLine.isReasoningSummary: Boolean
     get() = role == "tool" && stage == "思考摘要"
@@ -31,17 +31,20 @@ internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
                 line.images.isEmpty() && line.questions.isEmpty())
     }
 
-/** Fold completed tool/reasoning records into one expandable process row before the final answer. */
+/** Keep tool/reasoning details behind one expandable row per turn, including the active turn. */
 internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {
-    fun fold(line: ChatLine): Boolean = line.role == "tool" && line.turnId.isNotBlank() &&
-        (!threadRunning || (activeTurnId?.isNotBlank() == true && line.turnId != activeTurnId))
+    fun fold(line: ChatLine): Boolean = line.role == "tool" && line.turnId.isNotBlank()
     val groups = lines.withIndex().filter { fold(it.value) }.groupBy { it.value.turnId }
     val firstIndices = groups.mapValues { (_, rows) -> rows.minOf { it.index } }
     return lines.mapIndexedNotNull { index, line ->
         if (!fold(line)) line
         else if (firstIndices[line.turnId] == index) ChatLine(
             role = "thought", text = "", id = "thought:${line.turnId}", turnId = line.turnId,
-            stage = "Codex 汇报摘要 · 执行记录 ${groups.getValue(line.turnId).size} 项", status = "completed",
+            stage = "执行记录", status = when {
+                threadRunning && line.turnId == activeTurnId -> "inProgress"
+                else -> groups.getValue(line.turnId).map { it.value.status }
+                    .firstOrNull { it in setOf("failed", "interrupted", "declined") } ?: "completed"
+            },
             processItems = groups.getValue(line.turnId).map { it.value }
         ) else null
     }
