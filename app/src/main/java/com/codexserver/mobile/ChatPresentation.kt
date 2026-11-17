@@ -31,6 +31,21 @@ internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
                 line.images.isEmpty() && line.questions.isEmpty())
     }
 
+/** The assistant commentary is a separate level from command/tool details. */
+internal val ChatLine.isProgressCommentary: Boolean
+    get() = role == "assistant"
+
+internal data class ProcessItemGroups(
+    val progress: List<ChatLine>,
+    val commands: List<ChatLine>
+)
+
+internal fun groupProcessItems(items: List<ChatLine>): ProcessItemGroups =
+    ProcessItemGroups(
+        progress = items.filter { it.isProgressCommentary },
+        commands = items.filterNot { it.isProgressCommentary }
+    )
+
 /** One expanded answer per turn; preceding commentary and tools share a folded record.
  * Older servers omit phase, so their last non-commentary message is the answer. */
 internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {

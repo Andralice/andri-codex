@@ -91,4 +91,12 @@ class ChatTurnPresentationCheck {
         val unscoped = listOf(answer().copy(turnId = ""), answer("other").copy(turnId = ""))
         assertEquals(unscoped, foldCompletedProcessLines(unscoped, null, false))
     }
+
+    @Test fun progressCommentaryGetsItsOwnLevelAboveCommandDetails() {
+        val progress = ChatLine("assistant", "正在检查", "progress", "turn", phase = "commentary")
+        val command = ChatLine("tool", "BUILD SUCCESSFUL", "command", "turn", stage = "命令执行")
+        val groups = groupProcessItems(listOf(progress, command))
+        assertEquals(listOf(progress), groups.progress)
+        assertEquals(listOf(command), groups.commands)
+    }
 }

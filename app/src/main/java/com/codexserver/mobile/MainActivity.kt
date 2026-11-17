@@ -3702,13 +3702,15 @@ private const val MAX_LINKED_IMAGE_CACHE_BYTES = 100L * 1024 * 1024
 
 @Composable
 private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
-    var expanded by rememberSaveable(line.id) { mutableStateOf(false) }
+    val running = line.status == "inProgress" || line.status == "pending"
+    var expanded by rememberSaveable(line.id, running) { mutableStateOf(running) }
+    val processGroups = remember(line.processItems) { groupProcessItems(line.processItems) }
+    var progressExpanded by rememberSaveable("${line.id}:progress", running) { mutableStateOf(running) }
     val pending = vm.requests.firstOrNull { "request:" + it.opt("id") == line.id }
     val status = when (line.status) {
         "pending" -> "待处理"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
         "answered" -> "已回答"; "approved" -> "已批准"; "interrupted" -> "已中断"; "resolved" -> "已处理"; else -> "已完成"
     }
-    val running = line.status == "inProgress" || line.status == "pending"
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(13.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.fillMaxWidth()) {
@@ -3736,32 +3738,45 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
             AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                 Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 13.dp, vertical = 8.dp)) {
                     androidx.compose.foundation.text.selection.DisableSelection {
-                        if (line.processItems.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                line.processItems.forEachIndexed { index, item ->
-                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                            Text(String.format(Locale.ROOT, "%02d", index + 1), fontSize = 10.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = if (item.status == "failed") MaterialTheme.colorScheme.error
-                                                    else MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text(item.stage.ifBlank { if (item.role == "assistant") "进度说明" else "执行步骤" },
-                                                fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (processGroups.progress.isNotEmpty() || processGroups.commands.isNotEmpty()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (processGroups.progress.isNotEmpty()) {
+                                    Surface(color = MaterialTheme.colorScheme.surface,
+                                        shape = RoundedCornerShape(11.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                        Column(Modifier.fillMaxWidth()) {
+                                            Surface(onClick = { progressExpanded = !progressExpanded }, color = Color.Transparent) {
+                                                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                                    Text("进度说明", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
+                                                    Text("${processGroups.progress.size} 段", fontSize = 10.5.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
+                                                        rotationZ = if (progressExpanded) 90f else 0f
+                                                    }, MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
+                                            AnimatedVisibility(progressExpanded,
+                                                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                                                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                                    processGroups.progress.forEachIndexed { index, item ->
+                                                        TimelineProcessItem(item, index + 1, vm, onOpenLink)
+                                                    }
+                                                }
+                                            }
                                         }
-                                        if (item.role == "assistant") {
-                                            val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
-                                            val sources = distinctChatImageSources(item.images, base)
-                                            if (item.text.isNotBlank()) ChatMarkdown(item.text, vm, base, onOpenLink,
-                                                excludedImages = sources.toSet(), selectable = false)
-                                            if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
-                                        } else if (item.isReasoningSummary) {
-                                            if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
-                                        } else if (item.text.isNotBlank()) {
-                                            Text(truncateChatText(item.text) +
-                                                if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
-                                                Modifier.fillMaxWidth(), fontSize = 11.sp, lineHeight = 18.sp,
-                                                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                if (processGroups.commands.isNotEmpty()) {
+                                    Column(Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                                        verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                        Text("命令与工具", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        processGroups.commands.forEachIndexed { index, item ->
+                                            TimelineProcessItem(item, index + 1, vm, onOpenLink)
                                         }
                                     }
                                 }
@@ -3779,6 +3794,35 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(String.format(Locale.ROOT, "%02d", number), fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                color = if (item.status == "failed") MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(item.stage.ifBlank { if (item.role == "assistant") "进度说明" else "执行步骤" },
+                fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (item.role == "assistant") {
+            val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
+            val sources = distinctChatImageSources(item.images, base)
+            if (item.text.isNotBlank()) ChatMarkdown(item.text, vm, base, onOpenLink,
+                excludedImages = sources.toSet(), selectable = false)
+            if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
+        } else if (item.isReasoningSummary) {
+            if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
+        } else if (item.text.isNotBlank()) {
+            Text(truncateChatText(item.text) +
+                if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
+                Modifier.fillMaxWidth(), fontSize = 11.sp, lineHeight = 18.sp,
+                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
