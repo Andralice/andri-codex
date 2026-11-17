@@ -3742,7 +3742,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                                 var commandNumber = 0
                                 processEntries.forEachIndexed { entryIndex, entry ->
                                     if (entry.progress) {
-                                        TimelineProgressSegment(line.id, entryIndex, entry.items, running, vm, onOpenLink)
+                                        TimelineProgressSegment(line.id, entryIndex, entry.items, vm, onOpenLink)
                                     } else {
                                         entry.items.forEach { item ->
                                             commandNumber += 1
@@ -3769,10 +3769,10 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
 }
 
 @Composable
-private fun TimelineProgressSegment(turnId: String, entryIndex: Int, items: List<ChatLine>, running: Boolean,
+private fun TimelineProgressSegment(turnId: String, entryIndex: Int, items: List<ChatLine>,
     vm: MobileViewModel, onOpenLink: (String) -> Unit) {
     val key = "${turnId}:progress:$entryIndex:${items.firstOrNull()?.id.orEmpty()}"
-    var expanded by rememberSaveable(key, running) { mutableStateOf(running) }
+    var expanded by rememberSaveable(key) { mutableStateOf(true) }
     Surface(color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(11.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
