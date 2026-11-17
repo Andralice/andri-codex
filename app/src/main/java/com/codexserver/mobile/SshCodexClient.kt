@@ -764,6 +764,11 @@ class SshCodexClient(
         sftp.connect(15_000)
         try {
             check(sftp.stat(info.apkPath).size == info.sizeBytes) { "更新包大小与清单不一致" }
+            // APKs are relatively large and the default SFTP request window is
+            // conservative, which makes high-latency links look unnecessarily
+            // slow. A larger bounded window keeps the connection responsive
+            // while allowing more reads in flight.
+            sftp.setBulkRequests(64)
             sftp.get(info.apkPath, object : OutputStream() {
                 private var total = 0L
                 override fun write(value: Int) {

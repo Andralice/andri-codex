@@ -30,6 +30,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.io.BufferedOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import android.util.Base64
@@ -2014,9 +2015,25 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (downloadedUpdate?.info?.samePackage(info) == false) clearUpdateFile()
         updateInfo = info
+        restoreCachedUpdate(info)
         if (updateDialog) markUpdateReminded(info)
         updateMessage = "发现新版本 " + info.versionName
         return info
+    }
+
+    /** Restore a verified package left in app-private cache after process recreation. */
+    private suspend fun restoreCachedUpdate(info: UpdateInfo) {
+        if (downloadedUpdate?.info?.samePackage(info) == true && downloadedUpdate?.file?.isFile == true) return
+        val file = File(getApplication<Application>().cacheDir, "updates/update-${info.versionCode}-${info.sha256}.apk")
+        if (!file.isFile) return
+        try {
+            verifyDownloadedUpdate(file, info)
+            downloadedUpdate = DownloadedUpdate(info, file)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            file.delete()
+        }
     }
 
     private fun failUpdate(prefix: String, error: Exception) {
@@ -2049,14 +2066,13 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         if (!connected || updateBusy || updateChecking) return
         updateBusy = true
         updateError = ""
-        clearUpdateFile()
         updateJob = viewModelScope.launch {
             try {
                 downloadedUpdate = downloadCurrentUpdate(
                     File(getApplication<Application>().cacheDir, "updates"),
                     readLatest = { readLiveUpdate(connection) },
                     download = { info, file -> withContext(Dispatchers.IO) {
-                        file.outputStream().use { connection.downloadUpdate(info, it) }
+                        BufferedOutputStream(file.outputStream(), 128 * 1024).use { connection.downloadUpdate(info, it) }
                     } },
                     verify = { file, info -> verifyDownloadedUpdate(file, info) }
                 )
@@ -2091,8 +2107,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         withContext(Dispatchers.IO) {
             check(file.length() == info.sizeBytes) { "更新包下载不完整" }
             check(sha256(file).equals(info.sha256, ignoreCase = true)) { "更新包校验失败" }
+            verifyUpdateApk(getApplication(), file, info, allowHistorical)
         }
-        verifyUpdateApk(getApplication(), file, info, allowHistorical)
     }
 
     fun dismissUpdate() { updateDialog = false }
@@ -2109,7 +2125,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             updateInfo = null
             updateError = ""
             updateMessage = ""
-            clearUpdateFile()
+            // Keep a completed package in cache. It is content-addressed by the
+            // release SHA-256 and will be verified before it can be installed or
+            // reused on the next connection/process.
+            downloadedUpdate = null
         }
     }
 

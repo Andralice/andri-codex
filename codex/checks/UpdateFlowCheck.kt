@@ -49,6 +49,27 @@ class UpdateFlowCheck {
         } finally { directory.deleteRecursively() }
     }
 
+    @Test fun verifiedCachedPackageIsReusedAfterDownloadStateIsLost() = runBlocking {
+        val directory = directory()
+        try {
+            val info = release(8)
+            var downloadCalls = 0
+            val first = downloadCurrentUpdate(directory, { info }, { value, file ->
+                downloadCalls++
+                file.writeBytes(payload(value.versionCode))
+            }, ::verify)!!
+            assertEquals(1, downloadCalls)
+
+            // Simulate a recreated ViewModel: only the app-private file remains.
+            val second = downloadCurrentUpdate(directory, { info }, { _, _ ->
+                downloadCalls++
+                fail("A verified cached APK must not be downloaded again")
+            }, ::verify)!!
+            assertEquals(first.file, second.file)
+            assertEquals(1, downloadCalls)
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun installChecksLiveReleaseAndRejectsAlreadyDownloadedOldPackage() = runBlocking {
         val directory = directory()
         try {

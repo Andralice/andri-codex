@@ -3776,7 +3776,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                                         Text("命令与工具", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         processGroups.commands.forEachIndexed { index, item ->
-                                            TimelineProcessItem(item, index + 1, vm, onOpenLink)
+                                            TimelineProcessItem(item, index + 1, vm, onOpenLink, collapsible = true)
                                         }
                                     }
                                 }
@@ -3799,31 +3799,57 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
 }
 
 @Composable
-private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel, onOpenLink: (String) -> Unit,
+    collapsible: Boolean = false) {
+    var expanded by rememberSaveable("process:${item.id}", collapsible) { mutableStateOf(!collapsible) }
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(String.format(Locale.ROOT, "%02d", number), fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                color = if (item.status == "failed") MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(item.stage.ifBlank { if (item.role == "assistant") "进度说明" else "执行步骤" },
-                fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (collapsible) {
+            Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+                TimelineProcessHeader(item, number, showChevron = true, expanded = expanded)
+            }
+        } else {
+            TimelineProcessHeader(item, number)
         }
-        if (item.role == "assistant") {
-            val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
-            val sources = distinctChatImageSources(item.images, base)
-            if (item.text.isNotBlank()) ChatMarkdown(item.text, vm, base, onOpenLink,
-                excludedImages = sources.toSet(), selectable = false)
-            if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
-        } else if (item.isReasoningSummary) {
-            if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
-        } else if (item.text.isNotBlank()) {
-            Text(truncateChatText(item.text) +
-                if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
-                Modifier.fillMaxWidth(), fontSize = 11.sp, lineHeight = 18.sp,
-                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedVisibility(!collapsible || expanded,
+            enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            TimelineProcessBody(item, vm, onOpenLink)
         }
+    }
+}
+
+@Composable
+private fun TimelineProcessHeader(item: ChatLine, number: Int, showChevron: Boolean = false, expanded: Boolean = true) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(String.format(Locale.ROOT, "%02d", number), fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = if (item.status == "failed") MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(item.stage.ifBlank { if (item.role == "assistant") "进度说明" else "执行步骤" },
+            fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f))
+        if (showChevron) LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
+            rotationZ = if (expanded) 90f else 0f
+        }, MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun TimelineProcessBody(item: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    if (item.role == "assistant") {
+        val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
+        val sources = distinctChatImageSources(item.images, base)
+        if (item.text.isNotBlank()) ChatMarkdown(item.text, vm, base, onOpenLink,
+            excludedImages = sources.toSet(), selectable = false)
+        if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
+    } else if (item.isReasoningSummary) {
+        if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
+    } else if (item.text.isNotBlank()) {
+        Text(truncateChatText(item.text) +
+            if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
+            Modifier.fillMaxWidth(), fontSize = 11.sp, lineHeight = 18.sp,
+            fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
