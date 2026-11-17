@@ -12,7 +12,7 @@ import org.commonmark.parser.Parser
 internal val chatImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif", "svg")
 private val chatImageParser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 private val bareImageUrl = Regex("""https://[^\s<>"']+""", RegexOption.IGNORE_CASE)
-private val bareWorkspaceImagePath = Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""")
+private val bareWorkspaceImagePath = Regex("""(?<![\w`/:(<])((?:file://|/|\./|\.\./|codex/)[^\s<>"'`]+)""")
 
 private fun parseChatLink(value: String): URI? =
     runCatching { URI(value.replace(" ", "%20")) }.getOrNull()
@@ -100,11 +100,43 @@ internal fun markdownImageDestinations(markdown: String): List<String> {
 /** Find image paths written as plain text by a server response. */
 internal fun plainWorkspaceImagePaths(markdown: String, baseDirectory: String): List<String> =
     bareWorkspaceImagePath.findAll(markdown).mapNotNull { match ->
-        if (isInsideMarkdownCode(markdown, match.range.first)) return@mapNotNull null
+        if (isInsideMarkdownCode(markdown, match.range.first) || isUrlPathSuffix(markdown, match.range.first)) return@mapNotNull null
         val raw = match.groupValues[1].trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
         val target = chatLinkTarget(raw, baseDirectory) as? ChatLinkTarget.Workspace ?: return@mapNotNull null
         target.path.takeIf { it.substringAfterLast('/').substringAfterLast('.').lowercase() in chatImageExtensions }
     }.distinct().toList()
+
+/** A path-looking suffix inside file:// or https:// is not a second relative image. */
+private fun isUrlPathSuffix(text: String, offset: Int): Boolean {
+    val tokenStart = text.lastIndexOfAny(charArrayOf(' ', '\t', '\r', '\n', '<', '>', '"', '\'', '`'), offset - 1) + 1
+    val scheme = text.indexOf("://", tokenStart)
+    return scheme >= tokenStart && scheme < offset
+}
+
+/** Text references and structured attachments can describe the same uploaded image. */
+internal fun distinctChatImageSources(sources: List<String>, baseDirectory: String): List<String> =
+    sources.filter(String::isNotBlank).map { workspacePreviewTarget(it, baseDirectory)?.source ?: it }.distinct()
+
+internal fun userMessageImageSources(text: String, attachments: List<String>, baseDirectory: String): List<String> =
+    distinctChatImageSources(attachments + markdownImageDestinations(text) + plainWorkspaceImagePaths(text, baseDirectory), baseDirectory)
+
+private val uploadedImageNotice = Regex("""(?m)^[ \t]*(?:手机)?图片\s*[（(]已保存至项目\s*codex/inbox[)）][ \t]*[：:]?[ \t]*(?:\r?\n|$)""")
+
+/** Hide generated transport details in the view without changing the message sent to the model. */
+internal fun removePlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
+    if (paths.isEmpty()) return markdown
+    val withoutPaths = bareWorkspaceImagePath.replace(markdown) { match ->
+        if (isInsideMarkdownCode(markdown, match.range.first) || isUrlPathSuffix(markdown, match.range.first)) return@replace match.value
+        val raw = match.groupValues[1]
+        val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
+        val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path
+        if (path !in paths) return@replace match.value
+        raw.removePrefix(trimmed)
+    }
+    return uploadedImageNotice.replace(withoutPaths) { match ->
+        if (isInsideMarkdownCode(withoutPaths, match.range.first)) match.value else ""
+    }.trim('\r', '\n')
+}
 
 internal fun isInsideMarkdownCode(markdown: String, offset: Int): Boolean {
     var ticks = 0

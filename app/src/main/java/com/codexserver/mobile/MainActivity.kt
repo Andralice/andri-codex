@@ -427,7 +427,7 @@ class MainActivity : ComponentActivity() {
 
                     }
                 }
-                UpdateReminder(vm)
+                UpdateReminder(vm, enabled = destination == "chat" || destination == "thread-list")
                 vm.requests.firstOrNull { it.get("id").toString() == vm.visibleRequestId }?.let { request -> key(request.get("id").toString()) { RequestDialog(vm, request) } }
                 if (vm.historyDialog) ReleaseHistoryDialog(vm) { file -> installUpdate(this@MainActivity, file) }
                 if (vm.updateDialog && !vm.historyDialog && vm.visibleRequestId == null && vm.connected) UpdateDialog(vm) { file ->
@@ -1259,19 +1259,47 @@ private fun ModelPicker(vm: MobileViewModel, enabled: Boolean = true) {
 }
 
 @Composable
-private fun UpdateReminder(vm: MobileViewModel) {
-    val host = remember { SnackbarHostState() }
+private fun UpdateReminder(vm: MobileViewModel, enabled: Boolean) {
+    var reminder by remember { mutableStateOf<UpdateInfo?>(null) }
+    var visible by remember { mutableStateOf(false) }
     val info = vm.updateInfo
-    val allowed = vm.connected && !vm.updateDialog && !vm.historyDialog && vm.visibleRequestId == null
-    LaunchedEffect(info?.versionCode, allowed) {
+    val allowed = enabled && vm.connected && !vm.updateDialog && !vm.historyDialog && vm.visibleRequestId == null
+    val accessibility = androidx.compose.ui.platform.LocalAccessibilityManager.current
+    val timeout = accessibility?.calculateRecommendedTimeoutMillis(4_000L,
+        containsIcons = true, containsText = true, containsControls = true) ?: 4_000L
+    LaunchedEffect(info?.versionCode, allowed, timeout) {
+        visible = false
         if (allowed && info != null && vm.shouldRemindUpdate(info)) {
+            reminder = info
             vm.markUpdateReminded(info)
-            if (host.showSnackbar("发现新版本 ${info.versionName}", actionLabel = "查看",
-                    withDismissAction = true, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) vm.openUpdates()
+            visible = true
+            delay(timeout)
+            visible = false
         }
     }
-    Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.BottomCenter) {
-        SnackbarHost(host, Modifier.padding(12.dp))
+    Box(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 72.dp),
+        contentAlignment = Alignment.TopCenter) {
+        AnimatedVisibility(visible && allowed, enter = fadeIn(tween(150)) + slideInVertically(tween(180)) { -it / 2 },
+            exit = fadeOut(tween(120))) {
+            reminder?.let { update ->
+                Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shadowElevation = 1.dp,
+                    modifier = Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }) {
+                    Row(Modifier.widthIn(max = 320.dp).heightIn(min = 48.dp).padding(start = 12.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        LineIcon("download", Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                        Text("新版本 ${update.versionName}", Modifier.weight(1f, fill = false).padding(start = 8.dp),
+                            fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        TextButton({ visible = false; vm.openUpdates() }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                            Text("查看", fontSize = 13.sp)
+                        }
+                        IconButton({ visible = false }, Modifier.size(40.dp).semantics { contentDescription = "忽略本次更新提醒" }) {
+                            LineIcon("close", Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1729,8 +1757,10 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                     shape = RoundedCornerShape(16.dp, 16.dp, 5.dp, 16.dp),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                                     Column(Modifier.padding(horizontal = 17.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (line.text.isNotBlank()) ChatMarkdown(line.text, vm, thread.cwd.ifBlank { vm.cwd }, ::openChatLink)
-                                        if (line.images.isNotEmpty()) ChatImageGallery(line.images, vm, thread.cwd.ifBlank { vm.cwd })
+                                        val base = thread.cwd.ifBlank { vm.cwd }
+                                        val sources = remember(line.text, line.images, base) { userMessageImageSources(line.text, line.images, base) }
+                                        if (line.text.isNotBlank()) ChatMarkdown(line.text, vm, base, ::openChatLink, excludedImages = sources.toSet())
+                                        if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base, thumbnailSize = if (sources.size == 1) 112.dp else 76.dp)
                                     }
                                 }
                             }
@@ -2670,9 +2700,11 @@ private fun SmoothAssistantMessage(line: ChatLine, vm: MobileViewModel, onOpenLi
             visible = nextStreamText(visible, answerText)
         }
     }
+    val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
+    val sources = remember(line.images, base) { distinctChatImageSources(line.images, base) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (visible.isNotEmpty()) ChatMarkdown(visible, vm, vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd, onOpenLink)
-        if (line.images.isNotEmpty()) ChatImageGallery(line.images, vm, vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd)
+        if (visible.isNotEmpty()) ChatMarkdown(visible, vm, base, onOpenLink, excludedImages = sources.toSet())
+        if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
         if (!line.streaming && answerText.isNotBlank()) {
             TextButton(onClick = {
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -2692,16 +2724,17 @@ private fun assistantAnswerText(text: String): String {
 }
 
 @Composable
-private fun ChatImageGallery(sources: List<String>, vm: MobileViewModel, baseDirectory: String) {
+private fun ChatImageGallery(sources: List<String>, vm: MobileViewModel, baseDirectory: String,
+    thumbnailSize: androidx.compose.ui.unit.Dp = 76.dp) {
     var selectedIndex by remember(sources) { mutableIntStateOf(-1) }
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         sources.forEachIndexed { index, source ->
             key(index, source) {
                 ChatImageSource(source, vm, baseDirectory, compact = true, onClick = { selectedIndex = index },
-                    modifier = Modifier.size(76.dp))
+                    modifier = Modifier.size(thumbnailSize))
             }
         }
     }
@@ -3255,24 +3288,25 @@ private fun ChatImageSource(
 }
 
 @Composable
-private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: String, onOpenLink: (String) -> Unit = {}) {
+private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: String, onOpenLink: (String) -> Unit = {},
+    excludedImages: Set<String> = emptySet()) {
     val bounded = truncateChatText(visualizationPreviewLinks(markdown))
     val plainImagePaths = remember(bounded, baseDirectory) { plainWorkspaceImagePaths(bounded, baseDirectory) }
     val compacted = remember(bounded, plainImagePaths) {
         removePlainWorkspaceImagePaths(bounded, plainImagePaths, baseDirectory)
     }
-    MarkdownMessage(compacted, onOpenLink)
+    if (compacted.isNotBlank()) MarkdownMessage(compacted, onOpenLink)
     if (markdown.codePointCount(0, markdown.length) > MAX_MARKDOWN_RENDER_CHARS) {
         Text("内容较长，仅展示前 ${MAX_MARKDOWN_RENDER_CHARS / 1000} 千字符。", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    markdownImageDestinations(compacted).distinct().forEach { destination ->
+    distinctChatImageSources(markdownImageDestinations(compacted), baseDirectory).filterNot { it in excludedImages }.forEach { destination ->
         val target = workspacePreviewTarget(destination, baseDirectory)
         val source = target?.source ?: destination
         key(source) { ChatImageSource(source, vm, baseDirectory,
             onClick = if (source.startsWith("data:image/", true)) null else ({ onOpenLink(target?.navigationLink ?: source) })) }
     }
-    plainImagePaths.forEach { path ->
+    plainImagePaths.filterNot { it in excludedImages }.forEach { path ->
         key("plain-image-attachment:$path") {
             ChatWorkspaceImageAttachment(path, vm, baseDirectory, onOpenLink)
         }
@@ -3284,20 +3318,6 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
             else ChatVideoSource(target.source, vm, baseDirectory)
         }
     }
-}
-
-private fun removePlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
-    if (paths.isEmpty()) return markdown
-    val withoutPaths = Regex("""(?<![\w`/:(<])((?:/|\./|\.\./|codex/)[^\s<>"'`]+)""").replace(markdown) { match ->
-        if (isInsideMarkdownCode(markdown, match.range.first)) return@replace match.value
-        val raw = match.groupValues[1]
-        val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
-        val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path
-            ?.takeIf { it in paths } ?: return@replace match.value
-        raw.removePrefix(trimmed)
-    }
-    return Regex("""(?:手机)?图片\s*[（(]已保存至项目\s*codex/inbox[)）]\s*[：:]?\s*""")
-        .replace(withoutPaths, "")
 }
 
 @Composable
