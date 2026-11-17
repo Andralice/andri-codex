@@ -77,7 +77,8 @@ internal fun readWorkspacePreviewText(file: File): WorkspacePreviewText {
     }
 }
 
-internal suspend fun downloadWorkspacePreviewUrl(url: String, directory: File): File = withContext(Dispatchers.IO) {
+internal suspend fun downloadWorkspacePreviewUrl(url: String, directory: File,
+    maxBytes: Long = 64L * 1024 * 1024): File = withContext(Dispatchers.IO) {
     directory.mkdirs()
     val file = File(directory, "${UUID.randomUUID()}-preview")
     var address = url
@@ -95,8 +96,8 @@ internal suspend fun downloadWorkspacePreviewUrl(url: String, directory: File): 
                     address = URI(address).resolve(next).toString()
                 } else {
                     check(code in 200..299) { "文件读取失败（HTTP $code）" }
-                    val maxBytes = 64L * 1024 * 1024
-                    check(connection.contentLengthLong <= maxBytes) { "远程文件超过 64 MB" }
+                    val expectedLength = connection.contentLengthLong
+                    check(expectedLength <= maxBytes) { "文件超过 ${maxBytes / 1024 / 1024} MB" }
                     connection.inputStream.use { input -> file.outputStream().use { output ->
                         val buffer = ByteArray(32 * 1024)
                         var total = 0L
@@ -105,9 +106,10 @@ internal suspend fun downloadWorkspacePreviewUrl(url: String, directory: File): 
                             val count = input.read(buffer)
                             if (count < 0) break
                             total += count
-                            check(total <= maxBytes) { "远程文件超过 64 MB" }
+                            check(total <= maxBytes) { "文件超过 ${maxBytes / 1024 / 1024} MB" }
                             output.write(buffer, 0, count)
                         }
+                        check(total > 0L && (expectedLength < 0L || total == expectedLength)) { "文件下载不完整，请重试" }
                     } }
                     return@withContext file
                 }

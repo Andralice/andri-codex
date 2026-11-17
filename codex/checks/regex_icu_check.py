@@ -42,6 +42,7 @@ class ExportRegex {
         "com.codexserver.mobile.VisualizationPreviewKt",
         "com.codexserver.mobile.ChatImageLinksKt",
         "com.codexserver.mobile.WorkspaceSourceLocationKt",
+        "com.codexserver.mobile.WorkspaceMediaKt",
     ], cwd=project, text=True, capture_output=True, check=True)
     library_name = ctypes.util.find_library("icui18n")
     if not library_name:

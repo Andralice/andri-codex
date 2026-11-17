@@ -15,9 +15,9 @@ internal data class WorkspaceDiffSection(val id: String, val title: String, val 
 }
 
 /** Preserve the status summary (including untracked files) and each staged/unstaged patch. */
-internal fun workspaceDiffSections(output: String): List<WorkspaceDiffSection> {
+internal fun workspaceDiffSections(output: String, defaultStage: String = "工作区状态"): List<WorkspaceDiffSection> {
     val sections = mutableListOf<WorkspaceDiffSection>()
-    var stage = "工作区状态"
+    var stage = defaultStage
     var lines = mutableListOf<String>()
     var patch = false
     fun flush() {

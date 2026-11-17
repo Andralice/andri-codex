@@ -19,6 +19,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
@@ -52,8 +54,169 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     )
     fun shouldRemindUpdate(info: UpdateInfo): Boolean = updateReminders.shouldRemind(info.versionCode)
     fun markUpdateReminded(info: UpdateInfo) = updateReminders.markReminded(info.versionCode)
+    private val workspaceUiStates = mutableMapOf<String, MutableState<WorkspaceSessionState>>()
+    internal fun workspaceUiFor(id: String?, project: String? = null): WorkspaceSessionState {
+        if (id == null) return WorkspaceSessionState()
+        val key = workspaceSessionKey(id, project ?: executionFor(id).cwd)
+        return workspaceUiStates.getOrPut(key) {
+            mutableStateOf(WorkspaceSessionState.decode(settings.getString("workspace.$key.ui", "").orEmpty()))
+        }.value
+    }
+    internal fun updateWorkspaceUi(id: String?, project: String? = null, change: (WorkspaceSessionState) -> WorkspaceSessionState) {
+        if (id == null) return
+        val old = workspaceUiFor(id, project)
+        val next = change(old)
+        if (next == old) return
+        val key = workspaceSessionKey(id, project ?: executionFor(id).cwd)
+        workspaceUiStates.getValue(key).value = next
+        settings.edit().putString("workspace.$key.ui", next.encode()).apply()
+    }
+    private val gitHistories = mutableStateMapOf<String, GitHistoryState>()
+    private val gitCommitDiffs = mutableStateMapOf<String, GitCommitDiffState>()
+    private val gitHistoryGenerations = mutableMapOf<String, Int>()
+    private val gitCommitGenerations = mutableMapOf<String, Int>()
+    internal fun gitHistoryFor(path: String): GitHistoryState = gitHistories[path] ?: GitHistoryState()
+    internal fun gitCommitDiffFor(path: String, revision: String): GitCommitDiffState = gitCommitDiffs["$path:$revision"] ?: GitCommitDiffState()
+    internal fun loadGitHistory(path: String, refresh: Boolean = false, more: Boolean = false) {
+        val connection = client ?: return
+        val previous = gitHistoryFor(path)
+        if (previous.busy || (!refresh && !more && previous.loaded) || (more && !previous.hasMore)) return
+        val generation = (gitHistoryGenerations[path] ?: 0) + 1
+        gitHistoryGenerations[path] = generation
+        gitHistories[path] = previous.copy(busy = true, error = "")
+        actions.launch {
+            try {
+                val page = connection.readGitHistory(path, if (more) previous.commits.size else 0,
+                    if (more) previous.commits.firstOrNull()?.revision else null)
+                requireCurrent(connection)
+                if (gitHistoryGenerations[path] == generation) gitHistories[path] = GitHistoryState(
+                    commits = (if (more) previous.commits else emptyList()) + page.take(30),
+                    hasMore = page.size > 30, loaded = true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (gitHistoryGenerations[path] == generation) gitHistories[path] = previous.copy(error = e.message.orEmpty())
+            } finally {
+                if (gitHistoryGenerations[path] == generation) gitHistories[path] = gitHistoryFor(path).copy(busy = false)
+            }
+        }
+    }
+    internal fun loadGitCommitDiff(path: String, revision: String, refresh: Boolean = false) {
+        val connection = client ?: return
+        val key = "$path:$revision"
+        val previous = gitCommitDiffFor(path, revision)
+        if (previous.busy || (previous.loaded && !refresh)) return
+        val generation = (gitCommitGenerations[key] ?: 0) + 1
+        gitCommitGenerations[key] = generation
+        gitCommitDiffs[key] = previous.copy(busy = true, error = "")
+        actions.launch {
+            try {
+                val text = connection.readGitCommitDiff(path, revision)
+                requireCurrent(connection)
+                if (gitCommitGenerations[key] == generation) gitCommitDiffs[key] = GitCommitDiffState(text, loaded = true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (gitCommitGenerations[key] == generation) gitCommitDiffs[key] = previous.copy(error = e.message.orEmpty())
+            } finally {
+                if (gitCommitGenerations[key] == generation) gitCommitDiffs[key] = gitCommitDiffFor(path, revision).copy(busy = false)
+            }
+        }
+    }
     private val conversationCache = LocalConversationCache(application)
     private val workspaceVideoJobs = ConcurrentHashMap<String, Deferred<File>>()
+    private val mediaDownloads = mutableStateMapOf<String, MediaDownloadState>()
+    private var pendingMediaExport: WorkspaceMedia? = null
+    internal fun prepareMediaExport(media: WorkspaceMedia) { pendingMediaExport = media }
+    internal fun takeMediaExport(key: String): WorkspaceMedia? = pendingMediaExport?.takeIf { it.key == key }
+        ?.also { pendingMediaExport = null }
+    internal var mediaCacheRevision by mutableIntStateOf(0)
+        private set
+    internal fun mediaDownloadFor(key: String): MediaDownloadState = mediaDownloads[key] ?: MediaDownloadState()
+
+    internal fun cachedWorkspaceMedia(media: WorkspaceMedia, baseDirectory: String): File? {
+        val cache = getApplication<Application>().cacheDir
+        val recorded = settings.getString("media.cache.${media.key}", null)?.let(::File)
+        val fallback = when {
+            media.source.startsWith("https://", true) && !media.video -> File(cache, "linked-images/${media.key}.img")
+            media.video -> {
+                val key = mediaSourceHash(baseDirectory + "\n" + media.source)
+                File(cache, "workspace-videos/$key.${media.source.substringAfterLast('.', "mp4").lowercase()}")
+            }
+            else -> null
+        }
+        return listOfNotNull(recorded, fallback).firstOrNull {
+            it.isFile && it.length() > 0L && it.canonicalPath.startsWith(cache.canonicalPath + "/")
+        }
+    }
+
+    private suspend fun rememberMediaCache(source: String, baseDirectory: String, file: File) {
+        val key = mediaSourceHash(workspacePreviewTarget(source, baseDirectory)?.source ?: source)
+        withContext(Dispatchers.Main.immediate) {
+            if (settings.getString("media.cache.$key", null) != file.absolutePath) {
+                settings.edit().putString("media.cache.$key", file.absolutePath).apply()
+            }
+            mediaCacheRevision++
+        }
+    }
+
+    private suspend fun discardMediaDownload(destination: Uri) = withContext(Dispatchers.IO + NonCancellable) {
+        runCatching { android.provider.DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, destination) }
+        Unit
+    }
+
+    internal fun saveWorkspaceMedia(media: WorkspaceMedia, baseDirectory: String, destination: Uri) {
+        if (mediaDownloadFor(media.key).busy) return
+        mediaDownloads[media.key] = MediaDownloadState(busy = true)
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val file = cachedWorkspaceMedia(media, baseDirectory) ?: when {
+                        media.source.startsWith("data:image/", true) -> {
+                            val encoded = media.source.substringAfter(',')
+                            check(encoded.length <= SshCodexClient.MAX_CHAT_IMAGE_BYTES * 2) { "图片超过 10 MB" }
+                            val bytes = Base64.decode(encoded, Base64.DEFAULT)
+                            check(bytes.size <= SshCodexClient.MAX_CHAT_IMAGE_BYTES && isSupportedImageBytes(bytes)) { "图片内容无效" }
+                            val folder = File(getApplication<Application>().cacheDir, "markdown-images").apply { mkdirs() }
+                            File(folder, "${media.key}.img").apply { writeBytes(bytes) }
+                        }
+                        media.source.startsWith("https://", true) -> {
+                            val cache = getApplication<Application>().cacheDir
+                            val folder = File(cache, if (media.video) "workspace-videos" else "linked-images").apply { mkdirs() }
+                            val staged = downloadWorkspacePreviewUrl(media.source, folder,
+                                if (media.video) SshCodexClient.MAX_CHAT_VIDEO_BYTES else SshCodexClient.MAX_CHAT_IMAGE_BYTES.toLong())
+                            try {
+                                if (!media.video) check(isSupportedImageBytes(staged.readBytes())) { "链接返回的不是受支持的图片" }
+                                val suffix = if (media.video) media.label.substringAfterLast('.', "mp4") else "img"
+                                File(folder, "${media.key}.$suffix").also { check(staged.renameTo(it)) { "无法保存媒体缓存" } }
+                            } finally { staged.delete() }
+                        }
+                        media.video -> cacheWorkspaceVideo(media.source, baseDirectory)
+                        else -> File(java.net.URI(cacheWorkspaceImage(media.source, baseDirectory)))
+                    }
+                    rememberMediaCache(media.source, baseDirectory, file)
+                    val resolver = getApplication<Application>().contentResolver
+                    checkNotNull(resolver.openOutputStream(destination, "w")) { "无法写入所选位置" }.use { output ->
+                        file.inputStream().use { input ->
+                            val buffer = ByteArray(32 * 1024)
+                            while (true) {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                }
+                mediaDownloads[media.key] = MediaDownloadState(saved = true)
+            } catch (cancelled: CancellationException) {
+                discardMediaDownload(destination)
+                mediaDownloads[media.key] = MediaDownloadState()
+                throw cancelled
+            } catch (failure: Exception) {
+                discardMediaDownload(destination)
+                mediaDownloads[media.key] = MediaDownloadState(error = failure.message ?: "下载失败，请重试")
+            }
+        }
+    }
     private var cacheWriteJob: Job? = null
     private val secrets = runCatching { SecureStore(application) }.getOrNull()
     var host by mutableStateOf(settings.getString("host", "82.156.142.57").orEmpty())
@@ -234,6 +397,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val videoAttachments = mutableStateMapOf<String, VideoAttachment>()
     val sharedFileAttachments = mutableStateMapOf<String, List<SharedFileAttachment>>()
     val contextReferences = mutableStateMapOf<String, List<ContextReference>>()
+    var gitDiffPath by mutableStateOf("")
+        private set
+    var gitDiffLoaded by mutableStateOf(false)
+        private set
     var gitDiff by mutableStateOf("")
         private set
     var gitDiffBusy by mutableStateOf(false)
@@ -493,6 +660,15 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         workspaceCreating = false
         projectFilesBusy = false
         gitDiffBusy = false
+        // Invalidate canceled readers before a new connection can start loading.
+        gitHistories.keys.toList().forEach { path ->
+            gitHistoryGenerations[path] = (gitHistoryGenerations[path] ?: 0) + 1
+            gitHistories[path] = gitHistories.getValue(path).copy(busy = false, loaded = false)
+        }
+        gitCommitDiffs.keys.toList().forEach { key ->
+            gitCommitGenerations[key] = (gitCommitGenerations[key] ?: 0) + 1
+            gitCommitDiffs[key] = gitCommitDiffs.getValue(key).copy(busy = false)
+        }
         globalInstructionsBusy = false
         visibleRequestId = null
     }
@@ -1478,19 +1654,19 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         loadProjectFiles(path)
     }
 
-    fun loadGitDiff() {
+    fun loadGitDiff(path: String = currentExecution.cwd) {
         val connection = client ?: return
-        val path = currentExecution.cwd
         val generation = ++gitDiffGeneration
         gitDiffJob?.cancel()
         gitDiffBusy = true
         gitDiffError = ""
-        gitDiff = ""
+        if (gitDiffPath != path) { gitDiff = ""; gitDiffLoaded = false }
+        gitDiffPath = path
         gitDiffJob = actions.launch {
             try {
                 val diff = connection.readGitDiff(path)
                 requireCurrent(connection)
-                if (generation == gitDiffGeneration) gitDiff = diff
+                if (generation == gitDiffGeneration) { gitDiff = diff; gitDiffLoaded = true }
             }
             catch (e: Exception) { if (e !is CancellationException && generation == gitDiffGeneration) gitDiffError = e.message.orEmpty() }
             finally { if (generation == gitDiffGeneration) gitDiffBusy = false }
@@ -1537,7 +1713,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun cacheWorkspaceImage(path: String, baseDirectory: String): String = withContext(Dispatchers.IO) {
         val connection = client ?: error("SSH 已断开，无法读取服务器图片")
         val folder = File(getApplication<Application>().cacheDir, "markdown-images").apply { mkdirs() }
-        connection.cacheWorkspaceImage(path, baseDirectory, folder).toURI().toString()
+        val file = connection.cacheWorkspaceImage(path, baseDirectory, folder)
+        rememberMediaCache(path, baseDirectory, file)
+        file.toURI().toString()
     }
 
     suspend fun cacheWorkspaceVideo(path: String, baseDirectory: String): File = withContext(Dispatchers.IO) {
@@ -1547,6 +1725,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val target = File(folder, "$key.${path.substringAfterLast('.', "mp4").lowercase()}")
         if (target.isFile && target.length() > 0L) {
             target.setLastModified(System.currentTimeMillis())
+            rememberMediaCache(path, baseDirectory, target)
             return@withContext target
         }
         val download = workspaceVideoJobs[key] ?: run {
@@ -1570,7 +1749,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 created
             }
         }
-        download.await()
+        download.await().also { rememberMediaCache(path, baseDirectory, it) }
     }
 
     fun refresh() = operation("刷新对话", null) { connection ->

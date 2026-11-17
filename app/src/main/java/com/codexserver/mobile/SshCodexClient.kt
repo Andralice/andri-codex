@@ -1051,14 +1051,37 @@ class SshCodexClient(
         } finally { sftp.disconnect() }
     }
 
-    suspend fun readGitDiff(path: String): String = withContext(Dispatchers.IO) {
+    suspend fun readGitDiff(path: String): String = readWorkspaceGit(path) { quoted ->
+        "repo_root=\$(git -C $quoted rev-parse --show-toplevel 2>/dev/null) || { printf '当前目录不属于 Git 仓库：%s\\n请切换到项目目录后重试。\\n' $quoted; exit 2; }; set -e; printf '%s\\n' \"--- Git 仓库：\$repo_root ---\"; git -c core.quotepath=false -C \"\$repo_root\" status --short 2>&1; printf '\\n--- 已暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --cached --no-ext-diff --no-color 2>&1; printf '\\n--- 未暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --no-ext-diff --no-color 2>&1"
+    }
+
+    internal suspend fun readGitHistory(path: String, offset: Int = 0, anchor: String? = null): List<GitCommit> {
+        val args = gitHistoryArguments(offset, anchor)
+        val text = readWorkspaceGit(path) { quoted ->
+            val command = args.joinToString(" ", transform = ::shellQuote)
+            "git -C $quoted rev-parse --git-dir >/dev/null 2>&1 || { printf '%s\\n' '当前目录不属于 Git 仓库，请选择项目目录。'; exit 2; }; git -C $quoted rev-parse --verify HEAD >/dev/null 2>&1 || exit 0; git -c core.quotepath=false -C $quoted $command"
+        }
+        return parseGitHistory(text)
+    }
+
+    suspend fun readGitCommitDiff(path: String, revision: String): String {
+        val args = gitCommitDiffArguments(revision)
+        return readWorkspaceGit(path) { quoted ->
+            "git -c core.quotepath=false -C $quoted " + args.joinToString(" ", transform = ::shellQuote)
+        }
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+    private suspend fun readWorkspaceGit(path: String, maxBytes: Int = MAX_GIT_DIFF_BYTES,
+        commandForPath: (String) -> String): String = withContext(Dispatchers.IO) {
         val sftp = openSftp()
         sftp.connect(15_000)
         val resolved = try { sftp.realpath(path) } finally { sftp.disconnect() }
         val root = WORKSPACE_ROOT.trimEnd('/')
         check(resolved == root || resolved.startsWith("$root/")) { "只能查看工作区中的 Git 改动" }
         val quoted = "'" + resolved.replace("'", "'\\''") + "'"
-        val command = "repo_root=\$(git -C $quoted rev-parse --show-toplevel 2>/dev/null) || { printf '当前目录不属于 Git 仓库：%s\\n请切换到项目目录后重试。\\n' $quoted; exit 2; }; set -e; printf '%s\\n' \"--- Git 仓库：\$repo_root ---\"; git -c core.quotepath=false -C \"\$repo_root\" status --short 2>&1; printf '\\n--- 已暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --cached --no-ext-diff --no-color 2>&1; printf '\\n--- 未暂存的改动 ---\\n'; git -c core.quotepath=false -C \"\$repo_root\" diff --no-ext-diff --no-color 2>&1"
+        val command = commandForPath(quoted)
         val channel = session?.openChannel("exec") as? ChannelExec ?: error("无法打开 SSH 命令通道")
         try {
             channel.setCommand(command)
@@ -1071,7 +1094,7 @@ class SshCodexClient(
                 if (count < 0) {
                     break
                 }
-                check(output.size() + count <= MAX_GIT_DIFF_BYTES) { "改动内容超过 512 KiB，请缩小审阅范围" }
+                check(output.size() + count <= maxBytes) { "返回内容超过读取上限，请缩小查看范围" }
                 output.write(buffer, 0, count)
             }
             val text = output.toString(Charsets.UTF_8.name()).trim()
@@ -1325,7 +1348,7 @@ class SshCodexClient(
     }
 }
 
-private fun isSupportedImageBytes(bytes: ByteArray): Boolean =
+internal fun isSupportedImageBytes(bytes: ByteArray): Boolean =
     bytes.size >= 12 && (
         isPngImage(bytes) ||
             (bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte()) ||
