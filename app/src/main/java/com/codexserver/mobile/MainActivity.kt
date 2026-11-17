@@ -1750,6 +1750,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val swipeTarget: (Float, Float, Float) -> (() -> Unit)? = { start, width, delta ->
         when (chatSwipeTarget(start, width, delta, 32f)) {
             ChatSwipe.SIDEBAR -> ({ sidebarScope.launch { sidebarState.open() }; Unit })
+            ChatSwipe.LIST -> ({ vm.back(); Unit })
             ChatSwipe.WORKSPACE -> enterWorkspace
             null -> null
         }
@@ -2495,11 +2496,44 @@ private fun WorkspaceMediaList(vm: MobileViewModel, threadId: String, messages: 
         indexed = true
     }
     var pendingKey by rememberSaveable(threadId, cwd) { mutableStateOf("") }
+    var pendingLegacyVideoKey by rememberSaveable(threadId, cwd) { mutableStateOf("") }
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val entry = vm.takeMediaExport(pendingKey) ?: media.firstOrNull { it.key == pendingKey }
         pendingKey = ""
         if (uri != null && entry != null) vm.saveWorkspaceMedia(entry, cwd, uri)
         else if (uri != null) android.widget.Toast.makeText(context, "媒体列表已更新，请重新选择下载", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    fun saveVideoToGallery(entry: WorkspaceMedia) {
+        if (vm.mediaDownloadFor(entry.key).busy) return
+        val destination = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) createPendingVideoUri(context, entry.downloadName)
+            else createLegacyVideoUri(context, entry.downloadName)
+        }
+        if (destination.isSuccess) {
+            vm.saveWorkspaceMedia(entry, cwd, destination.getOrThrow(),
+                publishVideoToGallery = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        } else {
+            android.widget.Toast.makeText(context, "无法创建相册视频：${destination.exceptionOrNull()?.message ?: "未知错误"}", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    val legacyVideoPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val entry = media.firstOrNull { it.key == pendingLegacyVideoKey }
+        pendingLegacyVideoKey = ""
+        if (granted && entry != null) saveVideoToGallery(entry)
+        else if (!granted) android.widget.Toast.makeText(context, "需要存储权限才能保存到相册", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    fun downloadMedia(entry: WorkspaceMedia) {
+        if (entry.video) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                pendingLegacyVideoKey = entry.key
+                legacyVideoPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            } else saveVideoToGallery(entry)
+        } else {
+            vm.prepareMediaExport(entry)
+            pendingKey = entry.key
+            saveLauncher.launch(entry.downloadName)
+        }
     }
     if (!indexed) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { SmallProgress("正在整理媒体") }
@@ -2511,11 +2545,7 @@ private fun WorkspaceMediaList(vm: MobileViewModel, threadId: String, messages: 
             WorkspaceEmptyCard("当前对话里还没有找到图片或视频。项目里的媒体也可以在「文件」中打开。")
         }
         items(media, key = { it.key }) { entry ->
-            WorkspaceMediaRow(entry, vm, cwd, onOpen = { onOpen(entry) }, onDownload = {
-                vm.prepareMediaExport(entry)
-                pendingKey = entry.key
-                saveLauncher.launch(entry.downloadName)
-            })
+            WorkspaceMediaRow(entry, vm, cwd, onOpen = { onOpen(entry) }, onDownload = { downloadMedia(entry) })
         }
         if (!vm.historyCursors[threadId].isNullOrBlank()) item("older-media") {
             TextButton({ vm.loadOlder() }, enabled = vm.connected && !vm.operationPending("加载历史", threadId), modifier = Modifier.fillMaxWidth()) {
@@ -2523,6 +2553,38 @@ private fun WorkspaceMediaList(vm: MobileViewModel, threadId: String, messages: 
             }
         }
     }
+}
+
+private fun createPendingVideoUri(context: android.content.Context, name: String): Uri {
+    val safeName = galleryVideoName(name)
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, safeName)
+        put(MediaStore.Video.Media.MIME_TYPE, videoMimeType(safeName))
+        put(MediaStore.Video.Media.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_MOVIES}/Andri")
+        put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    return context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        ?: error("无法创建相册视频")
+}
+
+@Suppress("DEPRECATION")
+private fun createLegacyVideoUri(context: android.content.Context, name: String): Uri {
+    val safeName = galleryVideoName(name)
+    val directory = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES), "Andri")
+    check(directory.exists() || directory.mkdirs()) { "无法创建相册目录" }
+    val output = File(directory, safeName)
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DATA, output.absolutePath)
+        put(MediaStore.Video.Media.DISPLAY_NAME, safeName)
+        put(MediaStore.Video.Media.MIME_TYPE, videoMimeType(safeName))
+    }
+    return context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        ?: error("无法创建相册视频")
+}
+
+private fun galleryVideoName(name: String): String {
+    val candidate = name.substringAfterLast('/').substringAfterLast('\\').take(120)
+    return candidate.takeUnless { it.isBlank() || it == "." || it == ".." } ?: "andri-video.mp4"
 }
 
 // The assignment crosses withContext, which the Compose lint detector does not follow.
@@ -2550,7 +2612,9 @@ private fun WorkspaceMediaRow(entry: WorkspaceMedia, vm: MobileViewModel, cwd: S
                     Text(listOf(entry.typeLabel, entry.formatLabel, status).filter { it.isNotBlank() }.joinToString(" · "),
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onDownload, enabled = !transfer.busy, modifier = Modifier.semantics { contentDescription = "下载 ${entry.label}" }) {
+                IconButton(onDownload, enabled = !transfer.busy, modifier = Modifier.semantics {
+                    contentDescription = if (entry.video) "保存视频到相册 ${entry.label}" else "下载 ${entry.label}"
+                }) {
                     if (transfer.busy) SmallProgress("正在下载媒体") else LineIcon("download", Modifier.size(20.dp))
                 }
             }
@@ -4000,13 +4064,18 @@ private fun UpdateDialog(vm: MobileViewModel, install: (java.io.File) -> Unit) {
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("应用更新", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Keep the action buttons reachable while allowing the complete release
+            // notes to be read inside the dialog when a version has a long changelog.
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("当前版本 " + BuildConfig.VERSION_NAME)
                 TextButton(vm::openHistory) { ActionLabel("history", "历史版本与恢复下载") }
                 if (vm.updateChecking) SmallProgress("正在检查更新")
                 else Text(vm.updateMessage)
                 vm.updateInfo?.let { info ->
-                    Text(info.notes)
+                    if (info.notes.isNotBlank()) SelectionContainer {
+                        Text(info.notes, Modifier.fillMaxWidth(), lineHeight = 19.sp)
+                    }
                     Text("安装包约 " + (info.sizeBytes / 1024 / 1024) + " MB，通过 SSH 下载。")
                     Text("首次安装需允许此来源安装应用；授权后返回这里，再点「安装更新」。系统会要求你确认安装。")
                 }

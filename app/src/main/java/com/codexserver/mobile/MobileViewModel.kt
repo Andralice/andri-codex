@@ -2,6 +2,8 @@ package com.codexserver.mobile
 
 import android.app.Application
 import android.net.Uri
+import android.content.ContentValues
+import android.provider.MediaStore
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
@@ -159,11 +161,18 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun discardMediaDownload(destination: Uri) = withContext(Dispatchers.IO + NonCancellable) {
-        runCatching { android.provider.DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, destination) }
+        val resolver = getApplication<Application>().contentResolver
+        runCatching { resolver.delete(destination, null, null) }
+        runCatching { android.provider.DocumentsContract.deleteDocument(resolver, destination) }
         Unit
     }
 
-    internal fun saveWorkspaceMedia(media: WorkspaceMedia, baseDirectory: String, destination: Uri) {
+    internal fun saveWorkspaceMedia(
+        media: WorkspaceMedia,
+        baseDirectory: String,
+        destination: Uri,
+        publishVideoToGallery: Boolean = false,
+    ) {
         if (mediaDownloadFor(media.key).busy) return
         mediaDownloads[media.key] = MediaDownloadState(busy = true)
         viewModelScope.launch {
@@ -204,6 +213,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                                 output.write(buffer, 0, count)
                             }
                         }
+                    }
+                    if (publishVideoToGallery) {
+                        check(media.video) { "只有视频可以保存到相册" }
+                        check(resolver.update(destination, ContentValues().apply {
+                            put(MediaStore.Video.Media.IS_PENDING, 0)
+                        }, null, null) > 0) { "无法发布相册视频" }
                     }
                 }
                 mediaDownloads[media.key] = MediaDownloadState(saved = true)

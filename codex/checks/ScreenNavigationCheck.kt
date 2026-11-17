@@ -4,11 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScreenNavigationCheck {
-    @Test fun rightSwipeKeepsConversationEdgeAndOpensWorkspaceElsewhere() {
+    @Test fun leftSwipeOpensWorkspaceAndRightSwipeReturnsToList() {
         assertEquals(ChatSwipe.SIDEBAR, chatSwipeTarget(12f, 360f, 70f, 32f))
-        assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(120f, 360f, 70f, 32f))
+        assertEquals(ChatSwipe.LIST, chatSwipeTarget(120f, 360f, 70f, 32f))
         assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(348f, 360f, -70f, 32f))
-        assertNull(chatSwipeTarget(120f, 360f, -70f, 32f))
+        assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(120f, 360f, -70f, 32f))
         assertNull(chatSwipeTarget(120f, 360f, 0f, 32f))
     }
 
