@@ -848,15 +848,18 @@ class SshCodexClient(
             // Keepalive packets keep a slow transfer alive without applying a
             // short socket read timeout to a large file.
             serverAliveInterval = 20_000
-            serverAliveCountMax = 3
-            timeout = 0
+            serverAliveCountMax = 12
+            // SFTP subsystem startup can be slow even after SSH authentication
+            // succeeds. Avoid the short control-channel timeout used by normal
+            // app-server operations while opening the large-file channel.
+            timeout = VIDEO_SFTP_CONNECT_TIMEOUT_MS
         }
         try {
-            transferSession.connect(15_000)
+            transferSession.connect(VIDEO_SFTP_CONNECT_TIMEOUT_MS)
             val sftp = (transferSession.openChannel("sftp") as? ChannelSftp)
                 ?: error("无法打开独立视频文件通道")
             try {
-                sftp.connect(15_000)
+                sftp.connect(VIDEO_SFTP_CONNECT_TIMEOUT_MS)
                 return transferSession to sftp
             } catch (error: Exception) {
                 sftp.disconnect()
@@ -1227,13 +1230,18 @@ class SshCodexClient(
                 throw cancelled
             } catch (error: Exception) {
                 lastFailure = error
-                if (attempt + 1 < MAX_VIDEO_DOWNLOAD_ATTEMPTS) delay((attempt + 1) * 1_000L)
+                if (attempt + 1 < MAX_VIDEO_DOWNLOAD_ATTEMPTS) delay((attempt + 1) * VIDEO_RETRY_DELAY_MS)
             } finally {
                 sftp?.disconnect()
                 transferSession?.disconnect()
             }
         }
-        throw lastFailure ?: IOException("视频下载失败")
+        val failure = lastFailure ?: IOException("视频下载失败")
+        if (failure.message?.contains("inputstream is closed", ignoreCase = true) == true ||
+            failure.cause?.message?.contains("inputstream is closed", ignoreCase = true) == true) {
+            throw IOException("视频传输通道启动失败：服务器响应过慢或连接被关闭，请稍后重试", failure)
+        }
+        throw failure
     }
 
     private fun ensureSftpDirectory(sftp: ChannelSftp, path: String) {
@@ -1344,7 +1352,9 @@ class SshCodexClient(
         const val MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
         /** Keep video transfers bounded while allowing large generated videos to be downloaded. */
         const val MAX_CHAT_VIDEO_BYTES = 4L * 1024 * 1024 * 1024
-        private const val MAX_VIDEO_DOWNLOAD_ATTEMPTS = 3
+        private const val MAX_VIDEO_DOWNLOAD_ATTEMPTS = 5
+        private const val VIDEO_RETRY_DELAY_MS = 1_500L
+        private const val VIDEO_SFTP_CONNECT_TIMEOUT_MS = 120_000
         const val MAX_SHARED_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_DOWNLOAD_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_GIT_DIFF_BYTES = 512 * 1024
