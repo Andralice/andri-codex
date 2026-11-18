@@ -1669,6 +1669,13 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val messages = remember(visibleMessages, activeTurnId, running) {
         foldCompletedProcessLines(visibleMessages, activeTurnId, running)
     }
+    // Only the newest unanswered question group may be interactive. An assistant can emit
+    // another question or explanatory text before the user replies; checking merely for a
+    // later user message made every such older group look active at the same time.
+    val latestQuestionIndex = remember(messages) { messages.indexOfLast { it.questions.isNotEmpty() } }
+    val latestQuestionId = messages.getOrNull(latestQuestionIndex)?.id
+    val latestQuestionAnswered = latestQuestionIndex >= 0 &&
+        messages.drop(latestQuestionIndex + 1).any { it.role == "user" }
     val keyedMessages = remember(messages) {
         val used = mutableSetOf<String>()
         messages.asReversed().mapIndexed { index, line ->
@@ -1835,7 +1842,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                 SmoothAssistantMessage(line, vm, ::openChatLink,
                                     canCopy = assistantReplyCanCopy(line, activeTurnId, running))
                                 if (line.questions.isNotEmpty()) AsyncQuestionCard(vm, line,
-                                    messages.dropWhile { it.id != line.id }.drop(1).none { it.role == "user" })
+                                    line.id == latestQuestionId && !latestQuestionAnswered)
                             }
                         }
                     }
