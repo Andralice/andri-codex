@@ -49,6 +49,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         const val UPDATE_MANIFEST = "/home/ubuntu/codex/mobile-client/releases/latest.json"
         const val PENDING_SHARED_FILES = "__pending_shared_files__"
+        const val RECENT_THREAD_PRELOAD_LIMIT = 5
+        val FALLBACK_MODELS = listOf("gpt-6-luna", "gpt-6.1-sol")
     }
     private val settings = application.getSharedPreferences("connection", 0)
     private val updateReminders = UpdateReminderPolicy(
@@ -304,6 +306,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var hasCachedSession by mutableStateOf(false)
         private set
+    var availableModels by mutableStateOf(FALLBACK_MODELS)
+        private set
+    private var modelEfforts by mutableStateOf(
+        FALLBACK_MODELS.associateWith { listOf("low", "medium", "high", "xhigh", "max") }
+            .toMutableMap().apply { this["gpt-6.1-sol"] = listOf("low", "medium", "high", "xhigh", "max", "ultra") }
+    )
     private val operations = mutableStateMapOf<String, Any>()
     val busy: Boolean get() = operations.isNotEmpty()
     fun operationPending(stage: String, id: String? = activeId): Boolean = "$stage:${id.orEmpty()}" in operations
@@ -478,6 +486,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private val recovery = ConnectionRecovery()
     private var connectionJob: Job? = null
     private var synchronizationJob: Job? = null
+    private var threadPreloadJob: Job? = null
+    private var threadPreloadConnection: SshCodexClient? = null
     private var lastForegroundSyncAt = Long.MIN_VALUE
     private var threadOpenJob: Job? = null
     private var reconnectJob: Job? = null
@@ -600,9 +610,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val approvalsReviewer: String get() = currentExecution.mode.reviewer
     val sandbox: String get() = currentExecution.mode.sandbox
 
-    fun reasoningEfforts(forModel: String = model): List<String> = when (forModel) {
-        "gpt-6.1-sol" -> listOf("low", "medium", "high", "xhigh", "max", "ultra")
-        else -> listOf("low", "medium", "high", "xhigh", "max")
+    fun reasoningEfforts(forModel: String = model): List<String> = modelEfforts[forModel]
+        ?: listOf("low", "medium", "high", "xhigh", "max")
+
+    private fun applyModels(models: List<CodexModel>) {
+        if (models.isEmpty()) return
+        availableModels = (models.map { it.id } + model).filter { it.isNotBlank() }.distinct()
+        modelEfforts = models.associate { it.id to it.reasoningEfforts.ifEmpty { reasoningEfforts(it.id) } }
+            .toMutableMap().apply { putIfAbsent(model, reasoningEfforts(model)) }
     }
 
     fun selectModel(value: String) {
@@ -657,6 +672,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resetActions() {
+        threadPreloadJob?.cancel()
+        threadPreloadJob = null
+        threadPreloadConnection = null
         sideChatSessions.clear()
         actions.cancel()
         actions = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
@@ -817,6 +835,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         synchronizing = true
         synchronizationJob = viewModelScope.launch {
             try {
+                runCatching { connection.listModels() }
+                    .onSuccess { models -> if (client === connection && connected) applyModels(models) }
+                    .onFailure { if (it !is CancellationException) android.util.Log.w("MobileSync", "读取 Codex 模型列表失败", it) }
                 // On an already-live connection, thread/list is enough to tell
                 // whether the selected conversation changed. Avoid another
                 // turns/list read when its server timestamp is unchanged.
@@ -831,6 +852,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                                 // A first page is partial: keep older cached conversations available.
                                 replaceThreads(rows, partial = true, revisions = revisions)
                                 updateRunningThreads(rows, revisions)
+                                // A reconnect does a full list below; that full result is the
+                                // source for the newest-five preload. On a live foreground refresh
+                                // there is no second list, so use this first page directly.
+                                if (!restoreSubscription) {
+                                    scheduleThreadPreload(connection, rows, skipHydration = setOfNotNull(restore))
+                                }
                                 // A reconnect needs a full reconciliation and task recovery.
                                 // A foreground refresh on the same live socket only needs the
                                 // first page; the full scan and serial resumes add no new data.
@@ -893,17 +920,50 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     if (client === connection && connected) {
                         replaceThreads(rows, revisions = revisions)
                         updateRunningThreads(rows, revisions)
-                        preloadRunningThreads(connection, rows.mapNotNull { row ->
-                            row.id.takeIf { row.running && it !in skipHydration }
-                        })
+                        scheduleThreadPreload(connection, rows, skipHydration)
                     }
                 }
                 .onFailure { if (it !is CancellationException) android.util.Log.w("MobileSync", "后台刷新对话列表失败", it) }
         }
     }
 
-    /** Hydrate active task windows serially so a busy app-server is not flooded with resumes. */
-    private suspend fun preloadRunningThreads(connection: SshCodexClient, ids: List<String>) {
+    /**
+     * Hydrate the newest conversations and active task windows serially. A single resume can
+     * fetch the initial turns page, so keeping this queue bounded prevents background sync from
+     * flooding the app-server while still making the newest five conversations immediately usable.
+     */
+    private fun scheduleThreadPreload(
+        connection: SshCodexClient,
+        rows: List<CodexThread>,
+        skipHydration: Set<String> = emptySet()
+    ) {
+        if (client !== connection || !connected) return
+        val ids = (rows.take(RECENT_THREAD_PRELOAD_LIMIT).map { it.id } +
+            rows.asSequence().filter { it.running }.map { it.id })
+            .distinct()
+            .filter { id ->
+                id.isNotBlank() && id !in skipHydration && id != activeId &&
+                    id !in readyThreadIds && id != openingThreadId && !threadReads.isArchived(id)
+            }
+        if (ids.isEmpty()) return
+        if (threadPreloadJob?.isActive == true) {
+            if (threadPreloadConnection === connection) return
+            threadPreloadJob?.cancel()
+        }
+        threadPreloadConnection = connection
+        threadPreloadJob = viewModelScope.launch {
+            preloadThreads(connection, ids)
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (threadPreloadJob === job) {
+                    threadPreloadJob = null
+                    threadPreloadConnection = null
+                }
+            }
+        }
+    }
+
+    private suspend fun preloadThreads(connection: SshCodexClient, ids: List<String>) {
         ids.distinct().forEach { id ->
             if (client !== connection || !connected || !connection.isAlive()) return
             if (id in readyThreadIds || openingThreadId == id) return@forEach

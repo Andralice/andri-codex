@@ -27,6 +27,7 @@ data class CodexThread(
     val running: Boolean = false, val turnId: String = "", val cwd: String = "",
     val updatedAt: Long = 0L
 )
+data class CodexModel(val id: String, val reasoningEfforts: List<String>)
 data class ChatQuestion(val title: String, val options: List<String> = emptyList())
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
 data class ImageUpload(val dataUrl: String, val label: String)
@@ -474,6 +475,22 @@ class SshCodexClient(
             cursor = next
         } while (cursor.isNotBlank() && !firstPageOnly)
         return rows.distinctBy { it.id }
+    }
+
+    suspend fun listModels(): List<CodexModel> {
+        val result = request("model/list", JSONObject().put("includeHidden", false).put("limit", 100))
+        val data = result.optJSONArray("data") ?: JSONArray()
+        return (0 until data.length()).mapNotNull { index ->
+            val row = data.optJSONObject(index) ?: return@mapNotNull null
+            val id = row.text("id").ifBlank { row.text("model") }
+            if (id.isBlank() || row.optBoolean("hidden", false)) return@mapNotNull null
+            val efforts = row.optJSONArray("supportedReasoningEfforts")?.let { values ->
+                (0 until values.length()).mapNotNull { effortIndex ->
+                    values.optJSONObject(effortIndex)?.text("reasoningEffort")?.takeIf { it.isNotBlank() }
+                }
+            }.orEmpty()
+            CodexModel(id, efforts)
+        }.distinctBy { it.id }
     }
 
     suspend fun startThread(cwd: String, model: String, approvalPolicy: String = "on-request",

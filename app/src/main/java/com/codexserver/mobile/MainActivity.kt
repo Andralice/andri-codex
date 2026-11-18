@@ -1278,7 +1278,7 @@ private fun ModelPicker(vm: MobileViewModel, enabled: Boolean = true) {
         DropdownMenu(expanded, { expanded = false }, shape = RoundedCornerShape(18.dp),
             containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp,
             shadowElevation = 8.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            (listOf("gpt-6-luna", "gpt-6.1-sol") + vm.model).distinct().forEach { value ->
+            vm.availableModels.forEach { value ->
                 DropdownMenuItem(leadingIcon = { LineIcon("sliders") }, text = { Text(value + if (value == vm.model) "  ✓" else "") }, enabled = enabled,
                     onClick = { vm.selectModel(value); expanded = false })
             }
