@@ -27,7 +27,8 @@ internal data class WorkspaceMedia(val source: String, val video: Boolean, val l
     } else label
 }
 
-internal data class MediaDownloadState(val busy: Boolean = false, val saved: Boolean = false, val error: String = "")
+internal data class MediaDownloadState(val busy: Boolean = false, val saved: Boolean = false, val error: String = "",
+    val progress: MediaTransferProgress = MediaTransferProgress())
 
 internal fun mediaSourceHash(source: String): String = MessageDigest.getInstance("SHA-256")
     .digest(source.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

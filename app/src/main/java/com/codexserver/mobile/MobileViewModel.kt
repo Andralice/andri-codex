@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkManager
+import androidx.work.WorkInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -135,7 +137,37 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         ?.also { pendingMediaExport = null }
     internal var mediaCacheRevision by mutableIntStateOf(0)
         private set
-    internal fun mediaDownloadFor(key: String): MediaDownloadState = mediaDownloads[key] ?: MediaDownloadState()
+    internal fun mediaDownloadFor(key: String): MediaDownloadState = mediaDownloads[key]
+        ?: MediaDownloadState(saved = settings.contains("media.saved.$key"))
+
+    private fun observeVideoDownloads() {
+        val checkpoints = getApplication<Application>().getSharedPreferences(VIDEO_PROGRESS_PREFERENCES, 0)
+        viewModelScope.launch {
+            WorkManager.getInstance(getApplication<Application>()).getWorkInfosByTagFlow(VideoDownloadScheduler.TAG)
+                .collectLatest { infos ->
+                    infos.forEach { info ->
+                        val key = info.tags.firstOrNull { it.startsWith("media-key:") }?.removePrefix("media-key:") ?: return@forEach
+                        if (settings.getString("media.work.$key", null) != info.id.toString()) return@forEach
+                        val persisted = runCatching { JSONObject(checkpoints.getString(key, "{}").orEmpty()) }.getOrNull()
+                        val data = if (info.state == WorkInfo.State.SUCCEEDED) info.outputData else info.progress
+                        var progress = MediaTransferProgress(
+                            data.getString("stage") ?: persisted?.optString("stage")?.takeIf { it.isNotBlank() } ?: "等待网络或调度",
+                            data.getLong("downloaded", persisted?.optLong("downloaded") ?: 0L),
+                            data.getLong("total", persisted?.optLong("total") ?: 0L), data.getLong("speed", 0L))
+                        if (info.state == WorkInfo.State.ENQUEUED) progress = progress.copy(
+                            stage = if (info.runAttemptCount > 0) "等待网络恢复后自动续传" else "等待网络或下载调度", bytesPerSecond = 0)
+                        val wasSaved = mediaDownloads[key]?.saved == true
+                        mediaDownloads[key] = when (info.state) {
+                            WorkInfo.State.SUCCEEDED -> MediaDownloadState(saved = true, progress = progress)
+                            WorkInfo.State.FAILED -> MediaDownloadState(error = info.outputData.getString("error") ?: "视频下载失败，点击可从断点重试", progress = progress)
+                            WorkInfo.State.CANCELLED -> MediaDownloadState(error = "下载已停止，点击可从断点继续", progress = progress)
+                            else -> MediaDownloadState(busy = true, progress = progress)
+                        }
+                        if (!wasSaved && info.state == WorkInfo.State.SUCCEEDED) mediaCacheRevision++
+                    }
+                }
+        }
+    }
 
     internal fun cachedWorkspaceMedia(media: WorkspaceMedia, baseDirectory: String): File? {
         val cache = getApplication<Application>().cacheDir
@@ -148,8 +180,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
             else -> null
         }
+        val durableRoot = File(getApplication<Application>().filesDir, "video-downloads").canonicalPath + "/"
         return listOfNotNull(recorded, fallback).firstOrNull {
-            it.isFile && it.length() > 0L && it.canonicalPath.startsWith(cache.canonicalPath + "/")
+            it.isFile && it.length() > 0L && (it.canonicalPath.startsWith(cache.canonicalPath + "/") ||
+                it.canonicalPath.startsWith(durableRoot))
         }
     }
 
@@ -178,6 +212,21 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         if (mediaDownloadFor(media.key).busy) return
         mediaDownloads[media.key] = MediaDownloadState(busy = true)
+        if (media.video) {
+            // Finish the short durable enqueue even if this UI session is destroyed.
+            viewModelScope.launch(NonCancellable) {
+                try {
+                    if (!VideoDownloadScheduler.enqueue(getApplication(), media, baseDirectory, destination, publishVideoToGallery)) {
+                        discardMediaDownload(destination)
+                    }
+                } catch (failure: Exception) {
+                    discardMediaDownload(destination)
+                    mediaDownloads[media.key] = MediaDownloadState(error = failure.message ?: "无法创建视频下载任务")
+                    if (failure is CancellationException) throw failure
+                }
+            }
+            return
+        }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -503,6 +552,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     val activeThread: CodexThread? get() = threads.firstOrNull { it.id == activeId }
 
     init {
+        observeVideoDownloads()
         settings.all.forEach { (key, value) ->
             if (key.startsWith("thread.") && key.endsWith(".lastTaskStatus") && value is String) {
                 taskStatuses[key.removePrefix("thread.").removeSuffix(".lastTaskStatus")] = value
@@ -1795,26 +1845,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     suspend fun cacheWorkspaceVideo(path: String, baseDirectory: String): File = withContext(Dispatchers.IO) {
-        val folder = File(getApplication<Application>().cacheDir, "workspace-videos").apply { mkdirs() }
-        val key = MessageDigest.getInstance("SHA-256").digest((baseDirectory + "\n" + path).toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        val target = File(folder, "$key.${path.substringAfterLast('.', "mp4").lowercase()}")
-        if (target.isFile && target.length() > 0L) {
-            target.setLastModified(System.currentTimeMillis())
-            rememberMediaCache(path, baseDirectory, target)
-            return@withContext target
-        }
+        val connection = client ?: error("SSH 已断开，无法读取服务器视频")
+        val server = mediaServerIdentity(host, port.toIntOrNull() ?: 22, username)
+        val key = VideoDownloadFiles.key(server, baseDirectory, path)
         val download = workspaceVideoJobs[key] ?: run {
             val created = viewModelScope.async(Dispatchers.IO) {
-                if (target.isFile && target.length() > 0L) return@async target
-                val connection = client ?: error("SSH 已断开，无法读取服务器视频")
-                val staged = File(folder, "$key-${java.util.UUID.randomUUID()}.tmp")
-                try {
-                    connection.downloadWorkspaceVideo(path, baseDirectory, staged)
-                    check(staged.renameTo(target)) { "无法缓存服务器视频" }
-                    CacheMaintenance.trim(getApplication<Application>().cacheDir)
-                    target
-                } finally { staged.delete() }
+                VideoDownloadFiles.cache(getApplication(), key, path, baseDirectory, connection)
             }
             val existing = workspaceVideoJobs.putIfAbsent(key, created)
             if (existing != null) {

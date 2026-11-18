@@ -846,7 +846,7 @@ class SshCodexClient(
      * session can be replaced when the WebSocket reconnects, which would close
      * an otherwise healthy SFTP transfer halfway through a video.
      */
-    private fun openDedicatedSftp(): Pair<Session, ChannelSftp> {
+    private fun openDedicatedSftp(onSession: (Session) -> Unit = {}): Pair<Session, ChannelSftp> {
         val jsch = JSch()
         JSch.setConfig("ssh-ed25519", "com.jcraft.jsch.bc.SignatureEd25519")
         JSch.setConfig("keypairgen.eddsa", "com.jcraft.jsch.bc.KeyPairGenEdDSA")
@@ -871,6 +871,7 @@ class SshCodexClient(
             // app-server operations while opening the large-file channel.
             timeout = VIDEO_SFTP_CONNECT_TIMEOUT_MS
         }
+        onSession(transferSession)
         try {
             transferSession.connect(VIDEO_SFTP_CONNECT_TIMEOUT_MS)
             val sftp = (transferSession.openChannel("sftp") as? ChannelSftp)
@@ -1207,7 +1208,8 @@ class SshCodexClient(
         } finally { sftp.disconnect() }
     }
 
-    suspend fun downloadWorkspaceVideo(path: String, baseDirectory: String, destination: File): String = withContext(Dispatchers.IO) {
+    internal suspend fun downloadWorkspaceVideo(path: String, baseDirectory: String, destination: File,
+        onProgress: suspend (MediaTransferProgress) -> Unit = {}): String = withContext(Dispatchers.IO) {
         require(path.isNotBlank() && '\u0000' !in path) { "视频路径无效" }
         val candidate = if (path.startsWith("/")) path else baseDirectory.trimEnd('/') + "/" + path
         destination.parentFile?.mkdirs()
@@ -1216,39 +1218,65 @@ class SshCodexClient(
             currentCoroutineContext().ensureActive()
             var transferSession: Session? = null
             var sftp: ChannelSftp? = null
+            val liveSession = java.util.concurrent.atomic.AtomicReference<Session?>()
+            val lastActivity = AtomicLong(System.nanoTime())
+            val idleTimeout = AtomicLong(VIDEO_SFTP_CONNECT_TIMEOUT_MS.toLong())
+            val parentContext = currentCoroutineContext()
+            val watchdog = launch(Dispatchers.IO) {
+                try {
+                    while (isActive) {
+                        delay(1_000)
+                        if ((System.nanoTime() - lastActivity.get()) / 1_000_000 > idleTimeout.get()) {
+                            liveSession.get()?.disconnect()
+                            break
+                        }
+                    }
+                } finally {
+                    if (!parentContext.isActive) liveSession.get()?.disconnect()
+                }
+            }
             try {
-                val opened = openDedicatedSftp()
+                onProgress(MediaTransferProgress("正在连接视频下载通道", destination.length()))
+                val opened = openDedicatedSftp { liveSession.set(it) }
                 transferSession = opened.first
                 sftp = opened.second
+                idleTimeout.set(60_000)
+                lastActivity.set(System.nanoTime())
+                onProgress(MediaTransferProgress("正在读取服务器文件信息", destination.length()))
                 val resolved = sftp.realpath(candidate)
                 check(isReadableWorkspacePath(resolved)) { "只允许下载工作区或大文件区中的视频" }
                 check(resolved.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS) { "文件不是受支持的视频格式" }
                 val attrs = sftp.lstat(resolved)
                 check(attrs.isReg && !attrs.isLink) { "视频路径不是普通文件" }
                 check(attrs.size in 1..MAX_CHAT_VIDEO_BYTES) { "视频文件为空或超过 4 GB" }
-                val existing = destination.length()
-                check(existing <= attrs.size) { "本地视频临时文件大于服务器文件" }
-                if (existing == attrs.size) return@withContext resolved.substringAfterLast('/')
-
-                if (existing > 0L) {
-                    // Keep the partial file and resume from its current length
-                    // after a transient SSH/SFTP failure.
-                    FileOutputStream(destination, true).use { output ->
-                        sftp.get(resolved, output, null, ChannelSftp.RESUME, existing)
-                    }
-                } else {
-                    destination.outputStream().use { output ->
-                        sftp.get(resolved, output)
+                val identity = "$resolved\n${attrs.size}\n${attrs.getMTime()}"
+                val existing = prepareMediaPartial(destination, identity, attrs.size)
+                if (existing < attrs.size) {
+                    sftp.get(resolved, null, existing).use { input ->
+                        appendMediaPartial(destination, attrs.size, existing, input) { progress ->
+                            lastActivity.set(System.nanoTime())
+                            onProgress(progress)
+                        }
                     }
                 }
-                check(destination.length() == attrs.size) { "视频下载不完整" }
+                lastActivity.set(System.nanoTime())
+                onProgress(MediaTransferProgress("正在校验视频", attrs.size, attrs.size))
+                val after = sftp.lstat(resolved)
+                if (after.size != attrs.size || after.getMTime() != attrs.getMTime()) {
+                    destination.delete()
+                    throw IOException("服务器视频已更新，将重新下载新文件")
+                }
+                onProgress(MediaTransferProgress("下载完成", attrs.size, attrs.size))
                 return@withContext resolved.substringAfterLast('/')
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 lastFailure = error
+                if (error is IllegalArgumentException || error is IllegalStateException) throw error
+                onProgress(MediaTransferProgress("连接中断，正在重试（${attempt + 1}/$MAX_VIDEO_DOWNLOAD_ATTEMPTS）", destination.length()))
                 if (attempt + 1 < MAX_VIDEO_DOWNLOAD_ATTEMPTS) delay((attempt + 1) * VIDEO_RETRY_DELAY_MS)
             } finally {
+                watchdog.cancel()
                 sftp?.disconnect()
                 transferSession?.disconnect()
             }

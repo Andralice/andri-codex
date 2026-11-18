@@ -2612,6 +2612,7 @@ private fun WorkspaceMediaRow(entry: WorkspaceMedia, vm: MobileViewModel, cwd: S
                     Text(entry.label, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val available = cached != null || entry.source.startsWith("data:image/", true)
                     val status = when {
+                        transfer.busy -> "下载中"
                         transfer.saved -> "已保存"
                         available -> "已下载"
                         else -> "未下载"
@@ -2624,6 +2625,15 @@ private fun WorkspaceMediaRow(entry: WorkspaceMedia, vm: MobileViewModel, cwd: S
                 }) {
                     if (transfer.busy) SmallProgress("正在下载媒体") else LineIcon("download", Modifier.size(20.dp))
                 }
+            }
+            if (transfer.busy) Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val fraction = transfer.progress.fraction
+                if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(transfer.progress.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.video) Text("离开页面仍会下载，网络中断后自动续传", fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (transfer.error.isNotBlank()) Text(transfer.error, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
