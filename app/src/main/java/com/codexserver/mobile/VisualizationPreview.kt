@@ -3,12 +3,36 @@ package com.codexserver.mobile
 import java.io.File
 import java.net.URI
 import org.json.JSONObject
+import org.commonmark.node.AbstractVisitor
+import org.commonmark.node.Link
+import org.commonmark.node.Text
+import org.commonmark.parser.Parser
 
 // Android's ICU rejects an unescaped closing brace even though desktop Java accepts it.
 private val visualizationToken = Regex("\uE200visualize\uE202(\\{[^\\r\\n]*?\\})\uE201")
 private val markdownCodeOrPreview = Regex(
     "(?m)^ {0,3}(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?(?:^ {0,3}\\1[ \\t]*$|\\z)|(`+)[\\s\\S]*?\\2|${visualizationToken.pattern}"
 )
+private val htmlAttachmentParser = Parser.builder().build()
+private val bareHtmlReference = Regex("""(?:https?://|file://|/|\./|\.\./|codex/)[^\s<>"'`]+""", RegexOption.IGNORE_CASE)
+
+/** Expose pages as attachments, including plain paths; code examples stay literal. */
+internal fun workspaceHtmlAttachments(markdown: String, baseDirectory: String): List<WorkspacePreviewTarget> {
+    val pages = linkedMapOf<String, WorkspacePreviewTarget>()
+    fun add(link: String) {
+        val target = workspacePreviewTarget(link, baseDirectory) ?: return
+        if (target.extension in workspaceHtmlExtensions && target.location == null) pages.putIfAbsent(target.source, target)
+    }
+    htmlAttachmentParser.parse(markdown).accept(object : AbstractVisitor() {
+        override fun visit(link: Link) { add(link.destination) }
+        override fun visit(text: Text) {
+            bareHtmlReference.findAll(text.literal).forEach { match ->
+                add(match.value.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}'))
+            }
+        }
+    })
+    return pages.values.toList()
+}
 
 /** Turn host-specific references into ordinary links; examples inside code stay literal. */
 internal fun visualizationPreviewLinks(markdown: String): String = markdownCodeOrPreview.replace(markdown) { match ->
@@ -17,7 +41,7 @@ internal fun visualizationPreviewLinks(markdown: String): String = markdownCodeO
         ?: return@replace match.value
     if (!isReadableWorkspacePath(path)) return@replace match.value
     val target = workspacePreviewTarget(workspaceFileLink(path), WORKSPACE_ROOT)
-    if (target == null || target.remote || target.extension !in setOf("html", "htm")) match.value
+    if (target == null || target.remote || target.extension !in workspaceHtmlExtensions) match.value
     else "[打开交互预览](<${target.navigationLink}>)"
 }
 

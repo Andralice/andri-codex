@@ -14,6 +14,7 @@ internal val workspaceTextExtensions = setOf(
     "sql", "rs", "go", "c", "h", "cpp", "hpp", "ini", "conf", "properties", "srt", "vtt", "svg"
 )
 internal val workspaceMarkdownExtensions = setOf("md", "markdown", "mdown")
+internal val workspaceHtmlExtensions = setOf("html", "htm")
 internal enum class WorkspacePreviewKind { FILE, IMAGE, VIDEO, WEB, DIRECTORY }
 
 internal fun workspaceFileLink(path: String): String = URI(null, null, path, null).toASCIIString().replace(":", "%3A")
@@ -50,6 +51,7 @@ internal fun workspacePreviewTarget(value: String, base: String): WorkspacePrevi
         !target.remote && (source.endsWith('/') || source in workspaceReadRoots) -> WorkspacePreviewKind.DIRECTORY
         // Keep the browser's existing HTTPS policy for cleartext links.
         source.startsWith("http://", true) -> WorkspacePreviewKind.WEB
+        target.remote && target.extension in workspaceHtmlExtensions -> WorkspacePreviewKind.WEB
         target.extension in chatImageExtensions -> WorkspacePreviewKind.IMAGE
         target.extension in SshCodexClient.VIDEO_EXTENSIONS -> WorkspacePreviewKind.VIDEO
         !target.remote || target.extension in workspaceTextExtensions ||

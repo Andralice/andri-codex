@@ -36,6 +36,26 @@ class VisualizationPreviewCheck {
         assertTrue(visualizationPreviewLinks(marker(storage)).contains(workspaceFileLink(storage)))
     }
 
+    @Test fun htmlPagesHaveClickableAttachmentsForMarkdownLinksBarePathsAndNativePreviews() {
+        val link = workspaceFileLink(path)
+        val remote = "https://example.com/docs/页面.HTM?mode=1#section"
+        val markdown = "[本地网页](<$link>)\n$link\ncodex/other.html，\n" +
+            "[在线网页]($remote)\n$remote\n${marker(path)}\n/mnt/codex-storage/网页/index.html"
+        val targets = workspaceHtmlAttachments(visualizationPreviewLinks(markdown), project)
+        assertEquals(listOf(path, "$project/codex/other.html", java.net.URI(remote).toASCIIString(),
+            "$CODEX_STORAGE_ROOT/网页/index.html"), targets.map { it.source })
+        assertEquals(WorkspacePreviewKind.WEB, targets[2].kind)
+        assertEquals(targets, targets.map { workspacePreviewTarget(it.navigationLink, project) })
+    }
+
+    @Test fun htmlAttachmentDetectionIgnoresCodeExamplesOtherFilesAndInaccessiblePaths() {
+        val markdown = "`codex/example.html`\n```html\n[代码](codex/code.html)\n```\n" +
+            "~~~text\n$project/codex/example.htm\n~~~\n" +
+            "[不允许](javascript:alert(1))\n/etc/private.html\n[源码](codex/page.html#L20)\n" +
+            "[图片](codex/图.png)\nhttps://example.com/image.png\n[目录](codex/)"
+        assertTrue(workspaceHtmlAttachments(markdown, project).isEmpty())
+    }
+
     @Test fun examplesInsideCodeAndMalformedOrUnsupportedReferencesStayLiteral() {
         for (source in listOf("`${marker(path)}`", "```text\n${marker(path)}\n```",
             "~~~text\n${marker(path)}\n~~~", "```text\n${marker(path)}",

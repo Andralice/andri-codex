@@ -96,6 +96,20 @@ class WorkspacePreviewCheck {
         assertEquals(WorkspacePreviewKind.WEB, workspacePreviewTarget("https://example.com/guide", project)?.kind)
     }
 
+    @Test fun onlineHtmlPagesUseBrowserNavigationWhileWorkspaceHtmlKeepsFilePreview() {
+        for (url in listOf("https://example.com/docs/index.html", "https://example.com/page.HTM?lang=zh#details",
+            "https://example.com/", "https://example.com/app")) {
+            val target = workspacePreviewTarget(url, project)!!
+            assertEquals(url, WorkspacePreviewKind.WEB, target.kind)
+            assertEquals(url, target.source)
+            assertEquals(target, workspacePreviewTarget(target.navigationLink, project))
+        }
+        val local = workspacePreviewTarget("codex/页面.html", project)!!
+        assertEquals(WorkspacePreviewKind.FILE, local.kind)
+        assertFalse(local.remote)
+        assertEquals("$project/codex/assets/style.css", workspacePreviewTarget("assets/style.css", local.linkBase)?.source)
+    }
+
     @Test fun documentNavigationKeepsTheExistingWorkspaceAndSchemeBoundaries() {
         for (link in listOf("javascript:alert(1)", "file://other-host$project/prompt.md", "/etc/passwd", "../../../外部.md")) {
             assertNull(link, workspacePreviewTarget(link, project))

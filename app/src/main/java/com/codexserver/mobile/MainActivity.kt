@@ -800,6 +800,7 @@ private fun WorkspaceBrowser(
     var title by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
+    var pageProgress by remember { mutableIntStateOf(0) }
     var canGoBack by remember { mutableStateOf(false) }
     var extracting by remember { mutableStateOf(false) }
     var navigation by remember { mutableIntStateOf(0) }
@@ -830,6 +831,7 @@ private fun WorkspaceBrowser(
                     navigation++
                     extracting = false
                     loading = true
+                    pageProgress = 0
                     error = ""
                     title = ""
                     if (httpsBrowserUrl(url) == null) {
@@ -864,6 +866,13 @@ private fun WorkspaceBrowser(
                     }
                 }
 
+                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: android.webkit.WebResourceResponse) {
+                    if (request.isForMainFrame) {
+                        error = "无法打开网页（HTTP ${response.statusCode}）"
+                        loading = false
+                    }
+                }
+
                 override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                     if (httpsBrowserUrl(url) != null) {
                         if (url != currentUrl) {
@@ -876,7 +885,9 @@ private fun WorkspaceBrowser(
                     }
                 }
             }
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView, newProgress: Int) { pageProgress = newProgress }
+            }
         }
     }
     DisposableEffect(pageView) {
@@ -981,6 +992,7 @@ private fun WorkspaceBrowser(
                 }
             }
         }
+        if (loading) LinearProgressIndicator(progress = { pageProgress / 100f }, modifier = Modifier.fillMaxWidth())
         if (browserOpened && currentUrl.isNotBlank()) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Text(title.ifBlank { currentUrl }, Modifier.weight(1f), fontSize = 12.sp,
@@ -2229,7 +2241,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     var sourcePositioned by rememberSaveable(target.navigationLink) { mutableStateOf(false) }
     val textDensity = LocalDensity.current
     val isMarkdown = target.extension in workspaceMarkdownExtensions
-    val isHtml = target.extension in setOf("html", "htm")
+    val isHtml = target.extension in workspaceHtmlExtensions
     val isText = target.extension in workspaceTextExtensions || target.name.startsWith('.') || '.' !in target.name
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val source = file
@@ -2308,7 +2320,9 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
             }
             file == null || (isText && text == null) -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { SmallProgress("正在读取文件") }
             isHtml && !raw -> html?.let { document ->
-                WorkspaceHtmlPreview(document, target, vm, onOpenLink, Modifier.weight(1f))
+                key(target.source, attempt) {
+                    WorkspaceHtmlPreview(document, target, vm, onOpenLink, onReload = { attempt++ }, modifier = Modifier.weight(1f))
+                }
             }
             isText -> {
                 val content = text!!
@@ -3500,6 +3514,25 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
     plainImagePaths.filterNot { it in excludedImages }.forEach { path ->
         key("plain-image-attachment:$path") {
             ChatWorkspaceImageAttachment(path, vm, baseDirectory, onOpenLink)
+        }
+    }
+    val htmlPages = remember(bounded, baseDirectory) { workspaceHtmlAttachments(bounded, baseDirectory) }
+    htmlPages.forEach { page ->
+        key("html-attachment:${page.source}") {
+            Surface(shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.clickable { onOpenLink(page.navigationLink) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LineIcon("link", Modifier.size(24.dp), MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f)) {
+                        Text(page.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        Text("HTML 网页 · 点击打开", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    LineIcon("chevron", Modifier.size(18.dp))
+                }
+            }
         }
     }
     videoAttachmentPaths(compacted).forEach { path ->
