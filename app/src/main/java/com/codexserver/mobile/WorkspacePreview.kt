@@ -15,7 +15,7 @@ internal val workspaceTextExtensions = setOf(
 )
 internal val workspaceMarkdownExtensions = setOf("md", "markdown", "mdown")
 internal val workspaceHtmlExtensions = setOf("html", "htm")
-internal enum class WorkspacePreviewKind { FILE, IMAGE, VIDEO, WEB, DIRECTORY }
+internal enum class WorkspacePreviewKind { FILE, IMAGE, VIDEO, AUDIO, WEB, DIRECTORY }
 
 internal fun workspaceFileLink(path: String): String = URI(null, null, path, null).toASCIIString().replace(":", "%3A")
 
@@ -54,6 +54,7 @@ internal fun workspacePreviewTarget(value: String, base: String): WorkspacePrevi
         target.remote && target.extension in workspaceHtmlExtensions -> WorkspacePreviewKind.WEB
         target.extension in chatImageExtensions -> WorkspacePreviewKind.IMAGE
         target.extension in SshCodexClient.VIDEO_EXTENSIONS -> WorkspacePreviewKind.VIDEO
+        target.extension in workspaceAudioMimeTypes -> WorkspacePreviewKind.AUDIO
         !target.remote || target.extension in workspaceTextExtensions ||
             target.extension in setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "7z", "rar", "apk") -> WorkspacePreviewKind.FILE
         else -> WorkspacePreviewKind.WEB

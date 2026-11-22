@@ -37,12 +37,16 @@ private val mediaParser = Parser.builder().build()
 private val bareMediaLink = Regex("""(?<![\w/])(?:https://|file://|/|\./|\.\./|codex/)[^\s<>"'`]+""", RegexOption.IGNORE_CASE)
 
 /** Parse destinations rather than filenames, so query strings and encoded spaces survive. */
-internal fun videoAttachmentPaths(text: String): List<String> {
+internal fun videoAttachmentPaths(text: String): List<String> = mediaAttachmentPaths(text, SshCodexClient.VIDEO_EXTENSIONS)
+
+internal fun audioAttachmentPaths(text: String): List<String> = mediaAttachmentPaths(text, workspaceAudioMimeTypes.keys)
+
+private fun mediaAttachmentPaths(text: String, extensions: Set<String>): List<String> {
     val paths = linkedSetOf<String>()
     fun add(value: String) {
         val extension = runCatching { URI(value.replace(" ", "%20")).path.orEmpty().substringAfterLast('.', "").lowercase() }
             .getOrDefault("")
-        if (extension in SshCodexClient.VIDEO_EXTENSIONS) paths += value
+        if (extension in extensions) paths += value
     }
     mediaParser.parse(text).accept(object : AbstractVisitor() {
         override fun visit(link: Link) { add(link.destination) }

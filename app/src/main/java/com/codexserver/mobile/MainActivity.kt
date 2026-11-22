@@ -2191,7 +2191,7 @@ private fun WorkspaceLinkPreview(vm: MobileViewModel, threadId: String, project:
                 }
                 else ChatVideoSource(target.source, vm, target.linkBase)
             }
-            WorkspacePreviewKind.FILE -> WorkspaceDocumentPreview(vm, threadId, project, target, onOpenLink, Modifier.weight(1f))
+            WorkspacePreviewKind.FILE, WorkspacePreviewKind.AUDIO -> WorkspaceDocumentPreview(vm, threadId, project, target, onOpenLink, Modifier.weight(1f))
             WorkspacePreviewKind.DIRECTORY -> WorkspaceDirectoryPreview(vm, target, onOpenLink, Modifier.weight(1f))
             WorkspacePreviewKind.IMAGE -> Unit
         }
@@ -2242,6 +2242,8 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     val textDensity = LocalDensity.current
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isHtml = target.extension in workspaceHtmlExtensions
+    val isAudio = target.kind == WorkspacePreviewKind.AUDIO
+    val fileMime = workspaceAudioMimeTypes[target.extension] ?: URLConnection.guessContentTypeFromName(target.name) ?: "application/octet-stream"
     val isText = target.extension in workspaceTextExtensions || target.name.startsWith('.') || '.' !in target.name
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val source = file
@@ -2258,6 +2260,8 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
         }
     }
     LaunchedEffect(target.source, attempt, vm.connected) {
+        // A fully loaded audio file remains playable when SSH reconnects.
+        if (isAudio && file?.isFile == true) return@LaunchedEffect
         error = ""
         file = null
         text = null
@@ -2281,12 +2285,21 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
         runCatching {
             val uri = FileProvider.getUriForFile(context, context.packageName + ".files", cached)
             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                type = URLConnection.guessContentTypeFromName(target.name) ?: "application/octet-stream"
+                type = fileMime
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TITLE, target.name)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }, "分享文件"))
         }.onFailure { status = "分享失败：${it.message}" }
+    }
+    fun openDocument() {
+        runCatching {
+            val uri = FileProvider.getUriForFile(context, context.packageName + ".files", checkNotNull(file))
+            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, fileMime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+        }.onFailure { status = "无法打开：${it.message}" }
     }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2307,6 +2320,8 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                         onClick = { documentMenu = false; saveLauncher.launch(target.name) })
                     DropdownMenuItem(text = { Text("分享文件") }, leadingIcon = { LineIcon("share") }, enabled = file != null,
                         onClick = { documentMenu = false; shareDocument() })
+                    if (isAudio) DropdownMenuItem(text = { Text("用其他应用打开") }, leadingIcon = { LineIcon("link") }, enabled = file != null,
+                        onClick = { documentMenu = false; openDocument() })
                     file?.let { cached -> DropdownMenuItem(text = { Text(formatVideoSize(cached.length())) }, enabled = false, onClick = {}) }
                 }
             }
@@ -2318,7 +2333,12 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                 Text(error, color = MaterialTheme.colorScheme.error)
                 TextButton({ attempt++ }) { ActionLabel("refresh", "重试") }
             }
-            file == null || (isText && text == null) -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { SmallProgress("正在读取文件") }
+            file == null || (isText && text == null) -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                SmallProgress(if (isAudio) "正在加载音频" else "正在读取文件")
+            }
+            isAudio -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                WorkspaceAudioPlayer(checkNotNull(file), onRetry = { file = null; attempt++ })
+            }
             isHtml && !raw -> html?.let { document ->
                 key(target.source, attempt) {
                     WorkspaceHtmlPreview(document, target, vm, onOpenLink, onReload = { attempt++ }, modifier = Modifier.weight(1f))
@@ -2362,15 +2382,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
             }
             else -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("该格式暂不支持直接阅读，可以保存或使用手机上的兼容应用打开。", fontSize = 13.sp)
-                TextButton(onClick = {
-                    runCatching {
-                        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", checkNotNull(file))
-                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, URLConnection.guessContentTypeFromName(target.name) ?: "application/octet-stream")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        })
-                    }.onFailure { status = "无法打开：${it.message}" }
-                }) { ActionLabel("link", "用其他应用打开") }
+                TextButton(onClick = ::openDocument) { ActionLabel("link", "用其他应用打开") }
             }
         }
     }
@@ -3529,6 +3541,26 @@ private fun ChatMarkdown(markdown: String, vm: MobileViewModel, baseDirectory: S
                         Text(page.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                             overflow = TextOverflow.Ellipsis)
                         Text("HTML 网页 · 点击打开", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    LineIcon("chevron", Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+    val audioPages = remember(compacted, baseDirectory) {
+        audioAttachmentPaths(compacted).mapNotNull { workspacePreviewTarget(it, baseDirectory) }
+            .filter { it.kind == WorkspacePreviewKind.AUDIO }.distinctBy { it.source }
+    }
+    audioPages.forEach { audio ->
+        key("audio-attachment:${audio.source}") {
+            Surface(shape = RoundedCornerShape(13.dp), color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.clickable { onOpenLink(audio.navigationLink) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LineIcon("play", Modifier.size(24.dp), MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f)) {
+                        Text(audio.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("音频 · 点击试听", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     LineIcon("chevron", Modifier.size(18.dp))
                 }
