@@ -803,14 +803,7 @@ private fun AttachmentRow(label: String, icon: String, onRemove: () -> Unit) {
 @android.annotation.SuppressLint("ProduceStateDoesNotAssignValue")
 @Composable
 private fun AttachmentThumbnail(source: String) {
-    val bitmap by produceState<Bitmap?>(null, source) {
-        value = withContext(Dispatchers.Default) {
-            runCatching { decodeChatBitmap(Base64.decode(source.substringAfter(','), Base64.DEFAULT), 16_384) }.getOrNull()
-        }
-    }
-    val image = bitmap
-    if (image != null) Image(image.asImageBitmap(), contentDescription = "待发送图片", modifier = Modifier.size(36.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
-    else Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) { LineIcon("eye", Modifier.size(18.dp)) }
+    ChatImage(source, compact = true, modifier = Modifier.size(48.dp))
 }
 
 @Composable
@@ -1985,21 +1978,58 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, project: Str
         if (delta > 0f) onBack else null
     }
     CompositionLocalProvider(LocalMessageNavigation provides swipeTarget) {
-    Column(modifier.background(MaterialTheme.colorScheme.background).pageNavigationSwipe(target = swipeTarget)) {
-        Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onBack, Modifier.size(40.dp).semantics { contentDescription = "返回聊天" }) { LineIcon("back", Modifier.size(19.dp)) }
-            Surface(onClick = { tabsExpanded = !tabsExpanded }, modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
-                shape = RoundedCornerShape(13.dp), color = if (tabsExpanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f) else Color.Transparent) {
-                Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    LineIcon(workspaceTabIcon(active?.kind ?: 7), Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(active?.title ?: "新标签页", Modifier.weight(1f).padding(horizontal = 8.dp), fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${session.tabs.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(if (tabsExpanded) "⌃" else "⌄", Modifier.padding(start = 7.dp), fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val showingPreview = selectedTab == 5 && preview != null
+    Column(modifier.background(MaterialTheme.colorScheme.background)
+        .then(if (showingPreview) Modifier.safeDrawingPadding() else Modifier)
+        .pageNavigationSwipe(target = swipeTarget)) {
+        if (showingPreview) {
+            val target = checkNotNull(preview)
+            val returnFromPreview = if (previewSources.size > 1) onPreviewBack else onClosePreview
+            val canQuote = !target.remote && target.kind != WorkspacePreviewKind.DIRECTORY
+            Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(returnFromPreview, Modifier.size(40.dp).semantics {
+                    contentDescription = if (previewSources.size > 1) "返回上一个预览" else "返回工作区"
+                }) { LineIcon("back", Modifier.size(19.dp)) }
+                Surface(onClick = { tabsExpanded = !tabsExpanded }, modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
+                    shape = RoundedCornerShape(13.dp), color = if (tabsExpanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f) else Color.Transparent) {
+                    Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        LineIcon(workspaceTabIcon(active?.kind ?: 5), Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(target.displayName, Modifier.weight(1f).padding(horizontal = 8.dp), fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${session.tabs.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (tabsExpanded) "⌃" else "⌄", Modifier.padding(start = 7.dp), fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (canQuote) TextButton(onClick = {
+                    vm.addWorkspaceFileContext(target.source, target.name)
+                    onBack()
+                }, enabled = vm.connected, contentPadding = PaddingValues(horizontal = 5.dp),
+                    modifier = Modifier.semantics { contentDescription = "引用到聊天" }) {
+                    LineIcon("plus", Modifier.size(15.dp))
+                    Text("引用", fontSize = 12.sp)
+                }
+                IconButton(onNewTab, Modifier.size(40.dp).semantics { contentDescription = "新建标签页" }) {
+                    LineIcon("plus", Modifier.size(19.dp))
                 }
             }
-            IconButton(onNewTab, Modifier.size(40.dp).semantics { contentDescription = "新建标签页" }) { LineIcon("plus", Modifier.size(19.dp)) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        } else {
+            Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack, Modifier.size(40.dp).semantics { contentDescription = "返回聊天" }) { LineIcon("back", Modifier.size(19.dp)) }
+                Surface(onClick = { tabsExpanded = !tabsExpanded }, modifier = Modifier.weight(1f).padding(horizontal = 3.dp),
+                    shape = RoundedCornerShape(13.dp), color = if (tabsExpanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f) else Color.Transparent) {
+                    Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        LineIcon(workspaceTabIcon(active?.kind ?: 7), Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(active?.title ?: "新标签页", Modifier.weight(1f).padding(horizontal = 8.dp), fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${session.tabs.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (tabsExpanded) "⌃" else "⌄", Modifier.padding(start = 7.dp), fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                IconButton(onNewTab, Modifier.size(40.dp).semantics { contentDescription = "新建标签页" }) { LineIcon("plus", Modifier.size(19.dp)) }
+            }
         }
         if (tabsExpanded) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 6.dp, bottom = 5.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2028,7 +2058,8 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, project: Str
         if (selectedTab == 5 && preview != null) {
             panels.SaveableStateProvider("preview:${thread.id}:$cwd:$tabId") {
                 WorkspaceLinkPreview(vm, thread.id, cwd, preview, previewSources.size > 1, onOpenLink, onPreviewBack,
-                    onClose = onClosePreview, onReturnToChat = onBack, modifier = Modifier.weight(1f).fillMaxWidth())
+                    onClose = onClosePreview, onReturnToChat = onBack, navigationInParent = true,
+                    modifier = Modifier.weight(1f).fillMaxWidth())
             }
         } else panels.SaveableStateProvider("panel:${thread.id}:$cwd:$tabId:${if (selectedTab == 0) path else ""}") {
             when (selectedTab) {
@@ -2204,37 +2235,42 @@ private fun WorkspaceTerminal(vm: MobileViewModel, tabId: String, path: String, 
 @Composable
 private fun WorkspaceLinkPreview(vm: MobileViewModel, threadId: String, project: String, target: WorkspacePreviewTarget, canGoBack: Boolean,
     onOpenLink: (String, String) -> Unit, onBack: () -> Unit, onClose: () -> Unit,
-    onReturnToChat: () -> Unit, modifier: Modifier = Modifier) {
+    onReturnToChat: () -> Unit, navigationInParent: Boolean = false, modifier: Modifier = Modifier) {
     val back = if (canGoBack) onBack else onClose
     if (target.kind == WorkspacePreviewKind.IMAGE) {
         Box(modifier.fillMaxSize().background(Color.Black)) {
             ChatImageSource(target.source, vm, target.linkBase, galleryPage = true)
-            Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding().padding(8.dp)
-                .background(Color.Black.copy(alpha = .5f), RoundedCornerShape(16.dp)),
-                verticalAlignment = Alignment.CenterVertically) {
-                IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回" }) {
-                    LineIcon("back", color = Color.White)
+            if (!navigationInParent) {
+                Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding().padding(8.dp)
+                    .background(Color.Black.copy(alpha = .5f), RoundedCornerShape(16.dp)),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回" }) {
+                        LineIcon("back", color = Color.White)
+                    }
+                    Text(target.name, Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!target.remote) IconButton({ vm.addWorkspaceFileContext(target.source, target.name); onReturnToChat() },
+                        enabled = vm.connected, modifier = Modifier.semantics { contentDescription = "引用到聊天" }) { LineIcon("plus", color = Color.White) }
+                    IconButton(onClose, modifier = Modifier.semantics { contentDescription = "关闭预览" }) { LineIcon("close", color = Color.White) }
                 }
-                Text(target.name, Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (!target.remote) IconButton({ vm.addWorkspaceFileContext(target.source, target.name); onReturnToChat() },
-                    enabled = vm.connected, modifier = Modifier.semantics { contentDescription = "引用到聊天" }) { LineIcon("plus", color = Color.White) }
-                IconButton(onClose, modifier = Modifier.semantics { contentDescription = "关闭预览" }) { LineIcon("close", color = Color.White) }
             }
         }
         return
     }
-    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回" }) { LineIcon("back") }
-            Text(target.displayName, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            IconButton(onClose, Modifier.semantics { contentDescription = "关闭预览" }) { LineIcon("close") }
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .then(if (navigationInParent) Modifier.imePadding() else Modifier.safeDrawingPadding().imePadding())) {
+        if (!navigationInParent) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(back, modifier = Modifier.semantics { contentDescription = if (canGoBack) "返回上一个预览" else "返回" }) { LineIcon("back") }
+                Text(target.displayName, Modifier.weight(1f).padding(horizontal = 8.dp), fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClose, Modifier.semantics { contentDescription = "关闭预览" }) { LineIcon("close") }
+            }
+            if (!target.remote && target.kind != WorkspacePreviewKind.DIRECTORY) TextButton({
+                vm.addWorkspaceFileContext(target.source, target.name)
+                onReturnToChat()
+            }, enabled = vm.connected) { ActionLabel("plus", "引用到聊天") }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
-        if (!target.remote && target.kind != WorkspacePreviewKind.DIRECTORY) TextButton({
-            vm.addWorkspaceFileContext(target.source, target.name)
-            onReturnToChat()
-        }, enabled = vm.connected) { ActionLabel("plus", "引用到聊天") }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         when (target.kind) {
             WorkspacePreviewKind.WEB -> WorkspaceBrowser(target.source, onAdd = null,
                 modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
@@ -2296,6 +2332,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     val sourceHorizontalScroll = rememberWorkspaceReadingScroll(vm, threadId, project, "read-x:${target.navigationLink}")
     var sourcePositioned by rememberSaveable(target.navigationLink) { mutableStateOf(false) }
     val textDensity = LocalDensity.current
+    var wrapSourceLines by rememberSaveable(target.source) { mutableStateOf(true) }
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isHtml = target.extension in workspaceHtmlExtensions
     val isAudio = target.kind == WorkspacePreviewKind.AUDIO
@@ -2370,6 +2407,8 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                         DropdownMenuItem(text = { Text("放大文字") }, enabled = textZoom < 2.5f,
                             onClick = { textZoom = (textZoom + .25f).coerceAtMost(2.5f) })
                         if (textZoom != 1f) DropdownMenuItem(text = { Text("恢复字号") }, onClick = { textZoom = 1f; documentMenu = false })
+                        DropdownMenuItem(text = { Text(if (wrapSourceLines) "关闭自动换行" else "开启自动换行") },
+                            onClick = { wrapSourceLines = !wrapSourceLines; documentMenu = false })
                         HorizontalDivider()
                     }
                     DropdownMenuItem(text = { Text("保存到手机") }, leadingIcon = { LineIcon("download") }, enabled = file != null,
@@ -2415,8 +2454,10 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                         if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
                             onOpenLink = { onOpenLink(it, target.linkBase) })
                         else SelectionContainer {
-                            Text(content.text, Modifier.fillMaxWidth().horizontalScroll(sourceHorizontalScroll).widthIn(max = 8000.dp),
-                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp,
+                            val sourceModifier = if (wrapSourceLines) Modifier.fillMaxWidth()
+                                else Modifier.fillMaxWidth().horizontalScroll(sourceHorizontalScroll).widthIn(max = 8000.dp)
+                            Text(content.text, sourceModifier,
+                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp, softWrap = wrapSourceLines,
                                 onTextLayout = { layout ->
                                     if (sourceOffset != null && !sourcePositioned) {
                                         sourcePositioned = true
@@ -3884,9 +3925,14 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                                     if (entry.progress) {
                                         TimelineProgressSegment(entry.items, vm, onOpenLink)
                                     } else {
-                                        entry.items.forEach { item ->
-                                            commandNumber += 1
-                                            TimelineProcessItem(item, commandNumber, vm, onOpenLink, collapsible = true)
+                                        groupProcessSteps(entry.items).forEach { group ->
+                                            val firstNumber = commandNumber + 1
+                                            commandNumber += group.items.size
+                                            if (group.items.size > 1) {
+                                                TimelineProcessGroup(group, firstNumber, vm, onOpenLink)
+                                            } else {
+                                                TimelineProcessItem(group.items.single(), firstNumber, vm, onOpenLink, collapsible = true)
+                                            }
                                         }
                                     }
                                 }
@@ -3902,6 +3948,48 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                     if (pending != null) TextButton({ vm.openPendingRequest(pending.get("id").toString()) }) {
                         Text("处理此问答或审批", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineProcessGroup(group: ProcessStepGroup, firstNumber: Int, vm: MobileViewModel,
+    onOpenLink: (String) -> Unit) {
+    val running = group.items.any { it.status == "inProgress" || it.status == "pending" }
+    val failed = group.items.any { it.status == "failed" }
+    val lastNumber = firstNumber + group.items.lastIndex
+    val range = if (lastNumber == firstNumber) String.format(Locale.ROOT, "%02d", firstNumber)
+        else "${String.format(Locale.ROOT, "%02d", firstNumber)}–${String.format(Locale.ROOT, "%02d", lastNumber)}"
+    val status = when {
+        running -> "进行中"
+        failed -> "有失败项"
+        else -> "已完成"
+    }
+    var expanded by rememberSaveable("process-group:${group.items.first().id}", running) { mutableStateOf(running) }
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Box(Modifier.size(9.dp).background(
+                    if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondaryContainer, CircleShape))
+                Text(range, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                    color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(group.type, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${group.items.size} 条同类步骤 · $status", fontSize = 11.sp,
+                        color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LineIcon("chevron", Modifier.size(15.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+                    MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            Column(Modifier.fillMaxWidth().padding(start = 17.dp)) {
+                group.items.forEachIndexed { index, item ->
+                    TimelineProcessItem(item, firstNumber + index, vm, onOpenLink, collapsible = true)
                 }
             }
         }
@@ -3964,7 +4052,7 @@ private fun TimelineProcessHeader(item: ChatLine, number: Int, showChevron: Bool
         Text(String.format(Locale.ROOT, "%02d", number), fontSize = 11.sp,
             fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
             color = if (item.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
-        Text(if (item.role == "assistant") item.stage.ifBlank { "进度说明" } else processStepTitle(item),
+        Text(processStepType(item),
             fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f))
@@ -3972,16 +4060,6 @@ private fun TimelineProcessHeader(item: ChatLine, number: Int, showChevron: Bool
             rotationZ = if (expanded) 90f else 0f
         }, MaterialTheme.colorScheme.onSurfaceVariant)
     }
-}
-
-private fun processStepTitle(item: ChatLine): String = when {
-    item.isReasoningSummary -> "思考摘要"
-    item.stage == "文件变更" -> "文件变更"
-    item.stage == "执行计划" -> "执行计划"
-    item.stage == "工具进度" -> "工具进度"
-    item.stage.startsWith("搜索：") -> item.stage
-    item.stage.isBlank() || item.stage.startsWith("{") || item.stage.contains('\n') -> "执行命令"
-    else -> "运行命令"
 }
 
 @Composable
