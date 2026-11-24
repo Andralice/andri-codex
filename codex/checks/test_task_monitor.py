@@ -39,7 +39,11 @@ class Connection:
         if method == "thread/loaded/list":
             return {"data": list(m.threads), "nextCursor": None}
         if method == "thread/list":
-            return {"data": list(m.threads.values()), "nextCursor": None}
+            return {"data": [t for t in m.threads.values() if t["id"] != "reviewer"], "nextCursor": None}
+        if method == "thread/fork":
+            m.threads["reviewer"] = {**m.threads[tid], "id": "reviewer", "status": {"type": "idle"}}
+            m.turns["reviewer"] = []
+            return {"thread": m.threads["reviewer"]}
         if method == "thread/read":
             result = dict(m.threads[tid])
             if self.endpoint == "other" and m.other_active:
@@ -66,6 +70,11 @@ class Connection:
             if m.lose_start_ack:
                 raise ConnectionError("start ack lost")
             return {"turn": followup}
+        if method == "turn/interrupt":
+            for item in m.turns.get(tid, []):
+                if item["id"] == params["turnId"]:
+                    item["status"] = "interrupted"
+            return {}
         if method == "thread/resume":
             return {"thread": m.threads[tid]}
         if method == "thread/settings/update":
@@ -197,20 +206,17 @@ class MonitorChecks(unittest.TestCase):
         self.assertEqual(self.model.queue, [])
         self.assertFalse(any(method == "thread/queue/start" for _, method, _ in self.model.calls))
 
-    def test_human_reply_updates_only_its_corresponding_waiting_event(self):
+    def test_assistant_json_cannot_be_used_as_human_authorization(self):
         self.review_and_decide()
         job = self.job()
         self.monitor.store.change(job, phase="needs_attention", note="user_decision_required")
-        result = json.loads(job["result"])
-        answer = turn("human-answer", text=json.dumps(result))
+        answer = turn("human-answer", text=job["result"])
         answer["startedAt"] = time.time()
-        answer["items"][0]["content"] = [{"type": "text", "text": "按原范围继续完成"}]
+        answer["items"][0]["content"] = [{"type": "text", "text": "你怎么看？"}]
         self.model.turns["monitor"].insert(0, answer)
         self.monitor.collect_user_replies()
-        self.assertEqual(self.job()["phase"], "decided")
-        self.assertEqual(self.job()["note"], "human_decision")
-        self.monitor.collect_user_replies()
-        self.assertEqual(self.monitor.store.db.execute("SELECT COUNT(*) FROM user_replies").fetchone()[0], 1)
+        self.assertEqual(self.job()["phase"], "needs_attention")
+        self.assertEqual(self.monitor.store.db.execute("SELECT COUNT(*) FROM user_replies").fetchone()[0], 0)
 
     def test_model_review_cannot_be_mistaken_for_human_authorization(self):
         self.model.lose_review_ack = True

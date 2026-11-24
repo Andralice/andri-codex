@@ -111,7 +111,10 @@ def main():
                 deadline = time.monotonic() + 10
                 while True:
                     try:
-                        if rpc.call("thread/read", {"threadId": tids[name], "includeTurns": False})["thread"]["status"]["type"] == "idle":
+                        state = rpc.call("thread/read", {"threadId": tids[name], "includeTurns": False})["thread"]["status"]
+                        history = rpc.call("thread/turns/list", {"threadId": tids[name], "limit": 1,
+                                           "itemsView": "full", "sortDirection": "desc"})["data"]
+                        if state["type"] == "idle" and history and history[0]["status"] == "completed":
                             break
                     except RpcError:
                         pass

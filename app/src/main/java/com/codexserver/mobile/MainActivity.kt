@@ -71,6 +71,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.key.*
@@ -81,6 +82,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -2454,9 +2456,12 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                         if (isMarkdown && !raw) ChatMarkdown(content.text, vm, target.linkBase,
                             onOpenLink = { onOpenLink(it, target.linkBase) })
                         else SelectionContainer {
+                            val highlightedSource = remember(content.text, target.extension) {
+                                highlightWorkspaceSource(content.text, target.extension)
+                            }
                             val sourceModifier = if (wrapSourceLines) Modifier.fillMaxWidth()
                                 else Modifier.fillMaxWidth().horizontalScroll(sourceHorizontalScroll).widthIn(max = 8000.dp)
-                            Text(content.text, sourceModifier,
+                            Text(highlightedSource, sourceModifier,
                                 fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp, softWrap = wrapSourceLines,
                                 onTextLayout = { layout ->
                                     if (sourceOffset != null && !sourcePositioned) {
@@ -4073,10 +4078,52 @@ private fun TimelineProcessBody(item: ChatLine, vm: MobileViewModel, onOpenLink:
     } else if (item.isReasoningSummary) {
         if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
     } else if (item.text.isNotBlank()) {
-        Text(truncateChatText(item.text) +
-            if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
-            Modifier.fillMaxWidth(), fontSize = 11.sp, lineHeight = 18.sp,
-            fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val output = truncateChatText(item.text) +
+            if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else ""
+        TimelineOutputBlock(output, item.stage, item.toolType)
+    }
+}
+
+@Composable
+private fun TimelineOutputBlock(source: String, command: String, toolType: String) {
+    val scroll = rememberScrollState()
+    val palette = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(11.dp),
+        color = palette.surfaceVariant.copy(alpha = 0.58f),
+        border = BorderStroke(1.dp, palette.outlineVariant.copy(alpha = 0.7f))
+    ) {
+        Text(
+            text = remember(source, command, toolType) { highlightTimelineContent(source, command, toolType) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 248.dp)
+                .verticalScroll(scroll)
+                .drawWithContent {
+                    drawContent()
+                    val maxScroll = scroll.maxValue
+                    if (maxScroll > 0) {
+                        val trackHeight = size.height
+                        val thumbHeight = (trackHeight * (scroll.viewportSize.toFloat() / (scroll.viewportSize + maxScroll)))
+                            .coerceAtLeast(22.dp.toPx())
+                            .coerceAtMost(trackHeight)
+                        val thumbTravel = (trackHeight - thumbHeight).coerceAtLeast(0f)
+                        val thumbTop = if (maxScroll == 0) 0f else thumbTravel * scroll.value / maxScroll
+                        drawRoundRect(
+                            color = palette.onSurfaceVariant.copy(alpha = 0.42f),
+                            topLeft = Offset(size.width - 4.dp.toPx(), thumbTop),
+                            size = Size(2.dp.toPx(), thumbHeight),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
+                        )
+                    }
+                }
+                .padding(start = 11.dp, top = 9.dp, end = 11.dp, bottom = 9.dp),
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+            fontFamily = FontFamily.Monospace,
+            color = palette.onSurfaceVariant
+        )
     }
 }
 

@@ -10,6 +10,7 @@ import time
 from task_monitor_control import resolve
 from task_monitor_preferences import save, visible
 from task_monitor_rpc import Rpc, RpcError
+from task_monitor_questions import MARKER
 
 
 def schema(properties=None, required=None):
@@ -43,9 +44,11 @@ def direct_user_only(config):
         raise ValueError("Management change requires a current user turn")
     user = "\n".join(p.get("text", "") for item in turn.get("items", []) if item.get("type") == "userMessage"
                      for p in item.get("content", []) if p.get("type") == "text")
-    if not user.strip() or "监控事件编号：" in user:
+    if not user.strip() or "监控事件编号：" in user or MARKER in user:
         raise ValueError("Background review cannot modify management preferences")
     with sqlite3.connect(Path(config["runtime"]) / "state.sqlite3") as db:
+        if db.execute("SELECT 1 FROM questions WHERE turn_id=? UNION ALL SELECT 1 FROM question_history WHERE turn_id=?", (turn["id"], turn["id"])).fetchone():
+            raise ValueError("Service notification cannot authorize management changes")
         if db.execute("SELECT 1 FROM jobs WHERE review_turn=?", (turn["id"],)).fetchone():
             raise ValueError("Review turn cannot authorize management changes")
 
@@ -77,13 +80,17 @@ def execute(runtime, name, arguments):
         status = json.loads((runtime / "status.json").read_text())
         return {"heartbeat_age_seconds": round(time.time() - status["updated_at"], 1),
                 "connections": list(status["endpoints"].values()), "jobs": status["jobs"],
-                "preferences": visible(config), "applied_revision": status.get("preference_revision", 0)}
+                "preferences": visible(config), "applied_revision": status.get("preference_revision", 0),
+                "questions": status.get("questions", {}),
+                "question_delivery_error": status.get("question_delivery_error", False),
+                "reviewer_available": status.get("reviewer_available", False)}
     if name == "monitor_events":
         with sqlite3.connect(runtime / "state.sqlite3") as db:
             db.row_factory = sqlite3.Row
-            rows = db.execute("SELECT id,title,phase,result,note FROM jobs ORDER BY created DESC LIMIT 30").fetchall()
+            rows = db.execute("SELECT j.id,j.title,j.phase,j.result,j.note,j.payload,q.state AS question_state FROM jobs j LEFT JOIN questions q ON q.event_id=j.id ORDER BY j.created DESC LIMIT 30").fetchall()
             return [{"event_id": r["id"], "title": r["title"], "phase": r["phase"],
-                     "decision": json.loads(r["result"]) if r["result"] else None, "note": r["note"]} for r in rows]
+                     "decision": json.loads(r["result"]) if r["result"] else None, "note": r["note"], "pending_question": r["phase"] == "needs_attention" and bool(r["result"]) and json.loads(r["result"])["action"] == "ask_user",
+                     "question_delivery": r["question_state"], "verification": json.loads(r["payload"]).get("verification")} for r in rows]
     tasks, unavailable = {}, 0
     for endpoint in config["sockets"]:
         try:

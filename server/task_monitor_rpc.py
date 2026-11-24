@@ -1,5 +1,6 @@
 """Small local-only app-server WebSocket client (no credentials or approvals)."""
 
+from collections import deque
 import base64
 import hashlib
 import json
@@ -19,6 +20,7 @@ class Rpc:
         self.sock.settimeout(timeout)
         self.timeout = timeout
         self.sequence = 0
+        self.notifications = deque(maxlen=128)
         try:
             self.sock.connect(str(path))
             self.stream = self.sock.makefile("rwb", buffering=0)
@@ -128,4 +130,6 @@ class Rpc:
                     # Never include upstream messages, paths, prompts or credentials in logs.
                     raise RpcError(f"{method}: {response['error'].get('code', 'unknown')}")
                 return response["result"]
-            # Observe only. Server-side approval/question requests belong to the user.
+            # Keep a bounded observation buffer; never answer or auto-resolve requests.
+            self.notifications.append(response)
+            # Server-side approval/question requests belong to the user.

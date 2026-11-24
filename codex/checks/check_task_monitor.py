@@ -16,10 +16,12 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "server"))
 from task_monitor import Monitor
 from task_monitor_rpc import Rpc, RpcError
+from task_monitor_questions import MARKER, native_question
 
 release = threading.Event()
 requests = []
 control_calls = 0
+question_calls = set()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -40,7 +42,17 @@ class Handler(BaseHTTPRequestHandler):
                     texts.append("\n".join(i.get("text", "") for i in content))
         prompt = texts[-1] if texts else ""
         tool_item = None
-        if "CONTROL_PREFERENCE_FIXTURE" in prompt:
+        if MARKER in prompt:
+            arguments = json.loads(prompt.rsplit("\n", 1)[1])
+            question_id = arguments["questions"][0]["id"]
+            if question_id not in question_calls:
+                question_calls.add(question_id)
+                tool_item = {"type": "function_call", "id": "fc_" + question_id, "call_id": "call_" + question_id,
+                             "name": "request_user_input", "arguments": json.dumps(arguments, ensure_ascii=False), "status": "completed"}
+                text = ""
+            else:
+                text = "已收到你的回答，后台会按对应事项处理。"
+        elif "CONTROL_PREFERENCE_FIXTURE" in prompt:
             control_calls += 1
             if control_calls == 1:
                 code = ('const t = ALL_TOOLS.find(t => t.name.endsWith("monitor_update_preferences")); '
@@ -55,13 +67,16 @@ class Handler(BaseHTTPRequestHandler):
         elif "监控事件编号：" in prompt:
             event_id = prompt.split("监控事件编号：", 1)[1].split("\n", 1)[0]
             payload = json.loads(prompt.split(event_id + "\n\n", 1)[1])
+            ask = "需要晚晚确定验收范围" in payload["history_excerpt"][-1]["assistant"]
             complete = "已完成全部" in payload["history_excerpt"][-1]["assistant"]
-            text = json.dumps({"event_id": event_id, "action": "done" if complete else "follow_up",
+            text = json.dumps({"event_id": event_id, "action": "ask_user" if ask else ("done" if complete else "follow_up"),
                                "summary": "原任务已完成" if complete else "还有已授权步骤未完成",
                                "next_prompt": "" if complete else "请完成原来已授权但未完成的最后一步，并如实报告。",
-                               "question": ""}, ensure_ascii=False)
+                               "question": "这项工作的验收范围需要补充哪一条？" if ask else ""}, ensure_ascii=False)
         elif "【任务管家自动跟进" in prompt:
             text = "已完成全部任务。这里仅为本机 fixture，不代表实际产品功能。"
+        elif "QUESTION_FIXTURE" in prompt:
+            text = "需要晚晚确定验收范围"
         elif "BUSY_FIXTURE" in prompt:
             release.wait(25)
             text = "busy fixture released"
@@ -164,6 +179,75 @@ def main():
             assert len(requests) == before == 5, "Restart triggered duplicate work"
             results["restart_does_not_repeat_reviews_or_followups"] = True
             results["review_only_uses_local_fake_provider"] = True
+            assert monitor.reviewer != supervisor
+            listed = rpc.call("thread/list", {"limit": 100, "archived": False})["data"]
+            assert monitor.reviewer not in {t["id"] for t in listed}, "Internal reviewer polluted sidebar"
+            threads.append(monitor.reviewer)
+            results["durable_reviewer_hidden_from_normal_chat_list"] = True
+
+            asking = new_thread()
+            monitor.base_config["thread_ids"].append(asking)
+            rpc.call("turn/start", {"threadId": asking, "input": [{"type": "text", "text": "QUESTION_FIXTURE 请按范围验收。"}]})
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                monitor.tick()
+                shown = monitor.store.db.execute("SELECT * FROM questions WHERE state='shown'").fetchone()
+                if shown:
+                    break
+                time.sleep(.15)
+            else:
+                raise AssertionError("No actual native question: " + repr([tuple(r) for r in monitor.store.db.execute("SELECT state FROM questions")]))
+            assert monitor.latest(rpc, supervisor)["status"] == "inProgress"
+            assert "waitingOnUserInput" in rpc.call("thread/read", {"threadId": supervisor, "includeTurns": False})["thread"]["status"].get("activeFlags", [])
+            results["question_is_real_native_card_not_only_internal_record"] = True
+            # While the manager waits, a separate completed task still gets reviewed.
+            independent = new_thread()
+            monitor.base_config["thread_ids"].append(independent)
+            rpc.call("turn/start", {"threadId": independent, "input": [{"type": "text", "text": "请完成本机fixture的全部已授权步骤。"}]})
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                monitor.tick()
+                done = monitor.store.db.execute("SELECT 1 FROM jobs WHERE thread_id=? AND phase='followed_up'", (independent,)).fetchone()
+                if done:
+                    break
+                time.sleep(.15)
+            assert done, "Pending human answer blocked independent review"
+            assert len(question_calls) == 1, "Unanswered question was duplicated"
+            results["unanswered_question_does_not_block_background_review"] = True
+            monitor.store.db.close()
+            monitor = Monitor(monitor_config)
+            monitor.tick()
+            assert monitor.store.db.execute("SELECT COUNT(*) FROM questions").fetchone()[0] == 1
+            assert monitor.store.db.execute("SELECT state FROM questions").fetchone()[0] == 'shown', "Restart withdrew unanswered question unexpectedly"
+            # Phone/desktop reconnect uses the same native replay and answer format.
+            with Rpc(path) as reconnect:
+                reconnect.send({"id": 10000, "method": "thread/resume", "params": {"threadId": supervisor, "excludeTurns": True}})
+                deadline = time.monotonic() + 10
+                pending = next((f for f in reconnect.notifications if f.get("method") == "item/tool/requestUserInput"), None)
+                while pending is None and time.monotonic() < deadline:
+                    frame = reconnect.receive(deadline)
+                    if frame.get("method") == "item/tool/requestUserInput":
+                        pending = frame
+                        break
+                assert pending, "Question not replayed on reconnect"
+                qid = pending["params"]["questions"][0]["id"]
+                reconnect.send({"id": pending["id"], "result": {"answers": {qid: {"answers": ["暂不处理"]}}}})
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    monitor.tick()
+                    if monitor.store.db.execute("SELECT state FROM questions").fetchone()[0] == "answered":
+                        break
+                    time.sleep(.15)
+            row = monitor.store.db.execute("SELECT * FROM jobs WHERE id=?", (shown["event_id"],)).fetchone()
+            assert row["phase"] == "done" and row["note"] == "human_declined", "Native reply did not resolve exact event"
+            assert len(question_calls) == 1
+            results["restart_reconnect_replays_question_and_real_answer_resolves_bound_event"] = True
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if monitor.latest(rpc, supervisor)["status"] == "completed":
+                    break
+                time.sleep(.1)
+
 
             # Loaded sessions retain their initial tool inventory. Reload only the supervisor.
             rpc.call("thread/archive", {"threadId": supervisor})
@@ -220,7 +304,7 @@ def main():
         if path.exists():
             try:
                 with Rpc(path) as rpc:
-                    for tid in threads:
+                    for tid in reversed(threads):
                         try:
                             rpc.call("thread/archive", {"threadId": tid})
                         except (OSError, RpcError):
@@ -235,6 +319,8 @@ def main():
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=10)
         server.shutdown()
+        if (root / "server.log").exists():
+            shutil.copyfile(root / "server.log", REPO / "codex/task-monitor/fixture-server.log")
         output = REPO / "codex/task-monitor/check-result.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
