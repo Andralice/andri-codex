@@ -62,6 +62,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     fun shouldRemindUpdate(info: UpdateInfo): Boolean = updateReminders.shouldRemind(info.versionCode)
     fun markUpdateReminded(info: UpdateInfo) = updateReminders.markReminded(info.versionCode)
     private val workspaceUiStates = mutableMapOf<String, MutableState<WorkspaceSessionState>>()
+    private val workspaceTerminalStates = mutableStateMapOf<String, WorkspaceTerminalState>()
     internal fun workspaceUiFor(id: String?, project: String? = null): WorkspaceSessionState {
         if (id == null) return WorkspaceSessionState()
         val key = workspaceSessionKey(id, project ?: executionFor(id).cwd)
@@ -77,6 +78,40 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val key = workspaceSessionKey(id, project ?: executionFor(id).cwd)
         workspaceUiStates.getValue(key).value = next
         settings.edit().putString("workspace.$key.ui", next.encode()).apply()
+    }
+    internal fun workspaceTerminalFor(tabId: String): WorkspaceTerminalState =
+        workspaceTerminalStates[tabId] ?: WorkspaceTerminalState()
+
+    internal fun runWorkspaceCommand(tabId: String, path: String, command: String) {
+        val connection = client ?: run {
+            workspaceTerminalStates[tabId] = workspaceTerminalFor(tabId).copy(error = "请先连接服务器。")
+            return
+        }
+        val cleaned = command.trim()
+        if (cleaned.isBlank() || workspaceTerminalFor(tabId).running) return
+        val previous = workspaceTerminalFor(tabId)
+        workspaceTerminalStates[tabId] = previous.copy(
+            output = (previous.output + "\n$ $cleaned\n").takeLast(32_000), running = true, error = "")
+        viewModelScope.launch {
+            try {
+                val result = connection.executeWorkspaceCommand(path, cleaned)
+                requireCurrent(connection)
+                val exit = if (result.exitCode == 0) "" else "\n[退出码 ${result.exitCode}]\n"
+                val output = result.stdout + result.stderr + exit
+                workspaceTerminalStates[tabId] = workspaceTerminalFor(tabId).copy(
+                    output = (workspaceTerminalFor(tabId).output + output).takeLast(32_000), running = false)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                workspaceTerminalStates[tabId] = workspaceTerminalFor(tabId).copy(
+                    output = (workspaceTerminalFor(tabId).output + "\n${error.message ?: "命令执行失败"}\n").takeLast(32_000),
+                    running = false, error = error.message.orEmpty())
+            }
+        }
+    }
+
+    internal fun clearWorkspaceTerminal(tabId: String) {
+        if (workspaceTerminalFor(tabId).running) return
+        workspaceTerminalStates[tabId] = WorkspaceTerminalState()
     }
     private val gitHistories = mutableStateMapOf<String, GitHistoryState>()
     private val gitCommitDiffs = mutableStateMapOf<String, GitCommitDiffState>()

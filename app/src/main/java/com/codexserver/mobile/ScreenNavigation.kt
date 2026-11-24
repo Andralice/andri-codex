@@ -11,12 +11,11 @@ internal data class MainScreen(val destination: String, val thread: CodexThread?
     }
 }
 
-internal enum class ChatSwipe { SIDEBAR, LIST, WORKSPACE }
+internal enum class ChatSwipe { SIDEBAR, WORKSPACE }
 
-/** Keep the left edge for the conversation drawer. Horizontal page navigation follows
- * the direction of the destination: left opens the workspace and right returns to the list. */
-internal fun chatSwipeTarget(start: Float, width: Float, delta: Float, edge: Float): ChatSwipe? = when {
-    delta > 0f -> if (start < edge) ChatSwipe.SIDEBAR else ChatSwipe.LIST
+/** Keep the left edge for the conversation drawer; left swipes open the workspace. */
+internal fun chatSwipeTarget(start: Float, delta: Float, edge: Float): ChatSwipe? = when {
+    delta > 0f -> if (start < edge) ChatSwipe.SIDEBAR else null
     delta < 0f -> ChatSwipe.WORKSPACE
     else -> null
 }

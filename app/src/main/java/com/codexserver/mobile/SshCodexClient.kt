@@ -1097,6 +1097,43 @@ class SshCodexClient(
         }
     }
 
+    suspend fun executeWorkspaceCommand(path: String, command: String): RemoteCommandOutput = withContext(Dispatchers.IO) {
+        val cleaned = command.trim()
+        require(cleaned.isNotBlank() && cleaned.length <= 2_000 && '\u0000' !in cleaned) { "请输入有效命令（最多 2000 个字符）" }
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        val resolved = try {
+            val value = sftp.realpath(path)
+            check(sftp.stat(value).isDir) { "终端工作目录不是文件夹" }
+            value
+        } finally { sftp.disconnect() }
+        val root = WORKSPACE_ROOT.trimEnd('/')
+        check(resolved == root || resolved.startsWith("$root/")) { "终端只能从工作区目录启动" }
+        val channel = session?.openChannel("exec") as? ChannelExec ?: error("无法打开 SSH 命令通道")
+        val stderr = ByteArrayOutputStream()
+        try {
+            channel.setCommand("cd ${shellQuote(resolved)} && timeout 30s sh -lc ${shellQuote(cleaned)}")
+            channel.setErrStream(stderr)
+            channel.connect(10_000)
+            val stdout = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            val input = channel.inputStream
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                check(stdout.size() + count <= MAX_TERMINAL_OUTPUT_BYTES) { "命令输出超过 256 KB，已停止读取" }
+                stdout.write(buffer, 0, count)
+            }
+            val result = RemoteCommandOutput(
+                stdout = stdout.toString(Charsets.UTF_8.name()),
+                stderr = stderr.toString(Charsets.UTF_8.name()),
+                exitCode = channel.exitStatus
+            )
+            check(result.exitCode != 124) { (result.stderr + result.stdout).ifBlank { "命令运行超过 30 秒，已停止。" } }
+            result
+        } finally { channel.disconnect() }
+    }
+
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private suspend fun readWorkspaceGit(path: String, maxBytes: Int = MAX_GIT_DIFF_BYTES,
@@ -1403,6 +1440,7 @@ class SshCodexClient(
         const val MAX_SHARED_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_DOWNLOAD_FILE_BYTES = 512L * 1024 * 1024
         const val MAX_GIT_DIFF_BYTES = 512 * 1024
+        const val MAX_TERMINAL_OUTPUT_BYTES = 256 * 1024
         val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "3gp", "webm", "mkv", "avi")
         private const val PINNED_HOST_KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIEW2C/nhNSwYslEGZ5kqoPmpEXFqqYZ9Rv7SSchBBOp+"
     }

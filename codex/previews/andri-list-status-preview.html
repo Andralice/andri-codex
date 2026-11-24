@@ -1,0 +1,807 @@
+<div id="andri-list-status-preview">
+  <style>
+    #andri-list-status-preview {
+      color-scheme: light;
+      --app-bg: light-dark(#f1efe7, #191816);
+      --app-surface: light-dark(#fcfaf6, #24221f);
+      --app-raised: light-dark(#f7f4ee, #2d2b27);
+      --app-bubble: light-dark(#e6dcc8, #413a2e);
+      --app-text: light-dark(#302b25, #f1eee8);
+      --app-muted: light-dark(#70685f, #b9b2a7);
+      --app-border: light-dark(#e9e4d9, #403d37);
+      --app-primary: light-dark(#896b4d, #d6a77f);
+      --app-primary-soft: light-dark(#ead8c4, #45362b);
+      --app-green: light-dark(#668064, #a7c59a);
+      --app-green-soft: light-dark(#e9efe5, #2e392b);
+      --app-red: light-dark(#ae5a45, #ef9b84);
+      color: var(--app-text);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+      width: 100%;
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+    }
+    #andri-list-status-preview * { box-sizing: border-box; }
+    #andri-list-status-preview .switcher {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 14px;
+      background: var(--app-raised);
+    }
+    #andri-list-status-preview .switcher button {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 15px;
+      min-height: 40px;
+      color: var(--app-muted);
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+    }
+    #andri-list-status-preview .switcher button[aria-pressed="true"] {
+      color: var(--app-text);
+      background: var(--app-surface);
+      box-shadow: 0 1px 4px #00000014;
+    }
+    #andri-list-status-preview .screen {
+      position: relative;
+      width: min(340px, 100%);
+      height: 680px;
+      min-height: 680px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--app-border);
+      border-radius: 28px;
+      background: var(--app-bg);
+      box-shadow: 0 18px 55px #20170e24;
+    }
+    #andri-list-status-preview [hidden] { display: none !important; }
+    #andri-list-status-preview .statusbar {
+      height: 34px;
+      flex: 0 0 34px;
+      padding: 0 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #andri-list-status-preview .status-icons { display: flex; gap: 5px; align-items: center; }
+    #andri-list-status-preview i[data-lucide] { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; }
+    #andri-list-status-preview i[data-lucide] svg { width: 100%; height: 100%; }
+    #andri-list-status-preview .appbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 54px;
+      padding: 4px 16px 8px;
+    }
+    #andri-list-status-preview [data-view="workspace"] .appbar { min-height: 44px; padding: 0 9px; gap: 4px; }
+    #andri-list-status-preview .workspace-current { min-width: 0; flex: 1; height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 0; border-radius: 13px; color: var(--app-text); background: transparent; font: inherit; font-size: 12px; text-align: left; }
+    #andri-list-status-preview .workspace-current:active { background: var(--app-raised); }
+    #andri-list-status-preview .workspace-current-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #andri-list-status-preview .workspace-current-count { color: var(--app-muted); font-size: 11px; }
+    #andri-list-status-preview .brand {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 13px;
+      color: light-dark(#f8efe5, #221a14);
+      background: var(--app-primary);
+      font-family: Georgia, serif;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    #andri-list-status-preview .brand-title { flex: 1; font-size: 18px; font-weight: 600; }
+    #andri-list-status-preview .icon-button {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 14px;
+      color: var(--app-text);
+      background: transparent;
+      font: inherit;
+    }
+    #andri-list-status-preview .icon-button.primary {
+      color: light-dark(#55432e, #f1eee8);
+      background: var(--app-primary-soft);
+    }
+    #andri-list-status-preview .connected {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--app-green);
+    }
+    #andri-list-status-preview .content {
+      min-height: 0;
+      flex: 1;
+      overflow: auto;
+      padding: 2px 18px 22px;
+      scrollbar-width: none;
+    }
+    #andri-list-status-preview .content::-webkit-scrollbar { display: none; }
+    #andri-list-status-preview .heading-row,
+    #andri-list-status-preview .section-title,
+    #andri-list-status-preview .row-main,
+    #andri-list-status-preview .meta,
+    #andri-list-status-preview .chat-top,
+    #andri-list-status-preview .queue-row,
+    #andri-list-status-preview .composer { display: flex; align-items: center; }
+    #andri-list-status-preview .heading-row { justify-content: space-between; gap: 4px; margin: 0; }
+    #andri-list-status-preview h2 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.5px; }
+    #andri-list-status-preview .filters { display: flex; align-items: stretch; gap: 13px; }
+    #andri-list-status-preview .filter {
+      min-height: 42px;
+      padding: 0 2px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      color: var(--app-muted);
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+    }
+    #andri-list-status-preview .filter.selected {
+      border-bottom-color: var(--app-primary);
+      color: var(--app-text);
+      font-weight: 600;
+    }
+    #andri-list-status-preview .filter-count { color: var(--app-muted); font-size: 11px; font-weight: 400; }
+    #andri-list-status-preview .list-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 58px;
+      padding: 0 14px;
+    }
+    #andri-list-status-preview .list-toolbar .heading-row { flex: 1; min-width: 0; }
+    #andri-list-status-preview .list-toolbar .icon-button { width: 40px; height: 40px; font-size: 20px; }
+    #andri-list-status-preview .list-toolbar .icon-button.primary { border-radius: 14px; }
+    #andri-list-status-preview .section-title {
+      justify-content: space-between;
+      margin: 22px 2px 8px;
+      color: var(--app-muted);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .15px;
+    }
+    #andri-list-status-preview .section-title .group-name { display: flex; align-items: center; gap: 7px; }
+    #andri-list-status-preview .count { font-size: 11px; font-weight: 500; }
+    #andri-list-status-preview .thread {
+      padding: 14px 2px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .row-main { gap: 10px; align-items: flex-start; }
+    #andri-list-status-preview .thread-copy { flex: 1; min-width: 0; }
+    #andri-list-status-preview .thread-name {
+      overflow: hidden;
+      color: var(--app-text);
+      font-size: 15px;
+      line-height: 21px;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #andri-list-status-preview .meta {
+      min-width: 0;
+      gap: 6px;
+      margin-top: 4px;
+      color: var(--app-muted);
+      font-size: 12px;
+      line-height: 16px;
+    }
+    #andri-list-status-preview .project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #andri-list-status-preview .dot { opacity: .65; }
+    #andri-list-status-preview .state { color: var(--app-muted); white-space: nowrap; }
+    #andri-list-status-preview .state.waiting { color: var(--app-primary); font-weight: 600; }
+    #andri-list-status-preview .state.failed { color: var(--app-red); font-weight: 600; }
+    #andri-list-status-preview .state.running { color: var(--app-green); font-weight: 600; }
+    #andri-list-status-preview .pin { color: var(--app-primary); font-size: 12px; }
+    #andri-list-status-preview .age { color: var(--app-muted); font-size: 11px; white-space: nowrap; }
+    #andri-list-status-preview .more { color: var(--app-muted); font-size: 20px; line-height: 16px; }
+    #andri-list-status-preview .running-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 2px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .spinner {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 17px;
+      border: 2px solid color-mix(in srgb, var(--app-green), transparent 72%);
+      border-top-color: var(--app-green);
+      border-radius: 50%;
+    }
+    #andri-list-status-preview .running-text { flex: 1; min-width: 0; }
+    #andri-list-status-preview .running-foot { margin-top: 3px; color: var(--app-green); font-size: 11px; }
+    #andri-list-status-preview .show-more {
+      width: 100%;
+      min-height: 42px;
+      border: 0;
+      color: var(--app-muted);
+      background: transparent;
+      font: inherit;
+      font-size: 12px;
+    }
+    #andri-list-status-preview .task-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 2px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .task-copy { flex: 1; min-width: 0; }
+    #andri-list-status-preview .task-copy strong { display: block; font-size: 15px; font-weight: 500; }
+    #andri-list-status-preview .task-copy small { display: block; margin-top: 4px; color: var(--app-muted); font-size: 12px; }
+    #andri-list-status-preview .task-arrow { color: var(--app-muted); font-size: 18px; }
+    #andri-list-status-preview .thread-feed {
+      padding: 4px 18px 12px;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    #andri-list-status-preview .feed-row {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      min-height: 72px;
+      padding: 11px 1px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .status-mark {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 20px;
+      display: grid;
+      place-items: center;
+      color: var(--app-muted);
+    }
+    #andri-list-status-preview .status-mark.attention {
+      width: 24px;
+      height: 24px;
+      flex-basis: 24px;
+      border-radius: 50%;
+      color: var(--app-primary);
+      background: var(--app-primary-soft);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    #andri-list-status-preview .status-mark.failure { color: var(--app-red); }
+    #andri-list-status-preview .status-mark.pin { color: var(--app-primary); }
+    #andri-list-status-preview .status-mark i[data-lucide] { width: 16px; height: 16px; }
+    #andri-list-status-preview .feed-copy { flex: 1; min-width: 0; }
+    #andri-list-status-preview .feed-title {
+      overflow: hidden;
+      color: var(--app-text);
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 21px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #andri-list-status-preview .feed-meta { margin-top: 3px; color: var(--app-muted); font-size: 12px; line-height: 17px; }
+    #andri-list-status-preview .feed-meta .attention-text { color: var(--app-primary); }
+    #andri-list-status-preview .feed-meta .failure-text { color: var(--app-red); }
+    #andri-list-status-preview .feed-time { color: var(--app-muted); font-size: 11px; white-space: nowrap; }
+    #andri-list-status-preview .chat-top { gap: 8px; min-width: 0; flex: 1; }
+    #andri-list-status-preview .back { font-size: 22px; }
+    #andri-list-status-preview .chat-titles { min-width: 0; flex: 1; }
+    #andri-list-status-preview .chat-title {
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #andri-list-status-preview .chat-project { margin-top: 3px; color: var(--app-muted); font-size: 11px; }
+    #andri-list-status-preview .attention {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 2px;
+      color: var(--app-primary);
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .attention-symbol {
+      display: grid;
+      place-items: center;
+      width: 25px;
+      height: 25px;
+      flex: 0 0 25px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    #andri-list-status-preview .attention-copy { flex: 1; min-width: 0; }
+    #andri-list-status-preview .attention-copy strong { display: block; font-size: 12px; }
+    #andri-list-status-preview .attention-copy small { display: block; margin-top: 3px; font-size: 11px; opacity: .88; }
+    #andri-list-status-preview .action-link {
+      border: 0;
+      padding: 8px 2px 8px 6px;
+      color: inherit;
+      background: transparent;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    #andri-list-status-preview .queue-row {
+      gap: 9px;
+      margin-top: 2px;
+      padding: 8px 2px;
+      color: var(--app-text);
+      font-size: 11px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    #andri-list-status-preview .queue-icon { color: var(--app-muted); font-size: 15px; }
+    #andri-list-status-preview .queue-label { flex: 1; }
+    #andri-list-status-preview .needs-confirm { color: var(--app-primary); font-weight: 600; white-space: nowrap; }
+    #andri-list-status-preview .message-area { flex: 1; min-height: 0; overflow: hidden; padding: 20px 16px 10px; }
+    #andri-list-status-preview .day-label { margin: 0 0 18px; text-align: center; color: var(--app-muted); font-size: 11px; }
+    #andri-list-status-preview .bubble-user {
+      max-width: 84%;
+      margin: 0 0 18px auto;
+      padding: 11px 13px;
+      border-radius: 16px 16px 5px 16px;
+      color: var(--app-text);
+      background: var(--app-bubble);
+      font-size: 13px;
+      line-height: 20px;
+    }
+    #andri-list-status-preview .bubble-assistant {
+      max-width: 94%;
+      margin-bottom: 18px;
+      font-size: 13px;
+      line-height: 21px;
+    }
+    #andri-list-status-preview .question-card {
+      max-width: 276px;
+      margin: 9px 0 0;
+      padding: 13px 14px 11px;
+      border: 1px solid color-mix(in srgb, var(--app-border), var(--app-primary) 12%);
+      border-radius: 18px;
+      background: var(--app-surface);
+      box-shadow: 0 7px 22px #33241712;
+    }
+    #andri-list-status-preview .question-label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 23px;
+      padding: 0 9px;
+      border-radius: 12px;
+      color: var(--app-primary);
+      background: var(--app-primary-soft);
+      font-size: 11px;
+      font-weight: 500;
+    }
+    #andri-list-status-preview .question-text { margin-top: 9px; font-size: 14px; line-height: 21px; font-weight: 600; }
+    #andri-list-status-preview .choice {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 7px;
+      padding: 8px 10px;
+      border: 1px solid var(--app-border);
+      border-radius: 12px;
+      background: var(--app-bg);
+      font-size: 12px;
+      line-height: 17px;
+    }
+    #andri-list-status-preview .choice.primary-choice {
+      border-color: color-mix(in srgb, var(--app-primary), transparent 60%);
+      color: var(--app-primary);
+      background: var(--app-primary-soft);
+    }
+    #andri-list-status-preview .question-actions { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+    #andri-list-status-preview .question-continue {
+      min-height: 36px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 11px;
+      color: light-dark(#55432e, #f1eee8);
+      background: var(--app-primary-soft);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 550;
+    }
+    #andri-list-status-preview .question-skip {
+      min-height: 36px;
+      padding: 0 9px;
+      border: 0;
+      color: var(--app-muted);
+      background: transparent;
+      font: inherit;
+      font-size: 11px;
+    }
+    #andri-list-status-preview .composer {
+      gap: 8px;
+      margin: 0 18px 12px;
+      padding: 4px;
+      border: 1px solid var(--app-border);
+      border-radius: 22px;
+      background: var(--app-surface);
+    }
+    #andri-list-status-preview .composer-plus,
+    #andri-list-status-preview .send {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      border-radius: 50%;
+      font-size: 20px;
+    }
+    #andri-list-status-preview .composer-plus { color: var(--app-muted); }
+    #andri-list-status-preview .placeholder { flex: 1; padding: 0 3px; color: var(--app-muted); font-size: 15px; }
+    #andri-list-status-preview .send { color: light-dark(#55432e, #f1eee8); background: var(--app-primary-soft); }
+    #andri-list-status-preview .status-fab {
+      position: absolute;
+      right: 16px;
+      bottom: 68px;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 14px;
+      border: 1px solid var(--app-border);
+      border-radius: 22px;
+      color: var(--app-text);
+      background: var(--app-surface);
+      box-shadow: 0 5px 18px #20170e18;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    #andri-list-status-preview .status-fab i { color: var(--app-primary); }
+    #andri-list-status-preview .status-sheet-backdrop {
+      position: absolute;
+      inset: 34px 0 0;
+      z-index: 4;
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding: 0 10px 130px;
+      background: transparent;
+    }
+    #andri-list-status-preview .status-sheet {
+      width: min(270px, 100%);
+      padding: 9px 13px 12px;
+      border: 1px solid var(--app-border);
+      border-radius: 18px;
+      color: var(--app-text);
+      background: var(--app-surface);
+      box-shadow: 0 10px 35px #20170e24;
+    }
+    #andri-list-status-preview .sheet-grip { display: none; }
+    #andri-list-status-preview .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    #andri-list-status-preview .sheet-head strong { font-size: 14px; font-weight: 600; }
+    #andri-list-status-preview .sheet-close { width: 34px; height: 34px; border: 0; border-radius: 50%; color: var(--app-muted); background: transparent; font: inherit; font-size: 19px; }
+    #andri-list-status-preview .sheet-row { display: flex; align-items: center; gap: 10px; min-height: 51px; border-bottom: 1px solid var(--app-border); }
+    #andri-list-status-preview .sheet-row:last-child { border-bottom: 0; }
+    #andri-list-status-preview .sheet-icon { width: 20px; flex: 0 0 20px; display: grid; place-items: center; color: var(--app-primary); }
+    #andri-list-status-preview .sheet-copy { flex: 1; min-width: 0; }
+    #andri-list-status-preview .sheet-copy strong { display: block; font-size: 13px; font-weight: 500; }
+    #andri-list-status-preview .sheet-copy small { display: block; margin-top: 2px; color: var(--app-muted); font-size: 11px; }
+    #andri-list-status-preview .sheet-end { color: var(--app-muted); font-size: 10px; white-space: nowrap; }
+    #andri-list-status-preview .drawer-backdrop {
+      position: absolute;
+      inset: 34px 0 0;
+      z-index: 5;
+      display: flex;
+      background: #221a1438;
+    }
+    #andri-list-status-preview .drawer-panel {
+      width: min(286px, 86%);
+      min-width: min(265px, 82%);
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 14px 12px 12px;
+      border-radius: 0 20px 20px 0;
+      color: var(--app-text);
+      background: var(--app-bg);
+      box-shadow: 8px 0 30px #20170e20;
+    }
+    #andri-list-status-preview .drawer-search-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    #andri-list-status-preview .drawer-search {
+      min-width: 0;
+      flex: 1;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 11px;
+      border: 1px solid var(--app-border);
+      border-radius: 13px;
+      color: var(--app-muted);
+      background: var(--app-surface);
+      font-size: 12px;
+    }
+    #andri-list-status-preview .drawer-close {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      color: var(--app-muted);
+      background: transparent;
+      font: inherit;
+      font-size: 20px;
+    }
+    #andri-list-status-preview .drawer-threads { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; }
+    #andri-list-status-preview .drawer-item {
+      width: 100%;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 9px;
+      border: 0;
+      border-radius: 11px;
+      color: var(--app-text);
+      background: transparent;
+      text-align: left;
+      font: inherit;
+    }
+    #andri-list-status-preview .drawer-item.selected { background: var(--app-primary-soft); }
+    #andri-list-status-preview .drawer-item i { width: 17px; height: 17px; flex: 0 0 17px; color: var(--app-muted); }
+    #andri-list-status-preview .drawer-item.selected i { color: var(--app-primary); }
+    #andri-list-status-preview .drawer-item span { overflow: hidden; flex: 1; font-size: 13px; line-height: 19px; text-overflow: ellipsis; white-space: nowrap; }
+    #andri-list-status-preview .drawer-item small { color: var(--app-muted); font-size: 10px; white-space: nowrap; }
+    #andri-list-status-preview .new-thread {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 16px;
+      color: light-dark(#55432e, #f1eee8);
+      background: var(--app-primary-soft);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 550;
+    }
+    #andri-list-status-preview .browser-tabs { display: flex; align-items: center; gap: 5px; overflow: auto; padding: 3px 10px 8px; scrollbar-width: none; }
+    #andri-list-status-preview .browser-tab { min-width: 76px; max-width: 142px; height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 7px 0 10px; border: 1px solid transparent; border-radius: 12px; color: var(--app-muted); background: transparent; font: inherit; font-size: 11px; white-space: nowrap; }
+    #andri-list-status-preview .browser-tab.active { color: var(--app-text); background: var(--app-surface); border-color: var(--app-border); box-shadow: 0 2px 8px #20170e0a; }
+    #andri-list-status-preview .browser-tab span { overflow: hidden; text-overflow: ellipsis; }
+    #andri-list-status-preview .browser-tab button { width: 20px; height: 20px; display: grid; place-items: center; flex: 0 0 20px; padding: 0; border: 0; border-radius: 7px; color: var(--app-muted); background: transparent; }
+    #andri-list-status-preview .browser-tab-add { width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; border: 0; border-radius: 10px; color: var(--app-muted); background: transparent; }
+    #andri-list-status-preview .workspace-home { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-start; padding: 12px 20px 20px; }
+    #andri-list-status-preview .workspace-search { height: 54px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 15px; border: 1px solid var(--app-border); border-radius: 28px; background: var(--app-surface); box-shadow: 0 5px 18px #33200e08; }
+    #andri-list-status-preview .workspace-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--app-text); background: transparent; font: inherit; font-size: 13px; }
+    #andri-list-status-preview .workspace-search input::placeholder { color: var(--app-muted); }
+    #andri-list-status-preview .workspace-openrow { display: flex; align-items: center; justify-content: space-between; margin: 28px 1px 9px; color: var(--app-text); font-size: 13px; font-weight: 550; }
+    #andri-list-status-preview .workspace-openmore { position: relative; }
+    #andri-list-status-preview .workspace-openmore > button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 10px; color: var(--app-muted); background: transparent; }
+    #andri-list-status-preview .workspace-menu { position: absolute; z-index: 2; top: 34px; right: 0; width: 142px; padding: 5px; border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); box-shadow: 0 8px 24px #20170e1c; }
+    #andri-list-status-preview .workspace-menu button { width: 100%; height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 8px; color: var(--app-text); background: transparent; font: inherit; font-size: 12px; text-align: left; }
+    #andri-list-status-preview .workspace-shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    #andri-list-status-preview .workspace-shortcut { height: 88px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 13px; border: 0; border-radius: 18px; color: var(--app-text); background: var(--app-raised); font: inherit; font-size: 13px; text-align: left; }
+    #andri-list-status-preview .workspace-shortcut i { color: var(--app-text); }
+    #andri-list-status-preview .workspace-panel { flex: 1; min-height: 0; display: none; overflow: auto; padding: 14px 17px; }
+    #andri-list-status-preview .workspace-panel.visible { display: block; }
+    #andri-list-status-preview .workspace-path { padding: 3px 2px 8px; color: var(--app-muted); font-size: 11px; }
+    #andri-list-status-preview .file-list { min-height: 0; overflow: auto; }
+    #andri-list-status-preview .file-row {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--app-border);
+      font-size: 13px;
+    }
+    #andri-list-status-preview .file-row i { width: 18px; height: 18px; color: var(--app-primary); }
+    #andri-list-status-preview .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #andri-list-status-preview .file-size { color: var(--app-muted); font-size: 11px; }
+    @media (max-width: 420px) {
+      #andri-list-status-preview .screen { border-radius: 22px; }
+      #andri-list-status-preview .content { padding-right: 15px; padding-left: 15px; }
+      #andri-list-status-preview .age { font-size: 10px; }
+    }
+  </style>
+
+  <div class="switcher" role="group" aria-label="切换页面预览">
+    <button type="button" aria-pressed="true" data-screen="chat">聊天</button>
+    <button type="button" aria-pressed="false" data-screen="sidebar">对话侧栏</button>
+    <button type="button" aria-pressed="false" data-screen="workspace">工作区</button>
+  </div>
+
+  <section class="screen" data-view="workspace" aria-label="工作区页面预览" hidden>
+    <div class="statusbar"><span>9:41</span><span class="status-icons"><i data-lucide="signal" aria-hidden="true"></i><i data-lucide="wifi" aria-hidden="true"></i><i data-lucide="battery-full" aria-hidden="true"></i></span></div>
+    <header class="appbar">
+      <button class="icon-button" type="button" aria-label="返回聊天"><i data-lucide="arrow-left" aria-hidden="true"></i></button>
+      <button class="workspace-current" type="button" data-toggle-tabs aria-expanded="false" aria-label="展开工作区标签">
+        <i data-lucide="sparkles" aria-hidden="true"></i><span class="workspace-current-label">新标签页</span><span class="workspace-current-count">2</span><span class="workspace-current-arrow">⌄</span>
+      </button>
+      <button class="icon-button" type="button" aria-label="新标签页" data-new-tab><i data-lucide="plus" aria-hidden="true"></i></button>
+    </header>
+    <nav class="browser-tabs" aria-label="工作区标签页" hidden>
+      <div class="browser-tab active" role="button" tabindex="0" data-tab="start" data-title="新标签页"><i data-lucide="sparkles" aria-hidden="true"></i><span>新标签页</span><button type="button" aria-label="关闭新标签页"><i data-lucide="x" aria-hidden="true"></i></button></div>
+      <div class="browser-tab" role="button" tabindex="0" data-tab="files" data-title="文件"><i data-lucide="folder" aria-hidden="true"></i><span>文件</span><button type="button" aria-label="关闭文件"><i data-lucide="x" aria-hidden="true"></i></button></div>
+      <button class="browser-tab-add" type="button" aria-label="新标签页" data-new-tab><i data-lucide="plus" aria-hidden="true"></i></button>
+    </nav>
+    <main class="workspace-home" data-panel="start">
+      <form class="workspace-search"><i data-lucide="search" aria-hidden="true"></i><input placeholder="搜索或输入网址"><button type="submit" class="browser-tab-add" aria-label="打开"><i data-lucide="arrow-right" aria-hidden="true"></i></button></form>
+      <div class="workspace-openrow"><span>打开</span><div class="workspace-openmore"><button type="button" aria-label="更多入口" data-more><i data-lucide="ellipsis" aria-hidden="true"></i></button><div class="workspace-menu" hidden><button data-open="media"><i data-lucide="image" aria-hidden="true"></i>媒体库</button></div></div></div>
+      <div class="workspace-shortcuts">
+        <button class="workspace-shortcut" data-open="files"><i data-lucide="folder" aria-hidden="true"></i>文件</button>
+        <button class="workspace-shortcut" data-open="changes"><i data-lucide="git-compare" aria-hidden="true"></i>变更</button>
+        <button class="workspace-shortcut" data-open="terminal"><i data-lucide="terminal" aria-hidden="true"></i>终端</button>
+        <button class="workspace-shortcut" data-open="chat"><i data-lucide="message-circle" aria-hidden="true"></i>侧边聊天</button>
+      </div>
+    </main>
+    <main class="workspace-panel" data-panel="files">
+    <div class="workspace-path">项目根目录 <span>·</span> andri-codex</div>
+    <div class="file-list">
+      <div class="file-row"><i data-lucide="folder" aria-hidden="true"></i><span class="file-name">app</span><i data-lucide="chevron-right" aria-hidden="true"></i></div>
+      <div class="file-row"><i data-lucide="folder" aria-hidden="true"></i><span class="file-name">codex</span><i data-lucide="chevron-right" aria-hidden="true"></i></div>
+      <div class="file-row"><i data-lucide="folder" aria-hidden="true"></i><span class="file-name">gradle</span><i data-lucide="chevron-right" aria-hidden="true"></i></div>
+      <div class="file-row"><i data-lucide="file-code-2" aria-hidden="true"></i><span class="file-name">build.gradle.kts</span><span class="file-size">2 KB</span></div>
+      <div class="file-row"><i data-lucide="file-text" aria-hidden="true"></i><span class="file-name">README.md</span><span class="file-size">24 KB</span></div>
+      <div class="file-row"><i data-lucide="file-code-2" aria-hidden="true"></i><span class="file-name">settings.gradle.kts</span><span class="file-size">1 KB</span></div>
+    </div>
+    </main>
+  </section>
+
+  <section class="screen" data-view="chat" aria-label="Andri 聊天页侧边栏预览">
+    <div class="statusbar"><span>9:41</span><span class="status-icons"><i data-lucide="signal" aria-hidden="true"></i><i data-lucide="wifi" aria-hidden="true"></i><i data-lucide="battery-full" aria-hidden="true"></i></span></div>
+    <header class="appbar">
+      <button class="icon-button back drawer-open" type="button" aria-label="打开对话侧边栏"><i data-lucide="menu" aria-hidden="true"></i></button>
+      <div class="chat-top"><div class="chat-titles"><div class="chat-title">修复音频预览</div><div class="chat-project">●　Andri</div></div></div>
+      <button class="icon-button" type="button" aria-label="打开工作区"><i data-lucide="folder" aria-hidden="true"></i></button>
+      <button class="icon-button" type="button" aria-label="更多操作"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
+    </header>
+    <main class="message-area">
+      <div class="day-label">今天 09:38</div>
+      <div class="bubble-user">请检查音频预览为什么有时无法播放，修复后告诉我原因。</div>
+      <div class="bubble-assistant">我检查了播放流程，发现需要先确认一个处理方式，确认后我就继续。</div>
+      <div class="question-card">
+        <div class="question-label">等待你的回答</div>
+        <div class="question-text">遇到损坏的音频文件时，应该怎么处理？</div>
+        <div class="choice primary-choice"><span>跳过该文件并显示错误</span><span>✓</span></div>
+        <div class="choice"><span>停止整个播放队列</span><span>○</span></div>
+        <div class="question-actions"><button class="question-continue" type="button">按这些要求继续</button><button class="question-skip" type="button">先出一版</button></div>
+      </div>
+    </main>
+    <div class="composer" aria-label="消息输入区保持现有折叠入口">
+      <span class="composer-plus"><i data-lucide="plus" aria-hidden="true"></i></span><span class="placeholder">发消息…</span><span class="send"><i data-lucide="arrow-up" aria-hidden="true"></i></span>
+    </div>
+    <button class="status-fab" type="button" aria-label="打开任务状态，4 项"><i data-lucide="list-todo" aria-hidden="true"></i><span>任务</span><span>4</span></button>
+    <div class="status-sheet-backdrop" hidden>
+      <section class="status-sheet" role="dialog" aria-modal="true" aria-label="任务状态">
+        <div class="sheet-grip" aria-hidden="true"></div>
+        <div class="sheet-head"><strong>任务状态</strong><button class="sheet-close" type="button" aria-label="关闭">×</button></div>
+        <div class="sheet-row"><span class="sheet-icon"><i data-lucide="circle-help" aria-hidden="true"></i></span><div class="sheet-copy"><strong>修复音频预览</strong><small>等待回答 · 当前对话</small></div><span class="sheet-end">现在</span></div>
+        <div class="sheet-row"><span class="sheet-icon"><i data-lucide="shield-check" aria-hidden="true"></i></span><div class="sheet-copy"><strong>整理工作区文件</strong><small>等待审批</small></div><span class="sheet-end">18 分钟</span></div>
+        <div class="sheet-row"><span class="sheet-icon"><i data-lucide="list-ordered" aria-hidden="true"></i></span><div class="sheet-copy"><strong>排队消息</strong><small>2 条 · 其中 1 条需确认</small></div><span class="sheet-end"><i data-lucide="chevron-right" aria-hidden="true"></i></span></div>
+      </section>
+    </div>
+    <div class="drawer-backdrop" aria-label="对话列表侧边栏" hidden>
+      <aside class="drawer-panel">
+        <div class="drawer-search-row">
+          <div class="drawer-search"><i data-lucide="search" aria-hidden="true"></i><span>搜索对话</span></div>
+          <button class="drawer-close" type="button" aria-label="关闭侧边栏">×</button>
+        </div>
+        <div class="drawer-threads">
+          <button class="drawer-item selected" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>优化 Andri 界面美观</span><small>现在</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="circle-help" aria-hidden="true"></i><span>修复音频预览</span><small>待答</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="shield-check" aria-hidden="true"></i><span>整理工作区文件</span><small>审批</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>Codex CLI 服务端与安卓客户端远程控制</span><small>昨天</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>导演三要素</span><small>昨天</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>UI 优化建议</span><small>11 月 23 日</small></button>
+          <button class="drawer-item" type="button"><i data-lucide="message-circle" aria-hidden="true"></i><span>对话设定的跨会话传播</span><small>11 月 22 日</small></button>
+        </div>
+        <button class="new-thread" type="button"><i data-lucide="plus" aria-hidden="true"></i>新建对话</button>
+      </aside>
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById("andri-list-status-preview");
+      const buttons = root.querySelectorAll("[data-screen]");
+      const statusButton = root.querySelector(".status-fab");
+      const statusSheet = root.querySelector(".status-sheet-backdrop");
+      const closeStatus = root.querySelector(".sheet-close");
+      const drawer = root.querySelector(".drawer-backdrop");
+      const closeDrawer = root.querySelector(".drawer-close");
+      const openDrawer = root.querySelector(".drawer-open");
+      const chatView = root.querySelector('[data-view="chat"]');
+      const workspaceView = root.querySelector('[data-view="workspace"]');
+      const workspaceTabs = root.querySelector(".browser-tabs");
+      const workspaceStart = root.querySelector('[data-panel="start"]');
+      const workspaceFiles = root.querySelector('[data-panel="files"]');
+      const workspaceMenu = root.querySelector(".workspace-menu");
+      const workspaceCurrent = root.querySelector(".workspace-current");
+      const workspaceTabsExpanded = root.querySelector(".browser-tabs");
+      let nextTab = 0;
+      function setWorkspaceTab(id) {
+        workspaceTabs.querySelectorAll(".browser-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === id));
+        workspaceTabs.querySelector(`[data-tab="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+        const activeTab = workspaceTabs.querySelector(`[data-tab="${id}"]`);
+        workspaceCurrent.querySelector(".workspace-current-label").textContent = activeTab?.dataset.title || activeTab?.querySelector("span")?.textContent || "新标签页";
+        workspaceCurrent.querySelector(".workspace-current-count").textContent = workspaceTabs.querySelectorAll(".browser-tab").length;
+        workspaceStart.hidden = id !== "start";
+        workspaceFiles.classList.toggle("visible", id === "files");
+        root.querySelectorAll(".workspace-dynamic-panel").forEach((panel) => panel.hidden = panel.dataset.panel !== id);
+      }
+      function createWorkspaceTab(kind, title) {
+        const id = `${kind}-${++nextTab}`;
+        const icon = ({ files: "folder", changes: "git-compare", terminal: "terminal", chat: "message-circle", media: "image", web: "globe-2", start: "sparkles" })[kind] || "file";
+        const tab = document.createElement("div");
+        tab.className = "browser-tab"; tab.dataset.tab = id; tab.dataset.title = title; tab.setAttribute("role", "button"); tab.tabIndex = 0;
+        tab.innerHTML = `<i data-lucide="${icon}" aria-hidden="true"></i><span></span><button type="button" aria-label="关闭标签"><i data-lucide="x" aria-hidden="true"></i></button>`;
+        tab.querySelector("span").textContent = title;
+        const panel = document.createElement("section"); panel.className = "workspace-dynamic-panel"; panel.dataset.panel = id;
+        panel.innerHTML = `<div class="workspace-path"></div><div class="file-list"><div class="file-row"><i data-lucide="${icon}" aria-hidden="true"></i><span class="file-name"></span><span class="file-size">已打开</span></div></div>`;
+        panel.querySelector(".workspace-path").textContent = kind === "web" ? "网页预览" : `andri-codex · ${title}`;
+        panel.querySelector(".file-name").textContent = kind === "terminal" ? "$ pwd" : title;
+        workspaceTabs.insertBefore(tab, workspaceTabs.querySelector("[data-new-tab]"));
+        workspaceView.insertBefore(panel, workspaceTabs.nextSibling);
+        if (window.lucide) window.lucide.createIcons({ root: tab });
+        if (window.lucide) window.lucide.createIcons({ root: panel });
+        setWorkspaceTab(id);
+      }
+      function selectScreen(selected) {
+        buttons.forEach((item) => item.setAttribute("aria-pressed", String(item.dataset.screen === selected)));
+        chatView.hidden = selected === "workspace";
+        workspaceView.hidden = selected !== "workspace";
+        drawer.hidden = selected !== "sidebar";
+        if (selected !== "chat") statusSheet.hidden = true;
+      }
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => selectScreen(button.dataset.screen));
+      });
+      statusButton.addEventListener("click", () => { statusSheet.hidden = false; });
+      closeStatus.addEventListener("click", () => { statusSheet.hidden = true; });
+      statusSheet.addEventListener("click", (event) => {
+        if (event.target === statusSheet) statusSheet.hidden = true;
+      });
+      closeDrawer.addEventListener("click", () => selectScreen("chat"));
+      openDrawer.addEventListener("click", () => selectScreen("sidebar"));
+      drawer.addEventListener("click", (event) => {
+        if (event.target === drawer) selectScreen("chat");
+      });
+      workspaceTabs.addEventListener("click", (event) => {
+        const close = event.target.closest("button[aria-label^='关闭']");
+        if (close) {
+          const tab = close.closest(".browser-tab"); const wasActive = tab.classList.contains("active"); const next = tab.previousElementSibling?.classList.contains("browser-tab") ? tab.previousElementSibling : tab.nextElementSibling;
+          root.querySelector(`[data-panel="${tab.dataset.tab}"]`)?.remove(); tab.remove();
+          if (wasActive && next?.dataset.tab) setWorkspaceTab(next.dataset.tab);
+          if (!workspaceTabs.querySelector(".browser-tab")) createWorkspaceTab("start", "新标签页");
+          workspaceCurrent.querySelector(".workspace-current-count").textContent = workspaceTabs.querySelectorAll(".browser-tab").length;
+          return;
+        }
+        const tab = event.target.closest(".browser-tab"); if (tab) setWorkspaceTab(tab.dataset.tab);
+      });
+      root.querySelectorAll("[data-new-tab]").forEach((button) => button.addEventListener("click", () => createWorkspaceTab("start", "新标签页")));
+      workspaceCurrent.addEventListener("click", () => {
+        const expanded = workspaceCurrent.getAttribute("aria-expanded") === "true";
+        workspaceCurrent.setAttribute("aria-expanded", String(!expanded));
+        workspaceTabsExpanded.hidden = expanded;
+        workspaceCurrent.querySelector(".workspace-current-arrow").textContent = expanded ? "⌄" : "⌃";
+        if (!expanded) workspaceTabs.querySelector(".browser-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      });
+      root.querySelectorAll("[data-open]").forEach((button) => button.addEventListener("click", () => { workspaceMenu.hidden = true; createWorkspaceTab(button.dataset.open, button.textContent.trim()); }));
+      root.querySelector("[data-more]").addEventListener("click", () => { workspaceMenu.hidden = !workspaceMenu.hidden; });
+      root.querySelector(".workspace-search").addEventListener("submit", (event) => {
+        event.preventDefault(); const value = root.querySelector(".workspace-search input").value.trim();
+        if (value) createWorkspaceTab("web", value);
+      });
+    })();
+  </script>
+</div>

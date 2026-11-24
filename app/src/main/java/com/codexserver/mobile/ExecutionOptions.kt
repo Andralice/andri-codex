@@ -45,3 +45,5 @@ internal fun executionOptions(result: JSONObject, fallback: ExecutionOptions): E
 }
 
 data class RemoteDirectory(val path: String, val children: List<String>, val files: List<String> = emptyList())
+data class RemoteCommandOutput(val stdout: String, val stderr: String, val exitCode: Int)
+data class WorkspaceTerminalState(val output: String = "", val running: Boolean = false, val error: String = "")

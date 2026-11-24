@@ -12,6 +12,7 @@ class WorkspaceSessionCheck {
             history = true, commit = "a".repeat(40), commitTitle = "修复界面",
             browserUrl = "https://example.com/page", browserAddress = "example.com/page",
             browserScrollX = 12, browserScrollY = 635)
+            .copy(tabs = listOf(WorkspaceTabState("files", 1, "变更")), activeTabId = "files")
             .at("files:/project/app/中文", WorkspacePosition(15, 27))
             .at("git:history", WorkspacePosition(23, 18))
             .at("read:file.kt", WorkspacePosition(offset = 3072))
@@ -23,7 +24,7 @@ class WorkspaceSessionCheck {
     @Test fun nestedPreviewReturnsToItsEntryAndCanBeResumedFromWorkspace() {
         val chat = WorkspaceSessionState().select(3).openPreview("first", fromPanel = false)
         val nested = chat.openPreview("second")
-        assertFalse(nested.previewFromPanel)
+        assertTrue(nested.previewFromPanel)
         assertEquals(listOf("first"), nested.previewBack().previews)
         assertEquals(3, nested.previewBack().previewBack().tab)
         val resumed = nested.closePreview().select(5)
@@ -37,15 +38,16 @@ class WorkspaceSessionCheck {
     @Test fun invalidSavedStateAndInlineMediaHaveSafeDefaults() {
         assertEquals(WorkspaceSessionState(), WorkspaceSessionState.decode("not json"))
         val invalid = WorkspaceSessionState.decode("""{"tab":99,"returnTab":99,"commit":"HEAD;evil","browserScrollY":-1,"positions":{"files":[-1,-5]}}""")
-        assertEquals(0, invalid.tab)
+        assertEquals(7, invalid.tab)
         assertEquals(0, invalid.returnTab)
         assertEquals("", invalid.commit)
         assertEquals(0, invalid.browserScrollY)
         assertEquals(WorkspacePosition(), invalid.positions["files"])
         val inline = WorkspaceSessionState().select(2).openPreview("data:image/png;base64,large")
         val restored = WorkspaceSessionState.decode(inline.encode())
-        assertEquals(2, restored.tab)
+        assertEquals(5, restored.tab)
         assertTrue(restored.previews.isEmpty())
+        assertEquals(2, restored.closePreview().tab)
         assertFalse(inline.encode().contains("base64"))
     }
 
