@@ -804,8 +804,8 @@ private fun AttachmentRow(label: String, icon: String, onRemove: () -> Unit) {
 // The producer assigns value below; Compose lint misses assignments across withContext.
 @android.annotation.SuppressLint("ProduceStateDoesNotAssignValue")
 @Composable
-private fun AttachmentThumbnail(source: String) {
-    ChatImage(source, compact = true, modifier = Modifier.size(48.dp))
+private fun AttachmentThumbnail(source: String, onClick: (() -> Unit)? = null) {
+    ChatImage(source, compact = true, onClick = onClick, modifier = Modifier.size(48.dp))
 }
 
 @Composable
@@ -1636,17 +1636,26 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val sharedFiles = vm.sharedFilesFor(thread.id)
     var addingContext by rememberSaveable(thread.id) { mutableStateOf(false) }
     val references = vm.contextFor(thread.id)
+    val mentionCursor = composerValue.selection.start.coerceIn(0, composerValue.text.length)
+    val mentionAt = if (composerValue.selection.collapsed) composerValue.text.lastIndexOf('@', (mentionCursor - 1).coerceAtLeast(0))
+        .takeIf { it >= 0 && mentionCursor > it && composerValue.text.substring(it + 1, mentionCursor).none(Char::isWhitespace) }
+        else null
+    val mentionQuery = mentionAt?.let { composerValue.text.substring(it + 1, mentionCursor).lowercase(Locale.ROOT) }.orEmpty()
+    val imageMentionOptions = imageAttachments.mapIndexed { index, image -> index to image }
+        .filter { (index, image) -> mentionQuery.isBlank() || (index + 1).toString().startsWith(mentionQuery) ||
+            image.label.lowercase(Locale.ROOT).contains(mentionQuery) }
     fun insertImageReference(index: Int) {
         val current = composerValue
-        val start = minOf(current.selection.start, current.selection.end).coerceIn(0, current.text.length)
-        val end = maxOf(current.selection.start, current.selection.end).coerceIn(0, current.text.length)
+        val cursor = current.selection.start.coerceIn(0, current.text.length)
+        val start = current.text.lastIndexOf('@', (cursor - 1).coerceAtLeast(0))
+            .takeIf { it >= 0 && cursor > it && current.text.substring(it + 1, cursor).none(Char::isWhitespace) }
+            ?: return
         val mention = "@${index + 1}"
-        val prefix = if (start > 0 && !current.text[start - 1].isWhitespace()) " " else ""
-        val suffix = if (end < current.text.length && !current.text[end].isWhitespace()) " " else ""
-        val insertion = "$prefix$mention$suffix"
-        val updated = current.text.replaceRange(start, end, insertion)
-        val cursor = start + insertion.length
-        composerValue = TextFieldValue(updated, TextRange(cursor))
+        val suffix = if (cursor < current.text.length && !current.text[cursor].isWhitespace()) " " else ""
+        val insertion = mention + suffix
+        val updated = current.text.replaceRange(start, cursor, insertion)
+        val newCursor = start + insertion.length
+        composerValue = TextFieldValue(updated, TextRange(newCursor))
         vm.updateDraft(thread.id, updated)
         focusComposer = true
         expanded = true
@@ -1860,23 +1869,35 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                 }
                             }
                         }
-                        if (imageAttachments.isNotEmpty()) {
-                            Row(
-                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                                    .padding(start = 5.dp, end = 5.dp, bottom = 3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        if (mentionAt != null && imageMentionOptions.isNotEmpty()) {
+                            Surface(
+                                Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(13.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shadowElevation = 3.dp
                             ) {
-                                imageAttachments.indices.forEach { index ->
-                                    Surface(
-                                        onClick = { insertImageReference(index) },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                    ) {
-                                        Text("@${index + 1}", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                            fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Column(Modifier.heightIn(max = 184.dp).verticalScroll(rememberScrollState()).padding(5.dp)) {
+                                    imageMentionOptions.forEach { (index, image) ->
+                                        Surface(
+                                            onClick = { insertImageReference(index) },
+                                            color = Color.Transparent,
+                                            shape = RoundedCornerShape(9.dp)
+                                        ) {
+                                            Row(
+                                                Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(9.dp)
+                                            ) {
+                                                AttachmentThumbnail(image.dataUrl) { insertImageReference(index) }
+                                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text("@${index + 1}", fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                                    Text(image.label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2376,7 +2397,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     val sourceHorizontalScroll = rememberWorkspaceReadingScroll(vm, threadId, project, "read-x:${target.navigationLink}")
     var sourcePositioned by rememberSaveable(target.navigationLink) { mutableStateOf(false) }
     val textDensity = LocalDensity.current
-    var wrapSourceLines by rememberSaveable(target.source) { mutableStateOf(false) }
+    var wrapSourceLines by rememberSaveable("mobile-wrap-v2", target.source) { mutableStateOf(true) }
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isHtml = target.extension in workspaceHtmlExtensions
     val isAudio = target.kind == WorkspacePreviewKind.AUDIO
@@ -2504,7 +2525,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
                             val sourceModifier = if (wrapSourceLines) Modifier.fillMaxWidth()
                                 else Modifier.fillMaxWidth().horizontalScroll(sourceHorizontalScroll).widthIn(max = 8000.dp)
                             Text(highlightedSource, sourceModifier,
-                                fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp, softWrap = wrapSourceLines,
+                                fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 18.sp, softWrap = wrapSourceLines,
                                 onTextLayout = { layout ->
                                     if (sourceOffset != null && !sourcePositioned) {
                                         sourcePositioned = true

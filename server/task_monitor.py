@@ -87,7 +87,9 @@ monitor_update_preferences：传入 changes 对象（只含修改字段）、exp
 和 reason（用户要求的简述）保存偏好。
 monitor_resolve_event：传入 event_id、action(done/follow_up/ask_user)、summary，
 以及需要时的 next_prompt 或 question，保存用户对已有待处理问题的决定。
-不需要终端或任意文件写入。工具失败时如实说明，不要改用其他方式绕过校验。
+不需要终端或任意文件写入。工具失败时按返回的 code 和 message 如实说明，不要绕过校验。
+只有 invalid_arguments、invalid_revision、invalid_preference_value 才属于参数或值错误；
+不能把笼统的 ValueError 解释成参数校验失败。owner/backend 类错误与会话所属后端有关。
 
 可修改字段及含义：
 enabled: 布尔值，暂停/恢复后台监控；allow_followups: 布尔值，允许自动继续或只检查汇报；

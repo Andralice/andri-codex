@@ -37,7 +37,7 @@ class Connection:
         m.calls.append((self.endpoint, method, params))
         tid = params.get("threadId", "")
         if method == "thread/loaded/list":
-            return {"data": list(m.threads), "nextCursor": None}
+            return {"data": [t for t in m.threads if not (t == "monitor" and self.endpoint == "other")], "nextCursor": None}
         if method == "thread/list":
             return {"data": [t for t in m.threads.values() if t["id"] != "reviewer"], "nextCursor": None}
         if method == "thread/fork":

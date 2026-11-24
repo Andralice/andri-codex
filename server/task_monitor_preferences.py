@@ -17,29 +17,37 @@ ALLOWED = BOOL_KEYS | set(LIMITS) | LIST_KEYS | TEXT_KEYS
 ASK_BEFORE = {"deploy", "publish", "delete_data", "paid_generation", "scope_change"}
 
 
+class PreferenceValidationError(ValueError):
+    """Invalid preference fields or values, never a session-ownership error."""
+
+
+class PreferenceConflict(ValueError):
+    """The caller must reread the revision instead of overwriting newer changes."""
+
+
 def validate(changes):
     if not isinstance(changes, dict) or set(changes) - ALLOWED:
-        raise ValueError("Unsupported preference keys")
+        raise PreferenceValidationError("Unsupported preference keys")
     result = {}
     for key, value in changes.items():
         if key in BOOL_KEYS and type(value) is not bool:
-            raise ValueError("Preference must be boolean: " + key)
+            raise PreferenceValidationError("Preference must be boolean: " + key)
         if key in LIMITS:
             low, high = LIMITS[key]
             if type(value) is not int or not low <= value <= high:
-                raise ValueError("Preference outside supported range: " + key)
+                raise PreferenceValidationError("Preference outside supported range: " + key)
         if key in LIST_KEYS:
             if not isinstance(value, list) or len(value) > 200 or not all(isinstance(v, str) and 0 < len(v) <= 1000 for v in value):
-                raise ValueError("Invalid preference list: " + key)
+                raise PreferenceValidationError("Invalid preference list: " + key)
             value = list(dict.fromkeys(value))
             if key in {"included_projects", "excluded_projects"}:
                 if any(not v.startswith("/") or ".." in PurePosixPath(v).parts for v in value):
-                    raise ValueError("Projects must be absolute paths on this server")
+                    raise PreferenceValidationError("Projects must be absolute paths on this server")
                 value = [str(PurePosixPath(v)) for v in value]
             if key == "ask_before" and set(value) - ASK_BEFORE:
-                raise ValueError("Unsupported confirmation category")
+                raise PreferenceValidationError("Unsupported confirmation category")
         if key in TEXT_KEYS and (not isinstance(value, str) or len(value) > 12000):
-            raise ValueError("Invalid preference text: " + key)
+            raise PreferenceValidationError("Invalid preference text: " + key)
         result[key] = value
     return result
 
@@ -58,7 +66,7 @@ def load(runtime):
 def save(runtime, changes, reason="", expected_revision=None):
     changes = validate(changes)
     if not isinstance(reason, str) or len(reason) > 2000:
-        raise ValueError("Invalid preference reason")
+        raise PreferenceValidationError("Invalid preference reason")
     runtime = Path(runtime)
     runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (runtime / "preferences.lock").open("a") as lock:
@@ -66,7 +74,7 @@ def save(runtime, changes, reason="", expected_revision=None):
         fcntl.flock(lock, fcntl.LOCK_EX)
         previous = load(runtime)
         if expected_revision is not None and expected_revision != previous["revision"]:
-            raise ValueError("Preferences changed; read current settings before updating")
+            raise PreferenceConflict("Preferences changed; read current settings before updating")
         values = {**previous["values"], **changes}
         revision = previous["revision"] + 1
         stamp = time.time()
