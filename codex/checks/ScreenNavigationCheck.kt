@@ -4,12 +4,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ScreenNavigationCheck {
-    @Test fun edgeSwipeOpensSidebarAndRightSwipeDoesNotLeaveTheChat() {
-        assertEquals(ChatSwipe.SIDEBAR, chatSwipeTarget(12f, 70f, 32f))
-        assertNull(chatSwipeTarget(120f, 70f, 32f))
-        assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(348f, -70f, 32f))
-        assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(120f, -70f, 32f))
-        assertNull(chatSwipeTarget(120f, 0f, 32f))
+    @Test fun rightSwipeOpensSidebarAndLeftSwipeOpensWorkspace() {
+        assertEquals(ChatSwipe.SIDEBAR, chatSwipeTarget(70f))
+        assertEquals(ChatSwipe.WORKSPACE, chatSwipeTarget(-70f))
+        assertNull(chatSwipeTarget(0f))
     }
 
     @Test fun conversationPagesHaveDistinctKeysForEachThreadAndDestination() {

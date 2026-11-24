@@ -1471,7 +1471,7 @@ private fun EmptyChatScreen(vm: MobileViewModel) {
     val scope = rememberCoroutineScope()
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = drawerState.isOpen,
+        gesturesEnabled = true,
         scrimColor = Color(0x66000000),
         drawerContent = {
             ThreadSidebar(vm, "", onSelect = { id ->
@@ -1690,8 +1690,8 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                 })
         }
     ) {
-    val swipeTarget: (Float, Float, Float) -> (() -> Unit)? = { start, _, delta ->
-        when (chatSwipeTarget(start, delta, 32f)) {
+    val swipeTarget: (Float, Float, Float) -> (() -> Unit)? = { _, _, delta ->
+        when (chatSwipeTarget(delta)) {
             ChatSwipe.SIDEBAR -> ({ sidebarScope.launch { sidebarState.open() }; Unit })
             ChatSwipe.WORKSPACE -> enterWorkspace
             null -> null

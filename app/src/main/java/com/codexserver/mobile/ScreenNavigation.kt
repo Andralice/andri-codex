@@ -13,9 +13,9 @@ internal data class MainScreen(val destination: String, val thread: CodexThread?
 
 internal enum class ChatSwipe { SIDEBAR, WORKSPACE }
 
-/** Keep the left edge for the conversation drawer; left swipes open the workspace. */
-internal fun chatSwipeTarget(start: Float, delta: Float, edge: Float): ChatSwipe? = when {
-    delta > 0f -> if (start < edge) ChatSwipe.SIDEBAR else null
+/** Right swipes open conversations from the chat body; left swipes open the workspace. */
+internal fun chatSwipeTarget(delta: Float): ChatSwipe? = when {
+    delta > 0f -> ChatSwipe.SIDEBAR
     delta < 0f -> ChatSwipe.WORKSPACE
     else -> null
 }
