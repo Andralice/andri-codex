@@ -1625,13 +1625,34 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
         mutableStateOf(TextFieldValue(draft, TextRange(draft.length)))
     }
     LaunchedEffect(thread.id, draft) {
-        if (composerValue.text != draft) composerValue = TextFieldValue(draft, TextRange(draft.length))
+        if (composerValue.text != draft) {
+            val selection = composerValue.selection
+            composerValue = TextFieldValue(draft, TextRange(
+                selection.start.coerceIn(0, draft.length), selection.end.coerceIn(0, draft.length)))
+        }
     }
     val imageAttachments = vm.imageAttachments[thread.id].orEmpty()
     val videoAttachment = vm.videoAttachments[thread.id]
     val sharedFiles = vm.sharedFilesFor(thread.id)
     var addingContext by rememberSaveable(thread.id) { mutableStateOf(false) }
     val references = vm.contextFor(thread.id)
+    fun insertImageReference(index: Int) {
+        val current = composerValue
+        val start = minOf(current.selection.start, current.selection.end).coerceIn(0, current.text.length)
+        val end = maxOf(current.selection.start, current.selection.end).coerceIn(0, current.text.length)
+        val mention = "@${index + 1}"
+        val prefix = if (start > 0 && !current.text[start - 1].isWhitespace()) " " else ""
+        val suffix = if (end < current.text.length && !current.text[end].isWhitespace()) " " else ""
+        val insertion = "$prefix$mention$suffix"
+        val updated = current.text.replaceRange(start, end, insertion)
+        val cursor = start + insertion.length
+        composerValue = TextFieldValue(updated, TextRange(cursor))
+        vm.updateDraft(thread.id, updated)
+        focusComposer = true
+        expanded = true
+        focus.requestFocus()
+        keyboard?.show()
+    }
     fun openChatLink(url: String) {
         focusComposer = false
         keyboard?.hide()
@@ -1836,6 +1857,27 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                     videoAttachment?.let { AttachmentRow(it.label, "play", vm::removeVideo) }
                                     sharedFiles.forEachIndexed { index, file -> AttachmentRow(file.label, "file", { vm.removeSharedFile(index) }) }
                                     references.forEach { reference -> AttachmentRow(reference.label, "file", { vm.removeContextReference(reference.id) }) }
+                                }
+                            }
+                        }
+                        if (imageAttachments.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                                    .padding(start = 5.dp, end = 5.dp, bottom = 3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                imageAttachments.indices.forEach { index ->
+                                    Surface(
+                                        onClick = { insertImageReference(index) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Text("@${index + 1}", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                            fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
                                 }
                             }
                         }
@@ -2334,7 +2376,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     val sourceHorizontalScroll = rememberWorkspaceReadingScroll(vm, threadId, project, "read-x:${target.navigationLink}")
     var sourcePositioned by rememberSaveable(target.navigationLink) { mutableStateOf(false) }
     val textDensity = LocalDensity.current
-    var wrapSourceLines by rememberSaveable(target.source) { mutableStateOf(true) }
+    var wrapSourceLines by rememberSaveable(target.source) { mutableStateOf(false) }
     val isMarkdown = target.extension in workspaceMarkdownExtensions
     val isHtml = target.extension in workspaceHtmlExtensions
     val isAudio = target.kind == WorkspacePreviewKind.AUDIO
@@ -3896,6 +3938,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
         "pending" -> "待处理"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
         "answered" -> "已回答"; "approved" -> "已批准"; "interrupted" -> "已中断"; "resolved" -> "已处理"; else -> "已完成"
     }
+    val statusSummary = if (running && line.processItems.any { it.status == "failed" }) "$status · 有失败项" else status
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(17.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.fillMaxWidth()) {
@@ -3912,7 +3955,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(line.stage.takeIf { it.isNotBlank() } ?: "执行过程",
                             fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${processEntries.sumOf { it.items.size }} 个步骤 · $status", fontSize = 12.sp,
+                        Text("${processEntries.sumOf { it.items.size }} 个步骤 · $statusSummary", fontSize = 12.sp,
                             color = if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
@@ -3994,7 +4037,9 @@ private fun TimelineProcessGroup(group: ProcessStepGroup, firstNumber: Int, vm: 
         AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(Modifier.fillMaxWidth().padding(start = 17.dp)) {
                 group.items.forEachIndexed { index, item ->
-                    TimelineProcessItem(item, firstNumber + index, vm, onOpenLink, collapsible = true)
+                    key("process-step-${firstNumber + index}-${item.id}") {
+                        TimelineProcessItem(item, firstNumber + index, vm, onOpenLink, collapsible = true)
+                    }
                 }
             }
         }

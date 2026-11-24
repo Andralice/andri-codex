@@ -2351,7 +2351,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     else -> "请根据我选定的上下文完成任务。"
                 }
                 val composedPrompt = listOf(prompt.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
-                    remoteImages.takeIf { it.isNotEmpty() }?.let { "手机图片（已保存至项目 codex/inbox）：\n" + it.joinToString("\n") },
+                    remoteImages.takeIf { it.isNotEmpty() }?.let { paths ->
+                        "手机图片（已保存至项目 codex/inbox；按顺序编号，@1、@2 等引用对应图片）：\n" +
+                            paths.mapIndexed { index, path -> "@${index + 1}：$path" }.joinToString("\n")
+                    },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
@@ -2465,7 +2468,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     else -> "请根据我选定的上下文完成任务。"
                 }
                 val queuedPrompt = listOf(raw.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
-                    remoteImages.takeIf { it.isNotEmpty() }?.let { "手机图片（已保存至项目 codex/inbox）：\n" + it.joinToString("\n") },
+                    remoteImages.takeIf { it.isNotEmpty() }?.let { paths ->
+                        "手机图片（已保存至项目 codex/inbox；按顺序编号，@1、@2 等引用对应图片）：\n" +
+                            paths.mapIndexed { index, path -> "@${index + 1}：$path" }.joinToString("\n")
+                    },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
                     references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")

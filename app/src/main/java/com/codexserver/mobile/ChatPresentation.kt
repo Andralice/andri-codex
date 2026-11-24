@@ -138,12 +138,17 @@ internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: Stri
         (line.role == "tool" || line.role == "assistant" && line.questions.isEmpty() && answers[line.turnId] != index)
     val groups = lines.withIndex().filter { fold(it.index, it.value) }.groupBy { it.value.turnId }
     val firstIndices = groups.mapValues { (_, rows) -> rows.first().index }
+    // Some server snapshots briefly report a running thread before the active turn
+    // ID has caught up with the streamed items. In that window, the latest recorded
+    // turn is the only safe candidate to show as active.
+    val activeProcessTurnId = activeTurnId?.takeIf { it in groups }
+        ?: if (threadRunning) groups.maxByOrNull { (_, rows) -> rows.last().index }?.key else null
     return lines.mapIndexedNotNull { index, line ->
         if (!fold(index, line)) line
         else if (firstIndices[line.turnId] == index) ChatLine(
             role = "thought", text = "", id = "thought:${line.turnId}", turnId = line.turnId,
             stage = "执行记录", status = when {
-                threadRunning && line.turnId == activeTurnId -> "inProgress"
+                threadRunning && line.turnId == activeProcessTurnId -> "inProgress"
                 else -> groups.getValue(line.turnId).map { it.value.status }
                     .firstOrNull { it in setOf("failed", "interrupted", "declined") } ?: "completed"
             },

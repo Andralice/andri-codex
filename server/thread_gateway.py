@@ -310,14 +310,7 @@ class Session:
         elif "id" in message:
             try:
                 backend = self.route(method, params)
-                forwarded = params
-                if method == "thread/resume" and "initialTurnsPage" in params:
-                    # This app-server accepts the option but fails with
-                    # "list_turns is not supported yet" after resuming a loaded
-                    # thread. Omit the optional optimization; Android fetches
-                    # thread/turns/list when the initial page is absent.
-                    forwarded = {k: v for k, v in params.items() if k != "initialTurnsPage"}
-                future = backend.request(method, forwarded)
+                future = backend.request(method, params)
                 future.add_done_callback(lambda f: self.complete(f, message["id"], backend, method))
             except (OSError, ValueError, RpcError, FutureTimeout):
                 self.error(message["id"])
