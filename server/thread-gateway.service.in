@@ -1,0 +1,16 @@
+[Unit]
+Description=Codex mobile chat owner routing
+Wants=codex-mobile.service
+After=codex-mobile.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 -B @REPO@/server/thread_gateway.py --listen @LISTEN@ --mobile @MOBILE@ --desktop @DESKTOP@
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

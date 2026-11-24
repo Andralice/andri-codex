@@ -1,0 +1,17 @@
+[Unit]
+Description=Andri persistent Codex task monitor
+After=network.target codex-mobile.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 -B @REPO@/server/task_monitor.py --config @CONFIG@
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

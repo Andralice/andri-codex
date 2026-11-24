@@ -57,3 +57,7 @@ local.properties
 !/codex/codex-mobile-preview.html
 !/codex/previews/
 !/codex/previews/andri-list-status-preview.html
+
+# Python runtime caches
+__pycache__/
+*.py[cod]

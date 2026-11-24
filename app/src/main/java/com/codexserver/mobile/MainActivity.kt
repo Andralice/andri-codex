@@ -3851,24 +3851,23 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
         "pending" -> "待处理"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
         "answered" -> "已回答"; "approved" -> "已批准"; "interrupted" -> "已中断"; "resolved" -> "已处理"; else -> "已完成"
     }
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(13.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(17.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.fillMaxWidth()) {
             Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.size(22.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(7.dp)),
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                    Box(Modifier.size(27.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
                         contentAlignment = Alignment.Center) {
-                        if (running) CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.5.dp,
+                        if (running) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.7.dp,
                             color = MaterialTheme.colorScheme.primary)
                         else LineIcon(if (line.status == "failed") "close" else if (line.status == "interrupted") "stop" else "check",
-                            Modifier.size(13.dp), if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
+                            Modifier.size(15.dp), if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
                     }
-                    Column(Modifier.weight(1f)) {
-                        Text(if (line.processItems.size > 1) "${line.stage.takeIf { it.isNotBlank() } ?: "执行过程"} · ${line.processItems.size} 项"
-                            else line.stage.takeIf { it.isNotBlank() } ?: "执行过程",
-                            fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!running && line.status != "completed") Text(status, fontSize = 12.sp,
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(line.stage.takeIf { it.isNotBlank() } ?: "执行过程",
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${processEntries.sumOf { it.items.size }} 个步骤 · $status", fontSize = 12.sp,
                             color = if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
@@ -3876,14 +3875,15 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                 }
             }
             AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 13.dp, vertical = 8.dp)) {
+                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
+                    .padding(horizontal = 15.dp, vertical = 14.dp)) {
                     androidx.compose.foundation.text.selection.DisableSelection {
                         if (processEntries.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                                 var commandNumber = 0
-                                processEntries.forEachIndexed { entryIndex, entry ->
+                                processEntries.forEach { entry ->
                                     if (entry.progress) {
-                                        TimelineProgressSegment(line.id, entryIndex, entry.items, vm, onOpenLink)
+                                        TimelineProgressSegment(entry.items, vm, onOpenLink)
                                     } else {
                                         entry.items.forEach { item ->
                                             commandNumber += 1
@@ -3910,34 +3910,24 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
 }
 
 @Composable
-private fun TimelineProgressSegment(turnId: String, entryIndex: Int, items: List<ChatLine>,
-    vm: MobileViewModel, onOpenLink: (String) -> Unit) {
-    val key = "${turnId}:progress:$entryIndex:${items.firstOrNull()?.id.orEmpty()}"
-    var expanded by rememberSaveable(key) { mutableStateOf(true) }
-    Surface(color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(11.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.fillMaxWidth()) {
-            Surface(onClick = { expanded = !expanded }, color = Color.Transparent,
-                modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("进度说明", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
-                    Text("${items.size} 段", fontSize = 10.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
-                        rotationZ = if (expanded) 90f else 0f
-                    }, MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            AnimatedVisibility(expanded,
-                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    items.forEachIndexed { index, item ->
-                        TimelineProcessItem(item, index + 1, vm, onOpenLink)
+private fun TimelineProgressSegment(items: List<ChatLine>, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    val railColor = MaterialTheme.colorScheme.outlineVariant
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
+        androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+            val x = 5.dp.toPx()
+            drawLine(railColor, androidx.compose.ui.geometry.Offset(x, 10.dp.toPx()),
+                androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 1.dp.toPx())
+        }
+        Column(Modifier.fillMaxWidth().padding(start = 19.dp, bottom = 13.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items.forEachIndexed { index, item ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top) {
+                    Box(Modifier.padding(top = 5.dp).size(9.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(if (index == 0) "进度说明" else "继续处理", fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.secondary)
+                        TimelineProcessBody(item, vm, onOpenLink)
                     }
                 }
             }
@@ -3949,17 +3939,21 @@ private fun TimelineProgressSegment(turnId: String, entryIndex: Int, items: List
 private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel, onOpenLink: (String) -> Unit,
     collapsible: Boolean = false) {
     var expanded by rememberSaveable("process:${item.id}", collapsible) { mutableStateOf(!collapsible) }
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        if (collapsible) {
-            Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
-                TimelineProcessHeader(item, number, showChevron = true, expanded = expanded)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.padding(top = 12.dp).size(9.dp).background(
+            if (item.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline, CircleShape))
+        Column(Modifier.weight(1f).padding(bottom = 13.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (collapsible) {
+                Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+                    TimelineProcessHeader(item, number, showChevron = true, expanded = expanded)
+                }
+            } else {
+                TimelineProcessHeader(item, number)
             }
-        } else {
-            TimelineProcessHeader(item, number)
-        }
-        AnimatedVisibility(!collapsible || expanded,
-            enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            TimelineProcessBody(item, vm, onOpenLink)
+            AnimatedVisibility(!collapsible || expanded,
+                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                TimelineProcessBody(item, vm, onOpenLink)
+            }
         }
     }
 }
@@ -3968,18 +3962,27 @@ private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel
 private fun TimelineProcessHeader(item: ChatLine, number: Int, showChevron: Boolean = false, expanded: Boolean = true) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(String.format(Locale.ROOT, "%02d", number), fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            color = if (item.status == "failed") MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(item.stage.ifBlank { if (item.role == "assistant") "进度说明" else "执行步骤" },
-            fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+        Text(String.format(Locale.ROOT, "%02d", number), fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+            color = if (item.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
+        Text(if (item.role == "assistant") item.stage.ifBlank { "进度说明" } else processStepTitle(item),
+            fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f))
         if (showChevron) LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
             rotationZ = if (expanded) 90f else 0f
         }, MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+private fun processStepTitle(item: ChatLine): String = when {
+    item.isReasoningSummary -> "思考摘要"
+    item.stage == "文件变更" -> "文件变更"
+    item.stage == "执行计划" -> "执行计划"
+    item.stage == "工具进度" -> "工具进度"
+    item.stage.startsWith("搜索：") -> item.stage
+    item.stage.isBlank() || item.stage.startsWith("{") || item.stage.contains('\n') -> "执行命令"
+    else -> "运行命令"
 }
 
 @Composable

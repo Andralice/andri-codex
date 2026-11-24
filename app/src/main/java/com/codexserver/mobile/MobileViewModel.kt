@@ -920,9 +920,13 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         synchronizing = true
         synchronizationJob = viewModelScope.launch {
             try {
-                runCatching { connection.listModels() }
-                    .onSuccess { models -> if (client === connection && connected) applyModels(models) }
-                    .onFailure { if (it !is CancellationException) android.util.Log.w("MobileSync", "读取 Codex 模型列表失败", it) }
+                // Conversation status drives the sidebar, so don't make it wait for
+                // the independent model catalogue request on slow connections.
+                viewModelScope.launch {
+                    runCatching { connection.listModels() }
+                        .onSuccess { models -> if (client === connection && connected) applyModels(models) }
+                        .onFailure { if (it !is CancellationException) android.util.Log.w("MobileSync", "读取 Codex 模型列表失败", it) }
+                }
                 // On an already-live connection, thread/list is enough to tell
                 // whether the selected conversation changed. Avoid another
                 // turns/list read when its server timestamp is unchanged.
