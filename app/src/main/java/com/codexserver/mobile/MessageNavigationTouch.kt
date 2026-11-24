@@ -43,7 +43,7 @@ internal class MessageNavigationTouch(
                     abandoned = true
                     return false
                 }
-                if (kotlin.math.abs(dx) >= 56 * density && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                if (kotlin.math.abs(dx) >= 42 * density && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
                     val rootPosition = IntArray(2).also(view.rootView::getLocationOnScreen)
                     action = target((startX - rootPosition[0]) / density, view.rootView.width / density, dx / density)
                     if (action != null) {
@@ -62,7 +62,7 @@ internal class MessageNavigationTouch(
                 action = null
                 if (navigate != null) {
                     view.parent.requestDisallowInterceptTouchEvent(false)
-                    if (direction * dx > 0 && kotlin.math.abs(dx) >= 56 * density) navigate()
+                    if (direction * dx > 0 && kotlin.math.abs(dx) >= 42 * density) navigate()
                     return true
                 }
             }

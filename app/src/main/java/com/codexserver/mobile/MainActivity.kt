@@ -1555,18 +1555,17 @@ private fun ThreadLoadingScreen(vm: MobileViewModel) {
 
 private val LocalMessageNavigation = staticCompositionLocalOf<((Float, Float, Float) -> (() -> Unit)?)?> { null }
 
-// Child text selection, horizontal galleries and scrolling may claim the gesture first.
-// Navigate only after an unclaimed horizontal drag is released past the threshold.
+// Allow horizontal swipes to begin over clickable content too. Vertical scrolling still
+// wins through touch slop cancellation, and taps remain with their child.
 @Composable
 private fun Modifier.pageNavigationSwipe(enabled: Boolean = true,
     target: (Float, Float, Float) -> (() -> Unit)?): Modifier {
     val currentTarget by rememberUpdatedState(target)
     return pointerInput(enabled) {
         if (!enabled) return@pointerInput
-        val minimum = 56.dp.toPx()
+        val minimum = 42.dp.toPx()
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
-            if (down.isConsumed) return@awaitEachGesture
             var action: (() -> Unit)? = null
             var distance = 0f
             val start = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ ->
