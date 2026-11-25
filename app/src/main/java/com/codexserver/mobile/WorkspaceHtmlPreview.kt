@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -24,7 +23,7 @@ import kotlinx.coroutines.runBlocking
 
 @Composable
 internal fun WorkspaceHtmlPreview(document: String, target: WorkspacePreviewTarget, vm: MobileViewModel,
-    onOpenLink: (String, String) -> Unit, onReload: () -> Unit, modifier: Modifier = Modifier) {
+    onOpenLink: (String, String) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val openLink by rememberUpdatedState(onOpenLink)
     var error by remember(target.source) { mutableStateOf("") }
@@ -108,11 +107,6 @@ internal fun WorkspaceHtmlPreview(document: String, target: WorkspacePreviewTarg
     DisposableEffect(view) { onDispose { view.stopLoading(); view.destroy() } }
     LaunchedEffect(view, document) { view.loadDataWithBaseURL(baseUrl, document, "text/html", "UTF-8", null) }
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (loading) "正在加载网页 $progress%" else "网页预览", Modifier.weight(1f),
-                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onReload) { Text("刷新网页") }
-        }
         if (loading) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
         val message = error.ifBlank { resourceError }
         if (message.isNotBlank()) Text(message, Modifier.padding(horizontal = 12.dp, vertical = 6.dp),

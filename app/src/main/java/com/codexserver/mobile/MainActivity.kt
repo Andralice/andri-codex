@@ -95,12 +95,16 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1621,6 +1625,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = remember { FocusRequester() }
     val draft = vm.drafts[thread.id].orEmpty()
+    var dismissedMentionStart by rememberSaveable(thread.id) { mutableIntStateOf(-1) }
     var composerValue by rememberSaveable(thread.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(draft, TextRange(draft.length)))
     }
@@ -1637,13 +1642,32 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     var addingContext by rememberSaveable(thread.id) { mutableStateOf(false) }
     val references = vm.contextFor(thread.id)
     val mentionCursor = composerValue.selection.start.coerceIn(0, composerValue.text.length)
-    val mentionAt = if (composerValue.selection.collapsed) composerValue.text.lastIndexOf('@', (mentionCursor - 1).coerceAtLeast(0))
+    val detectedMentionAt = if (composerValue.selection.collapsed) composerValue.text.lastIndexOf('@', (mentionCursor - 1).coerceAtLeast(0))
         .takeIf { it >= 0 && mentionCursor > it && composerValue.text.substring(it + 1, mentionCursor).none(Char::isWhitespace) }
         else null
+    val mentionAt = detectedMentionAt?.takeIf { it != dismissedMentionStart }
     val mentionQuery = mentionAt?.let { composerValue.text.substring(it + 1, mentionCursor).lowercase(Locale.ROOT) }.orEmpty()
     val imageMentionOptions = imageAttachments.mapIndexed { index, image -> index to image }
         .filter { (index, image) -> mentionQuery.isBlank() || (index + 1).toString().startsWith(mentionQuery) ||
             image.label.lowercase(Locale.ROOT).contains(mentionQuery) }
+    val mentionColor = MaterialTheme.colorScheme.primary
+    val mentionBackground = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f)
+    val mentionTransformation = remember(imageAttachments.size, mentionColor, mentionBackground) {
+        VisualTransformation { original ->
+            val styled = AnnotatedString.Builder().apply { append(original) }
+            Regex("@([1-9][0-9]*)").findAll(original.text).forEach { match ->
+                val index = match.groupValues[1].toIntOrNull()
+                if (index != null && index <= imageAttachments.size) {
+                    styled.addStyle(SpanStyle(
+                        color = mentionColor,
+                        background = mentionBackground,
+                        fontWeight = FontWeight.SemiBold
+                    ), match.range.first, match.range.last + 1)
+                }
+            }
+            TransformedText(styled.toAnnotatedString(), OffsetMapping.Identity)
+        }
+    }
     fun insertImageReference(index: Int) {
         val current = composerValue
         val cursor = current.selection.start.coerceIn(0, current.text.length)
@@ -1651,10 +1675,11 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
             .takeIf { it >= 0 && cursor > it && current.text.substring(it + 1, cursor).none(Char::isWhitespace) }
             ?: return
         val mention = "@${index + 1}"
-        val suffix = if (cursor < current.text.length && !current.text[cursor].isWhitespace()) " " else ""
+        val suffix = if (cursor < current.text.length && current.text[cursor].isWhitespace()) "" else " "
         val insertion = mention + suffix
         val updated = current.text.replaceRange(start, cursor, insertion)
         val newCursor = start + insertion.length
+        dismissedMentionStart = start
         composerValue = TextFieldValue(updated, TextRange(newCursor))
         vm.updateDraft(thread.id, updated)
         focusComposer = true
@@ -1957,6 +1982,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                 }
                             }
                             BasicTextField(composerValue, { value ->
+                                if (value.text != composerValue.text) dismissedMentionStart = -1
                                 composerValue = value
                                 vm.updateDraft(thread.id, value.text)
                             },
@@ -1965,6 +1991,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                 enabled = true, minLines = 1, maxLines = 4,
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface, lineHeight = 24.sp),
                                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                visualTransformation = mentionTransformation,
                                 decorationBox = { field ->
                                     if (draft.isEmpty()) Text("发消息…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
                                     field()
@@ -2462,6 +2489,9 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (isMarkdown || isHtml) TextButton({ raw = !raw }) { Text(if (raw) (if (isHtml) "网页预览" else "阅读模式") else "查看源码") }
+            if (isHtml && !raw) TextButton({ attempt++ }, enabled = html != null) {
+                ActionLabel("refresh", "刷新网页", iconSize = 16.dp, fontSize = 12.sp)
+            }
             Spacer(Modifier.weight(1f))
             Box {
                 IconButton({ documentMenu = true }, Modifier.semantics { contentDescription = "阅读与文件选项" }) { LineIcon("more") }
@@ -2501,7 +2531,7 @@ private fun WorkspaceDocumentPreview(vm: MobileViewModel, threadId: String, proj
             }
             isHtml && !raw -> html?.let { document ->
                 key(target.source, attempt) {
-                    WorkspaceHtmlPreview(document, target, vm, onOpenLink, onReload = { attempt++ }, modifier = Modifier.weight(1f))
+                    WorkspaceHtmlPreview(document, target, vm, onOpenLink, modifier = Modifier.weight(1f))
                 }
             }
             isText -> {
