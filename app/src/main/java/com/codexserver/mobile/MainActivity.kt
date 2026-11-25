@@ -341,6 +341,24 @@ class MainActivity : ComponentActivity() {
                         workspacePage = true
                     }
                 }
+                val openAiWorkspaceLink: (String, String) -> Boolean = { link, base ->
+                    val target = workspacePreviewTarget(link, base)
+                    if (target == null) {
+                        android.widget.Toast.makeText(this@MainActivity, "无法打开此链接", android.widget.Toast.LENGTH_SHORT).show()
+                        false
+                    } else {
+                        vm.updateWorkspaceUi(workspaceId, workspaceProject) { it.openPreview(target.navigationLink, false) }
+                        workspacePage = true
+                        true
+                    }
+                }
+                val workspaceOpenRequest = vm.workspaceOpenRequests.firstOrNull()
+                LaunchedEffect(workspaceOpenRequest?.id) {
+                    val request = workspaceOpenRequest ?: return@LaunchedEffect
+                    val opened = request.threadId == vm.activeId && openAiWorkspaceLink(request.target, request.baseDirectory)
+                    vm.completeWorkspaceOpenRequest(request.id, opened)
+                    vm.consumeWorkspaceOpenRequest(request.id)
+                }
                 BackHandler(enabled = vm.activeId != null) {
                     if (workspacePage && workspaceTab == 5) {
                         if (previewSources.size > 1) previousWorkspacePreview() else closeWorkspacePreview()
@@ -849,11 +867,11 @@ private fun WorkspaceBrowser(
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
-            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             settings.safeBrowsingEnabled = true
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                    httpsBrowserUrl(request.url.toString()) == null
+                    workspaceBrowserUrl(request.url.toString()) == null
 
                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                     navigation++
@@ -862,9 +880,9 @@ private fun WorkspaceBrowser(
                     pageProgress = 0
                     error = ""
                     title = ""
-                    if (httpsBrowserUrl(url) == null) {
+                    if (workspaceBrowserUrl(url) == null) {
                         view.stopLoading()
-                        error = "浏览器仅支持 HTTPS 地址"
+                        error = "无法打开此地址"
                         loading = false
                         return
                     }
@@ -873,7 +891,7 @@ private fun WorkspaceBrowser(
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
-                    if (url != view.url || httpsBrowserUrl(url) == null) return
+                    if (url != view.url || workspaceBrowserUrl(url) == null) return
                     loading = false
                     currentUrl = url
                     title = view.title.orEmpty()
@@ -902,7 +920,7 @@ private fun WorkspaceBrowser(
                 }
 
                 override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                    if (httpsBrowserUrl(url) != null) {
+                    if (workspaceBrowserUrl(url) != null) {
                         if (url != currentUrl) {
                             navigation++
                             extracting = false
@@ -948,13 +966,13 @@ private fun WorkspaceBrowser(
         if (restored != null) {
             canGoBack = pageView.canGoBack()
             browserOpened = true
-        } else httpsBrowserUrl(currentUrl.ifBlank { initialUrl })?.let(pageView::loadUrl)
+        } else workspaceBrowserUrl(currentUrl.ifBlank { initialUrl })?.let(pageView::loadUrl)
     }
 
     fun openAddress() {
         val entered = address.trim()
-        val url = httpsBrowserUrl(if ("://" in entered) entered else "https://$entered")
-        if (url == null) error = "请输入有效的 HTTPS 网址"
+        val url = workspaceBrowserUrl(if ("://" in entered) entered else "https://$entered")
+        if (url == null) error = "请输入有效的网址"
         else {
             keyboard?.hide()
             browserOpened = true
@@ -1048,9 +1066,12 @@ private fun WorkspaceBrowser(
     }
 }
 
-private fun httpsBrowserUrl(value: String): String? = runCatching {
+private fun workspaceBrowserUrl(value: String): String? = runCatching {
     val uri = URI(value)
-    value.takeIf { uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null }
+    value.takeIf {
+        (uri.scheme.equals("https", ignoreCase = true) || uri.scheme.equals("http", ignoreCase = true)) &&
+            !uri.host.isNullOrBlank() && uri.rawUserInfo == null
+    }
 }.getOrNull()
 
 @Composable

@@ -1,9 +1,9 @@
 package com.codexserver.mobile
 
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.URI
 import java.util.UUID
-import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -87,8 +87,9 @@ internal suspend fun downloadWorkspacePreviewUrl(url: String, directory: File,
     var address = url
     try {
         repeat(6) {
-            check(URI(address).scheme.equals("https", true)) { "文件链接仅支持 HTTPS" }
-            val connection = URI(address).toURL().openConnection() as HttpsURLConnection
+            val scheme = URI(address).scheme
+            check(scheme.equals("https", true) || scheme.equals("http", true)) { "文件链接地址无效" }
+            val connection = URI(address).toURL().openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 15_000
             connection.readTimeout = 30_000

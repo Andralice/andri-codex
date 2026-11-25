@@ -506,8 +506,10 @@ class SshCodexClient(
         return result
     }
 
-    suspend fun startThread(options: ExecutionOptions, model: String): JSONObject =
-        request("thread/start", options.params().put("model", model)).also {
+    suspend fun startThread(options: ExecutionOptions, model: String, dynamicTools: JSONArray? = null): JSONObject =
+        request("thread/start", options.params().put("model", model).apply {
+            if (dynamicTools != null) put("dynamicTools", dynamicTools)
+        }).also {
             check(!it.optJSONObject("thread")?.text("id").isNullOrBlank()) { "服务器没有返回对话 ID" }
         }
 
@@ -693,11 +695,86 @@ class SshCodexClient(
 
     suspend fun sendTurn(
         threadId: String, model: String, prompt: String, imageDataUrls: List<String> = emptyList(),
-        options: ExecutionOptions? = null, localImagePaths: List<String> = emptyList()
+        options: ExecutionOptions? = null, localImagePaths: List<String> = emptyList(),
+        additionalContext: JSONObject? = null
     ): String {
         val input = userInput(prompt, imageDataUrls, localImagePaths)
-        val result = request("turn/start", (options?.params(turn = true) ?: JSONObject()).put("threadId", threadId).put("model", model).put("input", input))
+        val params = (options?.params(turn = true) ?: JSONObject())
+            .put("threadId", threadId).put("model", model).put("input", input)
+        if (additionalContext != null) params.put("additionalContext", additionalContext)
+        val result = request("turn/start", params)
         return result.optJSONObject("turn")?.text("id").orEmpty()
+    }
+
+    suspend fun prepareWorkspaceActionMailbox(projectDirectory: String, nonce: String): String = withContext(Dispatchers.IO) {
+        require(nonce.matches(Regex("[a-f0-9-]{36}"))) { "工作区控制标识无效" }
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try {
+            val project = sftp.realpath(projectDirectory).trimEnd('/')
+            check(isReadableWorkspacePath(project) && sftp.stat(project).isDir) { "工作区路径无效" }
+            val codexDirectory = "$project/codex"
+            val controlDirectory = "$codexDirectory/.mobile-workspace-control"
+            fun ensurePrivateDirectory(path: String) {
+                try {
+                    val attrs = sftp.lstat(path)
+                    check(attrs.isDir && !attrs.isLink) { "工作区控制目录不是普通目录" }
+                } catch (error: com.jcraft.jsch.SftpException) {
+                    if (error.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) throw error
+                    sftp.mkdir(path)
+                    sftp.chmod(448, path) // 0700
+                }
+            }
+            ensurePrivateDirectory(codexDirectory)
+            ensurePrivateDirectory(controlDirectory)
+            "$controlDirectory/$nonce-"
+        } finally { sftp.disconnect() }
+    }
+
+    suspend fun consumeWorkspaceActionMailbox(projectDirectory: String, mailboxPrefix: String): List<String> = withContext(Dispatchers.IO) {
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try {
+            val project = sftp.realpath(projectDirectory).trimEnd('/')
+            val directory = "$project/codex/.mobile-workspace-control"
+            val prefix = "$directory/"
+            require(mailboxPrefix.startsWith(prefix) && mailboxPrefix.removePrefix(prefix).matches(Regex("[a-f0-9-]{36}-"))) {
+                "工作区控制文件路径无效"
+            }
+            val noncePrefix = mailboxPrefix.removePrefix(prefix)
+            val requests = mutableListOf<String>()
+            sftp.ls(directory).filterIsInstance<ChannelSftp.LsEntry>().forEach { entry ->
+                val name = entry.filename
+                if (!name.startsWith(noncePrefix) ||
+                    !name.removePrefix(noncePrefix).matches(Regex("[a-f0-9-]{36}\\.json"))) return@forEach
+                val path = "$directory/$name"
+                val attrs = sftp.lstat(path)
+                check(attrs.isReg && !attrs.isLink && attrs.size in 1..4096) { "工作区控制请求无效" }
+                requests += sftp.get(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                sftp.rm(path)
+            }
+            requests
+        } finally { sftp.disconnect() }
+    }
+
+    suspend fun removeWorkspaceActionMailbox(projectDirectory: String, mailboxPrefix: String) = withContext(Dispatchers.IO) {
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try {
+            val project = sftp.realpath(projectDirectory).trimEnd('/')
+            val directory = "$project/codex/.mobile-workspace-control"
+            val prefix = "$directory/"
+            if (mailboxPrefix.startsWith(prefix) && mailboxPrefix.removePrefix(prefix).matches(Regex("[a-f0-9-]{36}-"))) {
+                val noncePrefix = mailboxPrefix.removePrefix(prefix)
+                runCatching {
+                    sftp.ls(directory).filterIsInstance<ChannelSftp.LsEntry>().forEach { entry ->
+                        if (entry.filename.startsWith(noncePrefix) &&
+                            entry.filename.removePrefix(noncePrefix).matches(Regex("[a-f0-9-]{36}\\.json")))
+                            sftp.rm("$directory/${entry.filename}")
+                    }
+                }
+            }
+        } finally { sftp.disconnect() }
     }
 
     suspend fun addQueuedSubmission(threadId: String, prompt: String, localImagePaths: List<String> = emptyList()): QueuedSubmission {

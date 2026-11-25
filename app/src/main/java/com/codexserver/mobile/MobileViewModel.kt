@@ -42,6 +42,7 @@ data class IncomingImage(val bytes: ByteArray, val mimeType: String, val label: 
 data class VideoAttachment(val file: File, val label: String, val sizeBytes: Long)
 data class SharedFileAttachment(val file: File, val label: String, val sizeBytes: Long, val mimeType: String)
 data class ContextReference(val id: String, val label: String, val prompt: String)
+internal data class WorkspaceOpenRequest(val id: String, val threadId: String, val target: String, val baseDirectory: String)
 data class QueuedTask(val id: String, val clientUserMessageId: String, val prompt: String,
     val autoStartAllowed: Boolean = false)
 
@@ -63,6 +64,130 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     fun markUpdateReminded(info: UpdateInfo) = updateReminders.markReminded(info.versionCode)
     private val workspaceUiStates = mutableMapOf<String, MutableState<WorkspaceSessionState>>()
     private val workspaceTerminalStates = mutableStateMapOf<String, WorkspaceTerminalState>()
+    private val workspaceControlJobs = mutableMapOf<String, Job>()
+    private val workspaceOpenCompletions = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    internal var workspaceOpenRequests by mutableStateOf<List<WorkspaceOpenRequest>>(emptyList())
+        private set
+
+    internal fun consumeWorkspaceOpenRequest(requestId: String) {
+        workspaceOpenRequests = workspaceOpenRequests.filterNot { it.id == requestId }
+    }
+
+    private fun workspaceApplicationContext(
+        id: String,
+        project: String,
+        mailboxPrefix: String?,
+        includeActionInstructions: Boolean = true
+    ): JSONObject {
+        val session = workspaceUiFor(id, project)
+        val tab = session.activeTab
+        val location = tab?.let { active -> when (active.kind) {
+            0 -> active.location.ifBlank { session.directory }
+            2 -> active.location
+            3 -> active.location
+            5 -> active.previews.lastOrNull() ?: active.location
+            6 -> session.directory
+            else -> active.location
+        } }.orEmpty()
+        val page = if (tab == null) "工作区尚未打开过标签页。" else buildString {
+            append("当前选中标签：${tab.title}（${workspaceTabTitle(tab.kind)}）。")
+            if (location.isNotBlank()) append("当前页面路径或网址：$location。")
+            if (tab.kind == 0 && location.isNotBlank()) append("当前文件目录：$location。")
+        }
+        val value = buildString {
+            appendLine("手机端工作区当前状态：$page")
+            if (session.tabs.isNotEmpty()) {
+                appendLine("当前工作区已打开的标签：")
+                session.tabs.forEach { openTab ->
+                    val openLocation = when (openTab.kind) {
+                        0 -> openTab.location.ifBlank { session.directory }
+                        2, 3 -> openTab.location
+                        5 -> openTab.previews.lastOrNull() ?: openTab.location
+                        6 -> session.directory
+                        else -> openTab.location
+                    }
+                    appendLine("- ${openTab.title}（${workspaceTabTitle(openTab.kind)}）${if (openTab.id == tab?.id) "；当前选中" else ""}" +
+                        if (openLocation.isNotBlank()) "：$openLocation" else "")
+                }
+            }
+            appendLine("当前项目目录：$project")
+            if (includeActionInstructions && hasNativeWorkspaceTools(id)) {
+                appendLine("你可以直接调用 workspace_get_state 获取此手机工作区的最新标签与页面状态；调用 workspace_open 可在手机工作区中新开一个预览标签并查看文件、目录或网页。打开动作会直接执行，不需要再次询问用户。")
+            } else if (includeActionInstructions && mailboxPrefix != null) {
+                appendLine("你可以直接控制手机工作区打开页面。需要展示某个工作区文件、目录或网页时，调用现有 shell 工具，把 JSON 写入下面的动作文件；手机会立即打开目标页面，无需再问用户一次：")
+                appendLine("动作文件前缀：$mailboxPrefix")
+                appendLine("每个目标使用一个新 UUID 文件，文件名为此前缀加 UUID 再加 .json，内容为 {\"target\":\"目标路径或 http/https 网址\"}。动作完成会自动删除该文件。")
+                val encodedPrefix = android.util.Base64.encodeToString(mailboxPrefix.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                appendLine("命令模板：python3 -c 'import base64,json,pathlib,uuid; p=base64.b64decode(\"$encodedPrefix\").decode(); pathlib.Path(p+str(uuid.uuid4())+\".json\").write_text(json.dumps({\"target\":\"/path/to/page\"}))'")
+                appendLine("只有在确实需要用户查看页面时才打开；可连续打开多个目标。路径可以是当前项目内相对路径或工作区可访问的绝对路径。")
+            }
+        }
+        return JSONObject().put("andri-mobile-workspace", JSONObject()
+            .put("kind", "application").put("value", value))
+    }
+
+    private fun hasNativeWorkspaceTools(id: String): Boolean = settings.getBoolean("thread.$id.workspaceTools", false)
+
+    private fun workspaceDynamicTools(): JSONArray {
+        val getState = JSONObject()
+            .put("type", "function").put("name", "workspace_get_state")
+            .put("description", "读取用户在 Andri 手机上的工作区标签、当前选中页面和路径或网址。")
+            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())
+                .put("additionalProperties", false))
+        val open = JSONObject()
+            .put("type", "function").put("name", "workspace_open")
+            .put("description", "在用户的 Andri 手机工作区新开标签并打开文件、目录或网页。用户需要查看某个页面时使用；多次调用会创建多个标签。")
+            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("target", JSONObject().put("type", "string")
+                    .put("description", "工作区文件路径、目录路径或 HTTP(S) 网址；相对路径按当前项目目录解析。")))
+                .put("required", JSONArray().put("target")).put("additionalProperties", false))
+        return JSONArray().put(getState).put(open)
+    }
+
+    internal fun completeWorkspaceOpenRequest(requestId: String, opened: Boolean) {
+        workspaceOpenCompletions.remove(requestId)?.complete(opened)
+    }
+
+    private fun watchWorkspaceActions(
+        id: String,
+        connection: SshCodexClient,
+        project: String,
+        mailboxPrefix: String,
+        queuedTaskId: String? = null
+    ) {
+        workspaceControlJobs.remove(id)?.cancel()
+        workspaceControlJobs[id] = viewModelScope.launch {
+            try {
+                var failures = 0
+                while (client === connection && (id in running || id in sending || id in startingComposers || id in queueSubmitting)) {
+                    try {
+                        val requests = connection.consumeWorkspaceActionMailbox(project, mailboxPrefix)
+                        failures = 0
+                        requests.forEach { value ->
+                            val rawTarget = runCatching { JSONObject(value).optString("target").trim() }.getOrDefault("")
+                            val target = rawTarget.takeIf { it.isNotBlank() }?.let { workspacePreviewTarget(it, project) }
+                            if (target != null && activeId == id) {
+                                workspaceOpenRequests = workspaceOpenRequests + WorkspaceOpenRequest(
+                                    java.util.UUID.randomUUID().toString(), id, target.navigationLink, target.linkBase)
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        failures++
+                        if (failures >= 4) break
+                    }
+                    delay(900)
+                }
+            } finally {
+                runCatching { connection.removeWorkspaceActionMailbox(project, mailboxPrefix) }
+                queuedTaskId?.let { settings.edit().remove("queue.$it.workspaceMailbox").apply() }
+                if (workspaceControlJobs[id] === kotlinx.coroutines.currentCoroutineContext()[Job])
+                    workspaceControlJobs.remove(id)
+            }
+        }
+    }
+
     internal fun workspaceUiFor(id: String?, project: String? = null): WorkspaceSessionState {
         if (id == null) return WorkspaceSessionState()
         val key = workspaceSessionKey(id, project ?: executionFor(id).cwd)
@@ -1460,7 +1585,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val options = ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
         val selectedModel = model
         operation("新建对话", null) { connection ->
-            val result = connection.startThread(options, selectedModel)
+            val result = connection.startThread(options, selectedModel, workspaceDynamicTools())
             requireCurrent(connection)
             applySnapshot(result)
             val id = result.getJSONObject("thread").getString("id")
@@ -1468,6 +1593,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             localEmptyThreads += id
             localThreadIds += id
             settings.edit().putBoolean("thread.$id.localThread", true)
+                .putBoolean("thread.$id.workspaceTools", true)
                 .putBoolean("thread.$id.localEmpty", true)
                 .putString("thread.$id.title", "新对话")
                 .putString("thread.$id.model", selectedModel)
@@ -2335,6 +2461,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val submission = captureComposer(id)
         actions.launch {
             var failureStage = "发送消息失败"
+            var workspaceMailboxPrefix: String? = null
             try {
                 val baseDirectory = options.cwd
                 if (attachments.isNotEmpty()) failureStage = "上传图片失败"
@@ -2361,9 +2488,19 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 recordChatDiagnostic("composer.turn.start.request", id, "", JSONObject()
                     .put("imageCount", attachments.size).put("hasVideo", video != null)
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
+                if (!hasNativeWorkspaceTools(id)) workspaceMailboxPrefix = runCatching {
+                    connection.prepareWorkspaceActionMailbox(baseDirectory, java.util.UUID.randomUUID().toString())
+                }.onFailure { failure ->
+                    recordChatDiagnostic("workspace_control.mailbox_unavailable", id, "",
+                        JSONObject().put("reason", failure.message.orEmpty().take(120)))
+                }.getOrNull()
+                if (workspaceMailboxPrefix != null)
+                    watchWorkspaceActions(id, connection, baseDirectory, workspaceMailboxPrefix)
                 startingComposers += id
                 val startRevision = threadReads.revision(id)
-                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, options = options, localImagePaths = remoteImages)
+                val turnId = connection.sendTurn(id, selectedModel, composedPrompt, options = options,
+                    localImagePaths = remoteImages,
+                    additionalContext = workspaceApplicationContext(id, baseDirectory, workspaceMailboxPrefix))
                 requireCurrent(connection)
                 executionApplied(id, options)
                 recordChatDiagnostic("composer.turn.start.accepted", id, turnId)
@@ -2386,7 +2523,13 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     sending.remove(id)
                     mobileTurnStartedDuringSend.remove(id)
                     startingComposers.remove(id)
-                    if (id !in running) startNativeQueueIfIdle(id)
+                    if (id !in running) {
+                        workspaceControlJobs.remove(id)?.cancel()
+                        workspaceMailboxPrefix?.let { mailbox ->
+                            actions.launch { runCatching { connection.removeWorkspaceActionMailbox(options.cwd, mailbox) } }
+                        }
+                        startNativeQueueIfIdle(id)
+                    }
                 }
             }
         }
@@ -2452,6 +2595,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val submission = captureComposer(id)
         actions.launch {
             var failureStage = "加入排队失败"
+            var workspaceMailboxPrefix: String? = null
+            var workspaceMailboxPersisted = false
             try {
                 val baseDirectory = options.cwd
                 if (attachments.isNotEmpty()) failureStage = "上传图片失败"
@@ -2461,6 +2606,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val remoteFiles = sharedFiles.map { file ->
                     connection.uploadSharedFile(file.file, file.label, baseDirectory)
                 }
+                if (!hasNativeWorkspaceTools(id)) workspaceMailboxPrefix = runCatching {
+                    connection.prepareWorkspaceActionMailbox(baseDirectory, java.util.UUID.randomUUID().toString())
+                }.onFailure { failure ->
+                    recordChatDiagnostic("workspace_control.mailbox_unavailable", id, "",
+                        JSONObject().put("reason", failure.message.orEmpty().take(120)))
+                }.getOrNull()
                 val fallback = when {
                     attachments.isNotEmpty() -> "请查看我发送的${attachments.size}张图片。"
                     video != null -> "请查看这个视频。"
@@ -2473,7 +2624,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                             paths.mapIndexed { index, path -> "@${index + 1}：$path" }.joinToString("\n")
                     },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
-                    references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
+                    references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" },
+                    workspaceApplicationContext(id, baseDirectory, workspaceMailboxPrefix).optJSONObject("andri-mobile-workspace")?.text("value"))
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
                 recordChatDiagnostic("composer.queue.add.request", id, "", JSONObject()
                     .put("imageCount", attachments.size).put("hasVideo", video != null)
@@ -2483,6 +2635,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 requireCurrent(connection)
                 settings.edit().putString("queue.${added.id}.execution", options.params().put("effort", options.effort).put("model", selectedModel).toString()).apply()
+                workspaceMailboxPrefix?.let { prefix ->
+                    settings.edit().putString("queue.${added.id}.workspaceMailbox", prefix).apply()
+                    workspaceMailboxPersisted = true
+                }
                 allowQueueAutoStart(id, added.id)
                 recordChatDiagnostic("composer.queue.add.accepted", id, "", JSONObject()
                     .put("queuedSubmissionId", added.id).put("clientUserMessageId", added.clientUserMessageId))
@@ -2497,6 +2653,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 releaseComposer(id, submission)
                 if (client === connection) {
                     sending.remove(id)
+                    if (!workspaceMailboxPersisted) workspaceMailboxPrefix?.let { mailbox ->
+                        actions.launch { runCatching { connection.removeWorkspaceActionMailbox(options.cwd, mailbox) } }
+                    }
                     if (id !in running) startNativeQueueIfIdle(id)
                 }
             }
@@ -2513,6 +2672,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 withQueue(id, connection) {
                     connection.deleteQueuedSubmission(id, taskId)
                     requireCurrent(connection)
+                    val workspaceMailbox = settings.getString("queue.$taskId.workspaceMailbox", null)
+                    val execution = settings.getString("queue.$taskId.execution", null)?.let(::JSONObject)
+                    val fallback = threadExecution[id] ?: savedExecution(id) ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
+                    val mailboxProject = execution?.let { executionOptions(it, fallback).cwd } ?: fallback.cwd
+                    workspaceMailbox?.let { mailbox ->
+                        runCatching { connection.removeWorkspaceActionMailbox(mailboxProject, mailbox) }
+                    }
+                    settings.edit().remove("queue.$taskId.workspaceMailbox").apply()
                     consumeQueueAutoStart(id, taskId)
                     settings.edit().remove("queue.$taskId.execution").apply()
                     refreshQueue(id, connection)
@@ -2537,7 +2704,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             finally { if (client === connection) queueSubmitting.remove(id) }
         }
 
-    private suspend fun prepareQueuedExecution(id: String, taskId: String, connection: SshCodexClient) {
+    private suspend fun prepareQueuedExecution(id: String, taskId: String, connection: SshCodexClient): ExecutionOptions {
         val stored = settings.getString("queue.$taskId.execution", null)?.let(::JSONObject)
         val fallback = threadExecution[id] ?: savedExecution(id) ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
         val options = if (stored != null) executionOptions(stored, fallback) else fallback
@@ -2546,6 +2713,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         connection.updateThreadSettings(id, options, selectedModel)
         requireCurrent(connection)
         executionApplied(id, options)
+        return options
     }
 
     private suspend fun refreshQueue(id: String, connection: SshCodexClient) {
@@ -2581,8 +2749,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                         uploadChatDiagnostic("unrecognized_queued_submission", id)
                         return@withQueue
                     }
-                    prepareQueuedExecution(id, next.id, connection)
+                    val options = prepareQueuedExecution(id, next.id, connection)
                     check(id !in running && id !in sending) { "当前对话正在提交或执行任务，请稍后启动队列" }
+                    settings.getString("queue.${next.id}.workspaceMailbox", null)?.let { mailbox ->
+                        watchWorkspaceActions(id, connection, options.cwd, mailbox, next.id)
+                    }
                     recordChatDiagnostic("queue.start.request", id, "", JSONObject()
                         .put("queuedSubmissionId", next.id).put("clientUserMessageId", next.clientUserMessageId))
                     val startRevision = threadReads.revision(id)
@@ -2615,8 +2786,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     requireCurrent(connection)
                     check(id !in running && id !in sending) { "当前对话正在执行或提交任务" }
                     check(queue.firstOrNull()?.id == taskId) { "请先处理排在前面的消息，保持队列顺序" }
-                    prepareQueuedExecution(id, taskId, connection)
+                    val options = prepareQueuedExecution(id, taskId, connection)
                     check(id !in running && id !in sending) { "当前对话正在执行或提交任务" }
+                    settings.getString("queue.$taskId.workspaceMailbox", null)?.let { mailbox ->
+                        watchWorkspaceActions(id, connection, options.cwd, mailbox, taskId)
+                    }
                     recordChatDiagnostic("queue.start.manual.request", id, "", JSONObject()
                         .put("queuedSubmissionId", taskId)
                         .put("clientUserMessageId", queue.first().clientUserMessageId))
@@ -2704,6 +2878,22 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val method = event.text("method")
         val params = event.optJSONObject("params") ?: JSONObject()
         val id = params.text("threadId")
+        if (method == "item/tool/call" && event.has("id")) {
+            val connection = client ?: return
+            if (threadReads.isArchived(id) || !hasNativeWorkspaceTools(id)) {
+                viewModelScope.launch {
+                    runCatching { connection.rejectUnsupportedRequest(event.get("id"), method) }
+                }
+            } else {
+                viewModelScope.launch {
+                    val result = runCatching { handleWorkspaceDynamicTool(params) }
+                        .getOrElse { error -> dynamicWorkspaceToolResult(false, error.message ?: "工作区操作失败") }
+                    runCatching { connection.respondToServerRequest(event.get("id"), result) }
+                        .onFailure { reportChatError(it.message.orEmpty(), "回复工作区工具失败", id) }
+                }
+            }
+            return
+        }
         if (threadReads.isArchived(id)) return
         val eventTurnId = params.text("turnId").ifBlank {
             if (method == "turn/started" || method == "turn/completed")
@@ -2932,6 +3122,43 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 .onFailure { reportChatError(it.message.orEmpty(), "回复请求失败", target) }
         }
     }
+
+    private suspend fun handleWorkspaceDynamicTool(params: JSONObject): JSONObject {
+        val threadId = params.text("threadId")
+        val project = executionFor(threadId).cwd
+        val arguments = params.optJSONObject("arguments") ?: JSONObject()
+        return when (params.text("tool")) {
+            "workspace_get_state" -> {
+                val state = workspaceApplicationContext(threadId, project, null, includeActionInstructions = false)
+                    .optJSONObject("andri-mobile-workspace")?.text("value").orEmpty()
+                dynamicWorkspaceToolResult(true, state.ifBlank { "工作区尚无打开的页面。" })
+            }
+            "workspace_open" -> {
+                check(threadId == activeId) { "请先切换到发起此操作的对话，再打开工作区页面。" }
+                val requested = arguments.text("target").trim()
+                require(requested.isNotBlank()) { "请提供要打开的文件路径、目录或网页地址。" }
+                val target = workspacePreviewTarget(requested, project)
+                    ?: error("无法在工作区中打开：$requested")
+                val requestId = java.util.UUID.randomUUID().toString()
+                val completion = CompletableDeferred<Boolean>()
+                workspaceOpenCompletions[requestId] = completion
+                workspaceOpenRequests = workspaceOpenRequests + WorkspaceOpenRequest(
+                    requestId, threadId, target.navigationLink, target.linkBase)
+                val opened = try { kotlinx.coroutines.withTimeout(30_000) { completion.await() } }
+                finally {
+                    workspaceOpenCompletions.remove(requestId)
+                    workspaceOpenRequests = workspaceOpenRequests.filterNot { it.id == requestId }
+                }
+                if (opened) dynamicWorkspaceToolResult(true, "已在手机工作区的新标签中打开：${target.displayName}")
+                else dynamicWorkspaceToolResult(false, "手机工作区没有打开该页面。")
+            }
+            else -> dynamicWorkspaceToolResult(false, "未知的手机工作区工具：${params.text("tool")}")
+        }
+    }
+
+    private fun dynamicWorkspaceToolResult(success: Boolean, text: String): JSONObject = JSONObject()
+        .put("success", success)
+        .put("contentItems", JSONArray().put(JSONObject().put("type", "inputText").put("text", text)))
 
     fun respond(request: JSONObject, approved: Boolean, answers: Map<String, String> = emptyMap()) {
         val requestId = request.get("id").toString()
