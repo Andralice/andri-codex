@@ -12,7 +12,10 @@ import org.commonmark.parser.Parser
 internal val chatImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "heic", "heif", "svg")
 private val chatImageParser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 private val bareImageUrl = Regex("""https://[^\s<>"']+""", RegexOption.IGNORE_CASE)
-private val bareWorkspaceImagePath = Regex("""(?<![\w`/:(<])((?:file://|/|\./|\.\./|codex/)[^\s<>"'`]+)""")
+// Consume the whole candidate before checking its boundary. A lookbehind here
+// skipped a Markdown destination's leading '/', then matched the 'codex/' suffix
+// inside 'andri-codex', inventing a relative path and corrupting the original link.
+private val bareWorkspaceImagePath = Regex("""((?:file://|/|\./|\.\./|codex/)[^\s<>"'`]+)""")
 
 private fun parseChatLink(value: String): URI? =
     runCatching { URI(value.replace(" ", "%20")) }.getOrNull()
@@ -100,11 +103,19 @@ internal fun markdownImageDestinations(markdown: String): List<String> {
 /** Find image paths written as plain text by a server response. */
 internal fun plainWorkspaceImagePaths(markdown: String, baseDirectory: String): List<String> =
     bareWorkspaceImagePath.findAll(markdown).mapNotNull { match ->
-        if (isInsideMarkdownCode(markdown, match.range.first) || isUrlPathSuffix(markdown, match.range.first)) return@mapNotNull null
+        if (!isBareWorkspaceImagePath(markdown, match.range.first)) return@mapNotNull null
         val raw = match.groupValues[1].trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
         val target = chatLinkTarget(raw, baseDirectory) as? ChatLinkTarget.Workspace ?: return@mapNotNull null
         target.path.takeIf { it.substringAfterLast('/').substringAfterLast('.').lowercase() in chatImageExtensions }
     }.distinct().toList()
+
+private fun isBareWorkspaceImagePath(text: String, offset: Int): Boolean {
+    if (offset > 0) {
+        val previous = text[offset - 1]
+        if (previous.isLetterOrDigit() || previous in "_`/:(<.-") return false
+    }
+    return !isInsideMarkdownCode(text, offset) && !isUrlPathSuffix(text, offset)
+}
 
 /** A path-looking suffix inside file:// or https:// is not a second relative image. */
 private fun isUrlPathSuffix(text: String, offset: Int): Boolean {
@@ -131,7 +142,7 @@ internal fun removePlainWorkspaceImagePaths(markdown: String, paths: List<String
         if (path in paths && !isInsideMarkdownCode(markdown, match.range.first)) "" else match.value
     }
     val withoutPaths = bareWorkspaceImagePath.replace(withoutNumberedRows) { match ->
-        if (isInsideMarkdownCode(withoutNumberedRows, match.range.first) || isUrlPathSuffix(withoutNumberedRows, match.range.first)) return@replace match.value
+        if (!isBareWorkspaceImagePath(withoutNumberedRows, match.range.first)) return@replace match.value
         val raw = match.groupValues[1]
         val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
         val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path

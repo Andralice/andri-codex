@@ -506,6 +506,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     // can arrive late around reconnects; threadId alone is not enough to distinguish
     // a stale event from the turn currently being shown.
     private val latestTurnIds = mutableMapOf<String, String>()
+    private val turnAcceptanceState = TurnAcceptanceState()
     private val threadReads = ThreadReadState()
     private val lastHydratedUpdatedAt = mutableMapOf<String, Long>()
     private val bufferedAgentDeltas = mutableMapOf<String, LinkedHashMap<String, BufferedAgentDelta>>()
@@ -2648,15 +2649,26 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun confirmStartedTurn(id: String, turnId: String, startRevision: Long) {
-        // A short turn may finish before the response. Newer notifications own its state.
-        if (turnId.isNotBlank() && threadReads.accepts(id, startRevision)) {
-            threadReads.changed(id)
-            running[id] = turnId
-            runningSince.putIfAbsent(id, System.currentTimeMillis())
-            latestTurnIds[id] = turnId
-        } else if (id in running && running[id].isNullOrBlank()) {
-            running[id] = turnId
+        // The turn/start response is authoritative acceptance. A concurrent history/status
+        // read can advance the revision while this RPC is in flight, so do not lose the
+        // accepted turn merely because that read made the original revision stale. A
+        // terminal event still wins if this short turn completed before the RPC returned.
+        if (turnId.isBlank()) return
+        val currentTurnId = running[id].orEmpty()
+        if (!turnAcceptanceState.accept(id, turnId, currentTurnId)) {
+            recordChatDiagnostic("composer.turn.accepted_while_other_turn_active", id, turnId,
+                JSONObject().put("activeTurnId", currentTurnId).put("startRevision", startRevision)
+                    .put("currentRevision", threadReads.revision(id)))
+            return
         }
+        val revisionAccepted = threadReads.accepts(id, startRevision)
+        threadReads.changed(id)
+        running[id] = turnId
+        runningSince.putIfAbsent(id, System.currentTimeMillis())
+        activity.remove(id)
+        if (turnId.isNotBlank()) latestTurnIds[id] = turnId
+        recordChatDiagnostic("composer.turn.visible_as_running", id, turnId,
+            JSONObject().put("revisionAccepted", revisionAccepted))
     }
 
     private fun clearComposerAfterAcceptance(id: String) {
@@ -2873,8 +2885,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     val startRevision = threadReads.revision(id)
                     val turnId = connection.startQueuedSubmission(id, next.id)
                     requireCurrent(connection)
-                    confirmStartedTurn(id, turnId, startRevision)
                     check(turnId.isNotBlank()) { "Codex 没有返回排队任务的回合 ID" }
+                    confirmStartedTurn(id, turnId, startRevision)
                     TaskRecoveryScheduler.enqueue(getApplication(), id, threads.firstOrNull { it.id == id }?.cwd ?: cwd)
                     consumeQueueAutoStart(id, next.id)
                     settings.edit().remove("queue.${next.id}.execution").apply()
@@ -2911,8 +2923,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     val startRevision = threadReads.revision(id)
                     val turnId = connection.startQueuedSubmission(id, taskId)
                     requireCurrent(connection)
-                    confirmStartedTurn(id, turnId, startRevision)
                     check(turnId.isNotBlank()) { "Codex 没有返回排队任务的回合 ID" }
+                    confirmStartedTurn(id, turnId, startRevision)
                     TaskRecoveryScheduler.enqueue(getApplication(), id, threads.firstOrNull { it.id == id }?.cwd ?: cwd)
                     consumeQueueAutoStart(id, taskId)
                     settings.edit().remove("queue.$taskId.execution").apply()
@@ -3017,6 +3029,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 params.optJSONObject("turn")?.text("id").orEmpty()
             else ""
         }
+        if (method == "turn/completed") turnAcceptanceState.rememberCompleted(id, eventTurnId)
         val eventItemId = params.text("itemId").ifBlank { params.optJSONObject("item")?.text("id").orEmpty() }
         if (method != "item/agentMessage/delta" && id.isNotBlank()) flushAgentDeltas(id)
         if (id.isNotBlank() && method != "item/agentMessage/delta" &&

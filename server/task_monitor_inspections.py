@@ -240,6 +240,21 @@ def safe_path(root, name):
     return actual
 
 
+def context_execution_records(turns):
+    """Protocol command output may be null, even in a completed turn."""
+    records = []
+    for turn in reversed(turns):
+        commands = []
+        for item in [i for i in turn.get('items', []) if i.get('type') == 'commandExecution'][-10:]:
+            output = item.get('aggregatedOutput')
+            commands.append({'command': (item.get('command') or '')[:2000],
+                             'exit_code': item.get('exitCode'),
+                             'output': (output or '')[-4000:],
+                             'output_available': output is not None})
+        records.append({'turn_id': turn['id'], 'commands': commands})
+    return records
+
+
 def inspect_tool(runtime, ident, name, args):
     r = row(runtime, ident)
     if r['state'] not in ('starting','running'):raise ValueError('Inspection is not active')
@@ -255,8 +270,7 @@ def inspect_tool(runtime, ident, name, args):
         if payload.get('source_endpoint'):
             with Rpc(payload['source_endpoint']) as rpc:
                 turns = rpc.call('thread/turns/list', {'threadId':r['thread_id'], 'limit':8, 'sortDirection':'desc', 'itemsView':'full'})['data']
-            value['execution_records'] = [{'turn_id':t['id'],'commands':[{'command':i.get('command','')[:2000],
-                 'exit_code':i.get('exitCode'),'output':i.get('aggregatedOutput','')[-4000:]} for i in t.get('items',[]) if i.get('type')=='commandExecution'][-10:]} for t in reversed(turns)]
+            value['execution_records'] = context_execution_records(turns)
         value['context'] = {k:v for k,v in payload.items() if k != 'source_endpoint'}
     elif name == 'inspection_files':
         path = safe_path(root, args.get('path', '.'))

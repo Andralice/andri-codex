@@ -25,11 +25,7 @@ internal val ChatLine.isReasoningSummary: Boolean
 
 // Keep empty protocol items for incoming deltas, but never allocate a visible row for them.
 internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
-    managerChatLines(lines).filterNot { line ->
-        (line.isReasoningSummary && line.text.isBlank()) ||
-            (line.role == "assistant" && line.text.isBlank() &&
-                line.images.isEmpty() && line.questions.isEmpty())
-    }
+    visibleProcessItems(managerChatLines(lines))
 
 /** Keep contiguous progress commentary together without changing execution order. */
 internal data class ProcessTimelineEntry(
@@ -104,7 +100,7 @@ internal fun commandExecutionCategory(command: String): String {
 /** Group adjacent steps of the same kind while preserving the original execution order. */
 internal fun groupProcessSteps(items: List<ChatLine>): List<ProcessStepGroup> {
     val groups = mutableListOf<ProcessStepGroup>()
-    items.forEach { item ->
+    visibleProcessItems(items).forEach { item ->
         val type = processStepType(item)
         val last = groups.lastOrNull()
         if (last?.type == type) groups[groups.lastIndex] = last.copy(items = last.items + item)
@@ -115,7 +111,7 @@ internal fun groupProcessSteps(items: List<ChatLine>): List<ProcessStepGroup> {
 
 internal fun processTimelineEntries(items: List<ChatLine>): List<ProcessTimelineEntry> {
     val entries = mutableListOf<ProcessTimelineEntry>()
-    items.forEach { item ->
+    visibleProcessItems(items).forEach { item ->
         val progress = item.role == "assistant"
         if (entries.lastOrNull()?.progress == progress) {
             val last = entries.removeAt(entries.lastIndex)
@@ -129,7 +125,8 @@ internal fun processTimelineEntries(items: List<ChatLine>): List<ProcessTimeline
 
 /** One expanded answer per turn; preceding commentary, tools and in-thread questions share a folded record.
  * Older servers omit phase, so their last non-commentary message is the answer. */
-internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {
+internal fun foldCompletedProcessLines(source: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {
+    val lines = visibleProcessItems(source)
     val turns = lines.withIndex().filter { it.value.turnId.isNotBlank() }.groupBy { it.value.turnId }
     val answers = turns.mapValues { (_, rows) ->
         val candidates = rows.filter { it.value.role == "assistant" &&
@@ -161,6 +158,24 @@ internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: Stri
             processItems = groups.getValue(line.turnId).map { it.value }
         ) else null
     }
+}
+
+/** Keep a live execution record at the reading edge when a newer message was queued.
+ *
+ * A queued submission is a newer user action, but it has not started a turn yet.
+ * The live record is still the thing currently happening, so it belongs at the
+ * reading edge until completion.
+ */
+internal fun placeActiveProcessAtReadingEdge(
+    lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean
+): List<ChatLine> {
+    if (!threadRunning) return lines
+    val index = lines.indexOfLast {
+        it.role == "thought" && it.status == "inProgress" &&
+            (activeTurnId.isNullOrBlank() || it.turnId == activeTurnId)
+    }
+    if (index < 0 || index == lines.lastIndex) return lines
+    return lines.toMutableList().apply { add(removeAt(index)) }
 }
 
 /** Called after folding: progress, streaming and interactive questions have no copy action. */
@@ -209,7 +224,7 @@ internal fun applyChatNotification(current: List<ChatLine>, method: String, para
             val existing = current.firstOrNull { it.id == line.id }
             put(line.copy(streaming = line.role == "assistant" && method == "item/started",
                 status = item.text("status").ifBlank { if (method == "item/started") "inProgress" else "completed" },
-                text = if (line.text.isEmpty()) existing?.text.orEmpty() else line.text,
+                text = toolEventDisplayText(item, line, existing),
                 phase = line.phase.ifBlank { existing?.phase.orEmpty() }))
         }
         "item/agentMessage/delta" -> {
@@ -238,8 +253,14 @@ internal fun applyChatNotification(current: List<ChatLine>, method: String, para
             val delta = if (method == "item/mcpToolCall/progress") params.text("message") + "\n" else params.text("delta")
             val part = if (method == "item/reasoning/summaryTextDelta") params.optInt("summaryIndex", 0) else 0
             // summaryPartAdded itself has no text; use its index only when text arrives.
-            val separator = if (part > 0 && previous.afterId != part.toString() && previous.text.isNotEmpty()) "\n\n" else ""
-            put(previous.copy(text = previous.text + separator + delta, status = "inProgress", afterId = part.toString()))
+            val commandOutput = method == "item/commandExecution/outputDelta"
+            val separator = when {
+                commandOutput && previous.afterId != "command-output" && previous.text.isNotEmpty() -> "\n"
+                part > 0 && previous.afterId != part.toString() && previous.text.isNotEmpty() -> "\n\n"
+                else -> ""
+            }
+            put(previous.copy(text = previous.text + separator + delta, status = "inProgress",
+                afterId = if (commandOutput) "command-output" else part.toString()))
         }
         "turn/plan/updated" -> {
             val plan = params.optJSONArray("plan") ?: JSONArray()

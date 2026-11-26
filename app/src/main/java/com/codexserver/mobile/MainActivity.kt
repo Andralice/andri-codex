@@ -1763,7 +1763,9 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val monitorActiveTurnId = activeTurnId?.takeIf { it.isNotBlank() }
         ?: if (running) sourceMessages.lastOrNull { it.turnId.isNotBlank() }?.turnId else null
     val messages = remember(visibleMessages, activeTurnId, running) {
-        foldCompletedProcessLines(visibleMessages, activeTurnId, running)
+        placeActiveProcessAtReadingEdge(
+            foldCompletedProcessLines(visibleMessages, activeTurnId, running), activeTurnId, running
+        )
     }
     // Only the newest unanswered question group may be interactive. An assistant can emit
     // another question or explanatory text before the user replies; checking merely for a
@@ -1781,6 +1783,10 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
         }
     }
     val sending = thread.id in vm.sending
+    val queueSubmitting = thread.id in vm.queueSubmitting
+    val hasActiveProcessRecord = messages.any {
+        it.role == "thought" && it.turnId == activeTurnId && it.status == "inProgress"
+    }
     val list = rememberLazyListState()
     var expanded by rememberSaveable(thread.id) { mutableStateOf(true) }
     var focusComposer by rememberSaveable(thread.id) { mutableStateOf(messages.isEmpty()) }
@@ -1967,8 +1973,16 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                 // spacer here so the last message clears the floating composer.
                 item("chatBottom") { Spacer(Modifier.height(chatBottomInset(composerHeight.value, expanded).dp)) }
                 item("chatActivity") {
-                    if (running && messages.none { it.role == "thought" && it.turnId == activeTurnId && it.status == "inProgress" })
-                        Box(Modifier.padding(top = 16.dp, bottom = 4.dp)) { SmallProgress("任务执行中") }
+                    val progressLabel = chatBottomProgressLabel(sending, queueSubmitting, running,
+                        hasActiveProcessRecord, vm.activity[thread.id].orEmpty())
+                    if (progressLabel.isNotBlank()) Row(
+                        Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        SmallProgress(progressLabel, Modifier.size(14.dp))
+                        Text(progressLabel, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 items(keyedMessages, key = { it.second }) { (line, _) ->
                     Column(Modifier.animateItem(
@@ -4154,12 +4168,15 @@ private const val MAX_LINKED_IMAGE_CACHE_BYTES = 100L * 1024 * 1024
 @Composable
 private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
     val running = line.status == "inProgress" || line.status == "pending"
-    val activityItems = line.processItems.ifEmpty { listOf(line).filter(::isInlineUserInputRequest) }
+    val processItems = remember(line.processItems) { visibleProcessItems(line.processItems) }
+    if (line.role == "thought" && processItems.isEmpty()) return
+    val activityItems = processItems.ifEmpty { listOf(line) }
     val pendingQuestion = activityItems.any { isInlineUserInputRequest(it) && it.status == "pending" }
     val answeredQuestion = activityItems.any { isInlineUserInputRequest(it) && it.status != "pending" }
     var expanded by rememberSaveable(line.id) { mutableStateOf(running || pendingQuestion) }
-    val processEntries = remember(line.processItems) { processTimelineEntries(line.processItems) }
+    val processEntries = remember(processItems) { processTimelineEntries(processItems) }
     val pending = vm.requests.firstOrNull { "request:" + it.opt("id") == line.id }
+    val hasDetails = pending != null || isInlineUserInputRequest(line) || processEntries.isNotEmpty() || hasExecutionRecordBody(line)
     val status = when (line.status) {
         "pending" -> "等待回答"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
         "answered" -> "已回答"; "approved" -> "已批准"; "interrupted" -> "已中断"; "resolved" -> "已处理"; else -> "已完成"
@@ -4175,7 +4192,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
     val headerSummary = listOfNotNull("$stepCount 个步骤", questionSummary, statusSummary).joinToString(" · ")
     LaunchedEffect(line.id, pendingQuestion) { if (pendingQuestion) expanded = true }
     Column(Modifier.fillMaxWidth()) {
-        Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
+        Surface(onClick = { expanded = !expanded }, enabled = hasDetails, color = Color.Transparent) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(25.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
@@ -4191,11 +4208,13 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                     Text(headerSummary, fontSize = 12.sp,
                         color = if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+                if (hasDetails) LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
                     MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        if (!hasDetails) Text(executionRecordEmptyHint(line), Modifier.padding(start = 39.dp, bottom = 8.dp),
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedVisibility(expanded && hasDetails, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 2.dp)) {
                 androidx.compose.foundation.text.selection.DisableSelection {
                     if (isInlineUserInputRequest(line)) {
@@ -4224,13 +4243,7 @@ private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (Str
                                 }
                             }
                         }
-                    } else if (line.text.isNotBlank()) {
-                        if (line.isReasoningSummary) MarkdownMessage(line.text, onOpenLink, selectable = false)
-                        else Text(truncateChatText(line.text) +
-                            if (line.text.codePointCount(0, line.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
-                            Modifier.fillMaxWidth(), fontSize = 12.sp, lineHeight = 20.sp,
-                            fontFamily = if (line.role == "tool") FontFamily.Monospace else FontFamily.Default)
-                    }
+                    } else TimelineProcessBody(line, vm, onOpenLink)
                 }
                 if (pending != null && !isInlineUserInputRequest(line)) TextButton({ vm.openPendingRequest(pending.get("id").toString()) }) {
                     Text("处理此问答或审批", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
@@ -4245,6 +4258,7 @@ private fun TimelineProcessGroup(group: ProcessStepGroup, firstNumber: Int, vm: 
     onOpenLink: (String) -> Unit) {
     val running = group.items.any { it.status == "inProgress" || it.status == "pending" }
     val failed = group.items.any { it.status == "failed" }
+    val hasDetails = group.items.any(::hasExecutionRecordBody)
     val lastNumber = firstNumber + group.items.lastIndex
     val range = if (lastNumber == firstNumber) String.format(Locale.ROOT, "%02d", firstNumber)
         else "${String.format(Locale.ROOT, "%02d", firstNumber)}–${String.format(Locale.ROOT, "%02d", lastNumber)}"
@@ -4255,7 +4269,8 @@ private fun TimelineProcessGroup(group: ProcessStepGroup, firstNumber: Int, vm: 
     }
     var expanded by rememberSaveable("process-group:${group.items.first().id}", running) { mutableStateOf(running) }
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-        Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+        Surface(onClick = { expanded = !expanded }, enabled = hasDetails,
+            color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 Box(Modifier.size(9.dp).background(
@@ -4268,11 +4283,13 @@ private fun TimelineProcessGroup(group: ProcessStepGroup, firstNumber: Int, vm: 
                     Text("${group.items.size} 条同类步骤 · $status", fontSize = 11.sp,
                         color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LineIcon("chevron", Modifier.size(15.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+                if (hasDetails) LineIcon("chevron", Modifier.size(15.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
                     MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        if (!hasDetails) Text("未收到详细内容", Modifier.padding(start = 18.dp),
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedVisibility(expanded && hasDetails, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(Modifier.fillMaxWidth().padding(start = 17.dp)) {
                 group.items.forEachIndexed { index, item ->
                     key("process-step-${firstNumber + index}-${item.id}") {
@@ -4314,20 +4331,23 @@ private fun TimelineProgressSegment(items: List<ChatLine>, vm: MobileViewModel, 
 private fun TimelineProcessItem(item: ChatLine, number: Int, vm: MobileViewModel, onOpenLink: (String) -> Unit,
     collapsible: Boolean = false) {
     var expanded by rememberSaveable("process:${item.id}", collapsible) { mutableStateOf(!collapsible) }
+    val hasBody = hasExecutionRecordBody(item)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
         Box(Modifier.padding(top = 12.dp).size(9.dp).background(
             if (item.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline, CircleShape))
         Column(Modifier.weight(1f).padding(bottom = 13.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            if (collapsible) {
+            if (collapsible && hasBody) {
                 Surface(onClick = { expanded = !expanded }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
                     TimelineProcessHeader(item, number, showChevron = true, expanded = expanded)
                 }
             } else {
                 TimelineProcessHeader(item, number)
             }
-            AnimatedVisibility(!collapsible || expanded,
+            if (!hasBody) Text(executionRecordEmptyHint(item), fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else AnimatedVisibility(!collapsible || expanded,
                 enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                TimelineProcessBody(item, vm, onOpenLink)
+                Column(Modifier.fillMaxWidth()) { TimelineProcessBody(item, vm, onOpenLink) }
             }
         }
     }
@@ -4352,6 +4372,7 @@ private fun TimelineProcessHeader(item: ChatLine, number: Int, showChevron: Bool
 
 @Composable
 private fun TimelineProcessBody(item: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
+    val body = executionRecordBody(item)
     if (item.role == "assistant") {
         val base = vm.activeThread?.cwd?.ifBlank { vm.cwd } ?: vm.cwd
         val sources = distinctChatImageSources(item.images, base)
@@ -4360,9 +4381,9 @@ private fun TimelineProcessBody(item: ChatLine, vm: MobileViewModel, onOpenLink:
         if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base)
     } else if (item.isReasoningSummary) {
         if (item.text.isNotBlank()) MarkdownMessage(item.text, onOpenLink, selectable = false)
-    } else if (item.text.isNotBlank()) {
-        val output = truncateChatText(item.text) +
-            if (item.text.codePointCount(0, item.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else ""
+    } else if (body.isNotBlank()) {
+        val output = truncateChatText(body) +
+            if (body.codePointCount(0, body.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else ""
         TimelineOutputBlock(output, item.stage, item.toolType)
     }
 }
@@ -5076,7 +5097,8 @@ private fun MonitorFollowupRecord(line: ChatLine, thread: CodexThread, vm: Mobil
                             else Text(when (line.status) { "failed" -> "遇到问题"; "interrupted" -> "已中断"; else -> "跟进记录" },
                                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(line.text, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp,
+                        Text(line.text, maxLines = if (expanded) Int.MAX_VALUE else 2,
+                            overflow = TextOverflow.Ellipsis, fontSize = 12.sp,
                             lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     LineIcon(if (expanded) "chevron-up" else "chevron", Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)

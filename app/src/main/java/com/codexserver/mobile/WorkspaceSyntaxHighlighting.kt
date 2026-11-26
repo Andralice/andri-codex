@@ -8,6 +8,13 @@ import androidx.compose.ui.text.font.FontWeight
 
 private enum class SourceTokenStyle { KEYWORD, LITERAL, STRING, COMMENT, NUMBER, TYPE, FUNCTION, ANNOTATION, ATTRIBUTE }
 
+// Compile once so validation can inspect every pattern before a user expands a step.
+private val timelineReadCommand = Regex("(?:^|[\\s;&|])(?:cat|head|tail|sed|less|more)\\b", RegexOption.IGNORE_CASE)
+private val timelineCommandExtension = Regex("\\.([A-Za-z0-9]+)(?:[:'\"\\s]|$)")
+private val timelineKotlinSource = Regex("(?m)^\\s*(?:package\\s+[\\w.]+|data\\s+class\\s+|(?:public\\s+)?(?:class|interface|enum)\\s+|(?:internal\\s+|private\\s+)?fun\\s+|(?:val|var)\\s+\\w+)")
+private val timelinePythonSource = Regex("(?m)^\\s*(?:def\\s+\\w+|from\\s+\\w+\\s+import|import\\s+\\w+)")
+private val timelineJavascriptSource = Regex("(?m)^\\s*(?:export\\s+(?:default\\s+)?|(?:const|let|var)\\s+\\w+\\s*=|function\\s+\\w+|async\\s+function)")
+
 /** Lightweight, dependency-free syntax coloring for the mobile source reader. */
 internal fun highlightWorkspaceSource(source: String, extension: String): AnnotatedString {
     val language = extension.lowercase()
@@ -148,16 +155,15 @@ internal fun highlightWorkspaceSource(source: String, extension: String): Annota
 }
 
 internal fun highlightTimelineContent(source: String, command: String, toolType: String): AnnotatedString {
-    val readCommand = Regex("(?:^|[\\s;&|])(?:cat|head|tail|sed|less|more)\\b", RegexOption.IGNORE_CASE)
-        .containsMatchIn(command)
+    val readCommand = timelineReadCommand.containsMatchIn(command)
     val commandExtension = if (readCommand) {
-        Regex("\\.([A-Za-z0-9]+)(?:[:'\"\\s]|$)").findAll(command).lastOrNull()?.groupValues?.getOrNull(1)?.lowercase()
+        timelineCommandExtension.findAll(command).lastOrNull()?.groupValues?.getOrNull(1)?.lowercase()
             ?.takeIf { it in supportedSourceLanguages }
     } else null
     val detected = commandExtension ?: when {
-        Regex("(?m)^\\s*(?:package\\s+[\\w.]+|data\\s+class\\s+|(?:public\\s+)?(?:class|interface|enum)\\s+|(?:internal\\s+|private\\s+)?fun\\s+|(?:val|var)\\s+\\w+").containsMatchIn(source) -> "kt"
-        Regex("(?m)^\\s*(?:def\\s+\\w+|from\\s+\\w+\\s+import|import\\s+\\w+)").containsMatchIn(source) -> "py"
-        Regex("(?m)^\\s*(?:export\\s+(?:default\\s+)?|(?:const|let|var)\\s+\\w+\\s*=|function\\s+\\w+|async\\s+function)").containsMatchIn(source) -> "js"
+        timelineKotlinSource.containsMatchIn(source) -> "kt"
+        timelinePythonSource.containsMatchIn(source) -> "py"
+        timelineJavascriptSource.containsMatchIn(source) -> "js"
         else -> null
     }
     return when {

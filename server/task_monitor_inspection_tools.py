@@ -19,6 +19,20 @@ TOOLS=[
  {'name':'inspection_diff','description':'读取一个文件相对于 HEAD 的当前实际代码差异；不能证明某轮归属。','inputSchema':schema({'path':{'type':'string'}})}]
 
 
+def error_result(error):
+    if isinstance(error, (TypeError, KeyError)):
+        code = 'inspection_internal_error'
+        message = '检查工具处理数据时发生内部错误；不能据此认定授权不足或原任务失败。'
+    elif isinstance(error, (RpcError, OSError, sqlite3.Error, subprocess.TimeoutExpired)):
+        code = 'inspection_unavailable'
+        message = '检查所需的后端或存储暂不可用；不能据此判断原任务状态。'
+    else:
+        code = 'inspection_read_rejected'
+        message = '读取被拒绝或不可用；检查范围、文件类型、大小、源回合和路径。'
+    return {'content':[{'type':'text','text':json.dumps(
+        {'code':code,'message':message,'error':type(error).__name__},ensure_ascii=False)}],'isError':True}
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--runtime',required=True);p.add_argument('--inspection-id',required=True);a=p.parse_args()
     for line in sys.stdin:
@@ -31,7 +45,7 @@ def main():
             elif method=='tools/call':
                 try:result=inspect_tool(Path(a.runtime),a.inspection_id,params['name'],params.get('arguments',{}))
                 except (ValueError,KeyError,TypeError,OSError,sqlite3.Error,UnicodeError,subprocess.TimeoutExpired,RpcError) as e:
-                    result={'content':[{'type':'text','text':json.dumps({'code':'inspection_read_rejected','message':'读取被拒绝或不可用；检查范围、文件类型、大小、源回合和路径。','error':type(e).__name__},ensure_ascii=False)}],'isError':True}
+                    result=error_result(e)
             else:
                 print(json.dumps({'jsonrpc':'2.0','id':ident,'error':{'code':-32601,'message':'Unknown method'}}),flush=True);continue
             print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result},ensure_ascii=False),flush=True)
