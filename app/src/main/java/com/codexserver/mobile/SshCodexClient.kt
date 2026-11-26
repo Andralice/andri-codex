@@ -769,11 +769,31 @@ class SshCodexClient(
                 runCatching {
                     sftp.ls(directory).filterIsInstance<ChannelSftp.LsEntry>().forEach { entry ->
                         if (entry.filename.startsWith(noncePrefix) &&
-                            entry.filename.removePrefix(noncePrefix).matches(Regex("[a-f0-9-]{36}\\.json")))
+                            entry.filename.removePrefix(noncePrefix).matches(Regex("[a-f0-9-]{36}(\\.json|\\.result\\.json)")))
                             sftp.rm("$directory/${entry.filename}")
                     }
                 }
             }
+        } finally { sftp.disconnect() }
+    }
+
+    suspend fun writeWorkspaceActionResult(projectDirectory: String, resultPath: String, content: String) = withContext(Dispatchers.IO) {
+        require(content.toByteArray(Charsets.UTF_8).size <= 32_768) { "工作区浏览器结果过大" }
+        val sftp = openSftp()
+        sftp.connect(15_000)
+        try {
+            val project = sftp.realpath(projectDirectory).trimEnd('/')
+            val directory = "$project/codex/.mobile-workspace-control"
+            val prefix = "$directory/"
+            val filename = resultPath.removePrefix(prefix)
+            require(resultPath.startsWith(prefix) && filename.matches(Regex("[a-f0-9-]{36}-[a-f0-9-]{36}\\.result\\.json"))) {
+                "工作区浏览器结果文件路径无效"
+            }
+            val target = "$directory/$filename"
+            runCatching { sftp.lstat(target) }.getOrNull()?.let { attrs ->
+                check(attrs.isReg && !attrs.isLink) { "工作区浏览器结果文件不是普通文件" }
+            }
+            sftp.put(ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)), target)
         } finally { sftp.disconnect() }
     }
 

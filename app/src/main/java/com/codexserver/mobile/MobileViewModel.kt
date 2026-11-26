@@ -43,6 +43,8 @@ data class VideoAttachment(val file: File, val label: String, val sizeBytes: Lon
 data class SharedFileAttachment(val file: File, val label: String, val sizeBytes: Long, val mimeType: String)
 data class ContextReference(val id: String, val label: String, val prompt: String)
 internal data class WorkspaceOpenRequest(val id: String, val threadId: String, val target: String, val baseDirectory: String)
+internal data class WorkspaceBrowserRequest(val id: String, val threadId: String, val action: String,
+    val arguments: JSONObject, val resultPath: String = "", val project: String = "")
 data class QueuedTask(val id: String, val clientUserMessageId: String, val prompt: String,
     val autoStartAllowed: Boolean = false)
 
@@ -66,6 +68,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private val workspaceTerminalStates = mutableStateMapOf<String, WorkspaceTerminalState>()
     private val workspaceControlJobs = mutableMapOf<String, Job>()
     private val workspaceOpenCompletions = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val workspaceBrowserCompletions = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
+    internal var workspaceBrowserRequests by mutableStateOf<List<WorkspaceBrowserRequest>>(emptyList())
+        private set
     internal var workspaceOpenRequests by mutableStateOf<List<WorkspaceOpenRequest>>(emptyList())
         private set
 
@@ -112,14 +117,15 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             }
             appendLine("当前项目目录：$project")
             if (includeActionInstructions && hasNativeWorkspaceTools(id)) {
-                appendLine("你可以直接调用 workspace_get_state 获取此手机工作区的最新标签与页面状态；调用 workspace_open 可在手机工作区中新开一个预览标签并查看文件、目录或网页。打开动作会直接执行，不需要再次询问用户。")
+                appendLine("你可以直接调用 workspace_get_state 获取此手机工作区的最新标签与页面状态；调用 workspace_open 可打开文件、目录或网页。若要测试此 Codex 服务器上的前端（包括服务器 localhost），优先用 server_browser_open、server_browser_inspect、server_browser_click/fill/press/scroll、server_browser_screenshot 等服务端浏览器工具；它们不依赖手机 WebView。workspace_browser 用于测试手机工作区 WebView 中的网页。打开与浏览器操作会直接执行，不需要再次询问用户。")
             } else if (includeActionInstructions && mailboxPrefix != null) {
-                appendLine("你可以直接控制手机工作区打开页面。需要展示某个工作区文件、目录或网页时，调用现有 shell 工具，把 JSON 写入下面的动作文件；手机会立即打开目标页面，无需再问用户一次：")
+                appendLine("你可以用服务端 server_browser_* 工具测试此 Codex 服务器上的前端，包括服务器 localhost；不依赖手机 WebView。也可以控制手机工作区打开页面并检查网页，旧对话的手机动作通过现有 shell 工具写入动作文件，由手机执行并回传结果：")
                 appendLine("动作文件前缀：$mailboxPrefix")
                 appendLine("每个目标使用一个新 UUID 文件，文件名为此前缀加 UUID 再加 .json，内容为 {\"target\":\"目标路径或 http/https 网址\"}。动作完成会自动删除该文件。")
                 val encodedPrefix = android.util.Base64.encodeToString(mailboxPrefix.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
                 appendLine("命令模板：python3 -c 'import base64,json,pathlib,uuid; p=base64.b64decode(\"$encodedPrefix\").decode(); pathlib.Path(p+str(uuid.uuid4())+\".json\").write_text(json.dumps({\"target\":\"/path/to/page\"}))'")
-                appendLine("只有在确实需要用户查看页面时才打开；可连续打开多个目标。路径可以是当前项目内相对路径或工作区可访问的绝对路径。")
+                appendLine("浏览器检查/操作请求写成 {\"action\":\"browser\",\"browser\":{\"action\":\"inspect\"},\"resultPath\":PREFIX+UUID+\".result.json\"}；action 支持 inspect、screenshot、click、fill、press、scroll、refresh、back。click 可给 selector 或 text；fill 给 selector/value；press 给 selector/key；scroll 可给 deltaY/selector。先用 workspace 网页标签打开 URL。写请求后可轮询 resultPath（最多等 60 秒）读取 JSON 结果。")
+                appendLine("PREFIX 的值就是上面的动作文件前缀。只有在确实需要用户查看页面或执行网页测试时才调用；可连续打开多个目标。路径可以是当前项目内相对路径或工作区可访问的绝对路径。")
             }
         }
         return JSONObject().put("andri-mobile-workspace", JSONObject()
@@ -141,11 +147,37 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 .put("target", JSONObject().put("type", "string")
                     .put("description", "工作区文件路径、目录路径或 HTTP(S) 网址；相对路径按当前项目目录解析。")))
                 .put("required", JSONArray().put("target")).put("additionalProperties", false))
-        return JSONArray().put(getState).put(open)
+        val browser = JSONObject()
+            .put("type", "function").put("name", "workspace_browser")
+            .put("description", "检查并操作 Andri 手机工作区 WebView 中打开的网页。可读取标题、地址、正文、控件、Console/HTTP 错误并截图，也可点击、填写表单、按键、滚动、刷新或返回。网页必须先用 workspace_open 打开。注意这是手机内嵌浏览器，不是电脑 Chrome DevTools 标签；localhost 指手机本机，电脑开发服务器需使用手机可访问的局域网地址，并让服务监听 0.0.0.0。")
+            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject()
+                .put("action", JSONObject().put("type", "string").put("enum", JSONArray().put("inspect").put("screenshot").put("click").put("fill").put("press").put("scroll").put("refresh").put("back")))
+                .put("selector", JSONObject().put("type", "string").put("description", "CSS 选择器；click/fill/press 可用。"))
+                .put("text", JSONObject().put("type", "string").put("description", "按可见文本查找要点击的按钮或链接。"))
+                .put("value", JSONObject().put("type", "string").put("description", "fill 要输入的值。"))
+                .put("key", JSONObject().put("type", "string").put("description", "要按下的键，例如 Enter、Tab、Escape。"))
+                .put("deltaY", JSONObject().put("type", "integer").put("description", "scroll 的垂直滚动量，正数向下。")))
+                .put("required", JSONArray().put("action")).put("additionalProperties", false))
+        return JSONArray().put(getState).put(open).put(browser)
     }
 
     internal fun completeWorkspaceOpenRequest(requestId: String, opened: Boolean) {
         workspaceOpenCompletions.remove(requestId)?.complete(opened)
+    }
+
+    internal fun resolveWorkspaceBrowserRequest(requestId: String, result: JSONObject) {
+        val request = workspaceBrowserRequests.firstOrNull { it.id == requestId } ?: return
+        workspaceBrowserCompletions.remove(requestId)?.complete(result)
+        workspaceBrowserRequests = workspaceBrowserRequests.filterNot { it.id == requestId }
+        if (request.resultPath.isNotBlank()) {
+            val connection = client ?: return
+            val project = request.project.ifBlank { executionFor(request.threadId).cwd }
+            viewModelScope.launch {
+                runCatching { connection.writeWorkspaceActionResult(project, request.resultPath, result.toString()) }
+                    .onFailure { recordChatDiagnostic("workspace_control.result_write_failed", request.threadId, "",
+                        JSONObject().put("reason", it.message.orEmpty().take(160))) }
+            }
+        }
     }
 
     private fun watchWorkspaceActions(
@@ -164,11 +196,22 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                         val requests = connection.consumeWorkspaceActionMailbox(project, mailboxPrefix)
                         failures = 0
                         requests.forEach { value ->
-                            val rawTarget = runCatching { JSONObject(value).optString("target").trim() }.getOrDefault("")
+                            val payload = runCatching { JSONObject(value) }.getOrNull() ?: return@forEach
+                            val rawTarget = payload.optString("target").trim()
                             val target = rawTarget.takeIf { it.isNotBlank() }?.let { workspacePreviewTarget(it, project) }
-                            if (target != null && activeId == id) {
+                            if (target != null) {
                                 workspaceOpenRequests = workspaceOpenRequests + WorkspaceOpenRequest(
                                     java.util.UUID.randomUUID().toString(), id, target.navigationLink, target.linkBase)
+                            }
+                            if (payload.optString("action") == "browser") {
+                                val browser = payload.optJSONObject("browser") ?: JSONObject()
+                                val action = browser.optString("action")
+                                val resultPath = payload.optString("resultPath")
+                                if (action in setOf("inspect", "screenshot", "click", "fill", "press", "scroll", "refresh", "back") &&
+                                    resultPath.startsWith(mailboxPrefix) && resultPath.removePrefix(mailboxPrefix).matches(Regex("[a-f0-9-]{36}\\.result\\.json"))) {
+                                    workspaceBrowserRequests = workspaceBrowserRequests + WorkspaceBrowserRequest(
+                                        resultPath.removePrefix(mailboxPrefix).removeSuffix(".result.json"), id, action, browser, resultPath, project)
+                                }
                             }
                         }
                     } catch (cancelled: CancellationException) {
@@ -3134,7 +3177,6 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 dynamicWorkspaceToolResult(true, state.ifBlank { "工作区尚无打开的页面。" })
             }
             "workspace_open" -> {
-                check(threadId == activeId) { "请先切换到发起此操作的对话，再打开工作区页面。" }
                 val requested = arguments.text("target").trim()
                 require(requested.isNotBlank()) { "请提供要打开的文件路径、目录或网页地址。" }
                 val target = workspacePreviewTarget(requested, project)
@@ -3151,6 +3193,23 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (opened) dynamicWorkspaceToolResult(true, "已在手机工作区的新标签中打开：${target.displayName}")
                 else dynamicWorkspaceToolResult(false, "手机工作区没有打开该页面。")
+            }
+            "workspace_browser" -> {
+                val action = arguments.text("action").trim()
+                require(action in setOf("inspect", "screenshot", "click", "fill", "press", "scroll", "refresh", "back")) { "不支持的浏览器操作。" }
+                if (action == "click") require(arguments.text("selector").isNotBlank() || arguments.text("text").isNotBlank()) { "click 需要 selector 或 text。" }
+                if (action == "fill") require(arguments.text("selector").isNotBlank() && arguments.has("value")) { "fill 需要 selector 和 value。" }
+                if (action == "press") require(arguments.text("selector").isNotBlank() && arguments.text("key").isNotBlank()) { "press 需要 selector 和 key。" }
+                val requestId = java.util.UUID.randomUUID().toString()
+                val completion = CompletableDeferred<JSONObject>()
+                workspaceBrowserCompletions[requestId] = completion
+                workspaceBrowserRequests = workspaceBrowserRequests + WorkspaceBrowserRequest(requestId, threadId, action, arguments,
+                    project = project)
+                try { kotlinx.coroutines.withTimeout(60_000) { completion.await() } }
+                finally {
+                    workspaceBrowserCompletions.remove(requestId)
+                    workspaceBrowserRequests = workspaceBrowserRequests.filterNot { it.id == requestId }
+                }
             }
             else -> dynamicWorkspaceToolResult(false, "未知的手机工作区工具：${params.text("tool")}")
         }

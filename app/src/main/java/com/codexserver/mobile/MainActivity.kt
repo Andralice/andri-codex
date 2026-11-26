@@ -122,6 +122,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.first
 import com.caverock.androidsvg.SVG
 import org.json.JSONObject
+import org.json.JSONArray
 import org.json.JSONTokener
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -352,12 +353,30 @@ class MainActivity : ComponentActivity() {
                         true
                     }
                 }
-                val workspaceOpenRequest = vm.workspaceOpenRequests.firstOrNull()
+                val workspaceOpenRequest = vm.workspaceOpenRequests.firstOrNull { it.threadId == vm.activeId }
                 LaunchedEffect(workspaceOpenRequest?.id) {
                     val request = workspaceOpenRequest ?: return@LaunchedEffect
-                    val opened = request.threadId == vm.activeId && openAiWorkspaceLink(request.target, request.baseDirectory)
+                    val target = workspacePreviewTarget(request.target, request.baseDirectory)
+                    val opened = if (target?.kind == WorkspacePreviewKind.WEB) {
+                        vm.updateWorkspaceUi(vm.activeId, workspaceProject) {
+                            it.openTab(2, target.displayName, target.navigationLink)
+                        }
+                        workspacePage = true
+                        true
+                    } else openAiWorkspaceLink(request.target, request.baseDirectory)
                     vm.completeWorkspaceOpenRequest(request.id, opened)
                     vm.consumeWorkspaceOpenRequest(request.id)
+                }
+                val activeBrowserRequest = vm.workspaceBrowserRequests.firstOrNull { it.threadId == vm.activeId }
+                LaunchedEffect(activeBrowserRequest?.id, vm.activeId) {
+                    val request = activeBrowserRequest ?: return@LaunchedEffect
+                    val session = vm.workspaceUiFor(request.threadId, vm.executionFor(request.threadId).cwd)
+                    if (session.tab != 2) {
+                        vm.updateWorkspaceUi(request.threadId, vm.executionFor(request.threadId).cwd) {
+                            it.openTab(2, "网页", it.browserAddress.ifBlank { it.browserUrl })
+                        }
+                    }
+                    workspacePage = true
                 }
                 BackHandler(enabled = vm.activeId != null) {
                     if (workspacePage && workspaceTab == 5) {
@@ -482,6 +501,23 @@ class MainActivity : ComponentActivity() {
                 }
                 UpdateReminder(vm, enabled = destination == "chat" || destination == "empty-chat")
                 vm.requests.firstOrNull { it.get("id").toString() == vm.visibleRequestId }?.let { request -> key(request.get("id").toString()) { RequestDialog(vm, request) } }
+                val pendingWorkspaceOpen = vm.workspaceOpenRequests.firstOrNull { it.threadId != vm.activeId }
+                val pendingBrowserAction = vm.workspaceBrowserRequests.firstOrNull { it.threadId != vm.activeId }
+                if (pendingWorkspaceOpen != null || pendingBrowserAction != null) {
+                    val pendingThread = pendingWorkspaceOpen?.threadId ?: pendingBrowserAction!!.threadId
+                    val pendingTitle = vm.threads.firstOrNull { it.id == pendingThread }?.title?.ifBlank { null } ?: "另一个对话"
+                    AlertDialog(
+                        onDismissRequest = {},
+                        title = { Text("AI 正在请求工作区") },
+                        text = { Text("$pendingTitle 想在手机工作区${if (pendingBrowserAction != null) "检查或操作当前网页" else "打开页面"}。是否切换过去？") },
+                        confirmButton = { TextButton(onClick = { vm.openThread(pendingThread) }) { Text("查看对话") } },
+                        dismissButton = { TextButton(onClick = {
+                            pendingWorkspaceOpen?.let { vm.completeWorkspaceOpenRequest(it.id, false); vm.consumeWorkspaceOpenRequest(it.id) }
+                            pendingBrowserAction?.let { vm.resolveWorkspaceBrowserRequest(it.id,
+                                workspaceBrowserToolResult(false, "用户暂未切换到该对话，未执行浏览器操作。")) }
+                        }) { Text("忽略") } }
+                    )
+                }
                 if (vm.historyDialog) ReleaseHistoryDialog(vm) { file -> installUpdate(this@MainActivity, file) }
                 if (vm.updateDialog && !vm.historyDialog && vm.visibleRequestId == null && vm.connected) UpdateDialog(vm) { file ->
                     runCatching { installUpdate(this@MainActivity, file) }
@@ -836,7 +872,9 @@ private fun WorkspaceBrowser(
     onAdd: ((String, String) -> Unit)?,
     modifier: Modifier = Modifier,
     session: WorkspaceSessionState? = null,
-    onSession: (((WorkspaceSessionState) -> WorkspaceSessionState) -> Unit)? = null
+    onSession: (((WorkspaceSessionState) -> WorkspaceSessionState) -> Unit)? = null,
+    browserRequest: WorkspaceBrowserRequest? = null,
+    onBrowserResult: ((String, JSONObject) -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -850,6 +888,7 @@ private fun WorkspaceBrowser(
     var canGoBack by remember { mutableStateOf(false) }
     var extracting by remember { mutableStateOf(false) }
     var navigation by remember { mutableIntStateOf(0) }
+    val browserErrors = remember { mutableStateListOf<String>() }
     val browserBundle = rememberSaveable(initialUrl) { Bundle() }
     val restoredX = remember(initialUrl) { browserBundle.getInt("andri.scrollX", session?.browserScrollX ?: 0) }
     val restoredY = remember(initialUrl) { browserBundle.getInt("andri.scrollY", session?.browserScrollY ?: 0) }
@@ -880,6 +919,7 @@ private fun WorkspaceBrowser(
                     pageProgress = 0
                     error = ""
                     title = ""
+                    browserErrors.clear()
                     if (workspaceBrowserUrl(url) == null) {
                         view.stopLoading()
                         error = "无法打开此地址"
@@ -905,6 +945,7 @@ private fun WorkspaceBrowser(
                 }
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, detail: android.webkit.WebResourceError) {
+                    if (browserErrors.size < 30) browserErrors.add("${if (request.isForMainFrame) "主文档" else "资源"}加载失败：${detail.description}（${request.url.host.orEmpty()}）")
                     if (request.isForMainFrame) {
                         error = "无法打开网页：${detail.description}"
                         loading = false
@@ -913,6 +954,8 @@ private fun WorkspaceBrowser(
                 }
 
                 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: android.webkit.WebResourceResponse) {
+                    if (browserErrors.size < 30 && response.statusCode >= 400)
+                        browserErrors.add("HTTP ${response.statusCode}：${request.url}")
                     if (request.isForMainFrame) {
                         error = "无法打开网页（HTTP ${response.statusCode}）"
                         loading = false
@@ -933,6 +976,11 @@ private fun WorkspaceBrowser(
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) { pageProgress = newProgress }
+                override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                    if (message.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR && browserErrors.size < 30)
+                        browserErrors.add("Console: ${message.message()}（${message.sourceId()}:${message.lineNumber()}）")
+                    return true
+                }
             }
         }
     }
@@ -962,11 +1010,83 @@ private fun WorkspaceBrowser(
         }
     }
     LaunchedEffect(pageView, initialUrl) {
+        val targetUrl = workspaceBrowserUrl(currentUrl.ifBlank { initialUrl })
+        // onPageFinished persists the current URL into the active workspace tab.
+        // That changes initialUrl and restarts this effect. The WebView is already
+        // at that URL, so restoring/reloading it here can flash the page and leave
+        // a blank surface while the duplicate navigation runs.
+        if (targetUrl != null && pageView.url == targetUrl) {
+            canGoBack = pageView.canGoBack()
+            browserOpened = true
+            return@LaunchedEffect
+        }
         val restored = if (!browserBundle.isEmpty) pageView.restoreState(browserBundle) else null
         if (restored != null) {
             canGoBack = pageView.canGoBack()
             browserOpened = true
-        } else workspaceBrowserUrl(currentUrl.ifBlank { initialUrl })?.let(pageView::loadUrl)
+        } else targetUrl?.let(pageView::loadUrl)
+    }
+
+    LaunchedEffect(pageView, browserRequest?.id, currentUrl, loading, pageProgress) {
+        val request = browserRequest ?: return@LaunchedEffect
+        if (loading || pageProgress < 100 || pageView.url.isNullOrBlank()) return@LaunchedEffect
+        if (!browserOpened || currentUrl.isBlank()) {
+            onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(false,
+                "工作区网页标签当前没有打开网页。先使用 workspace_open 打开要测试的 URL，再调用浏览器检查。"))
+            return@LaunchedEffect
+        }
+        when (request.action) {
+            "screenshot" -> {
+                val width = pageView.width
+                val height = pageView.height
+                if (width <= 0 || height <= 0) {
+                    onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(false, "网页视图还没有完成布局，暂时无法截图。"))
+                } else runCatching {
+                    val scale = minOf(1f, 960f / maxOf(width, height))
+                    val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1),
+                        (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                    android.graphics.Canvas(bitmap).apply { scale(scale, scale); pageView.draw(this) }
+                    val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 68, it) }.toByteArray()
+                    bitmap.recycle()
+                    val image = JSONObject().put("type", "inputImage")
+                        .put("imageUrl", "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    JSONObject().put("success", true).put("contentItems", JSONArray()
+                        .put(JSONObject().put("type", "inputText").put("text", "工作区网页截图：$currentUrl"))
+                        .put(image))
+                }.onSuccess { onBrowserResult?.invoke(request.id, it) }
+                    .onFailure { onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(false, "网页截图失败：${it.message.orEmpty()}")) }
+                return@LaunchedEffect
+            }
+            "refresh" -> {
+                pageView.reload()
+                onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(true, "已刷新网页：$currentUrl"))
+                return@LaunchedEffect
+            }
+            "back" -> {
+                if (pageView.canGoBack()) {
+                    pageView.goBack()
+                    onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(true, "已返回上一页。"))
+                } else onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(false, "当前网页没有可返回的历史记录。"))
+                return@LaunchedEffect
+            }
+        }
+        val args = request.arguments.toString()
+        val js = when (request.action) {
+            "inspect" -> """(function(){var vis=function(e){var r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'};var els=[].slice.call(document.querySelectorAll('a,button,input,textarea,select,[role=button],[onclick]')).filter(vis).slice(0,40).map(function(e){return {tag:e.tagName.toLowerCase(),id:e.id||'',name:e.name||'',type:e.type||'',text:(e.innerText||e.getAttribute('aria-label')||e.placeholder||e.value||'').trim().replace(/\\s+/g,' ').slice(0,90),placeholder:e.placeholder||'',href:e.href||'',disabled:!!e.disabled}});return JSON.stringify({success:true,url:location.href,title:document.title,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight},text:(document.body&&document.body.innerText||'').slice(0,8000),elements:els})})()"""
+            "click" -> """(function(a){try{var e=a.selector?document.querySelector(a.selector):null;if(!e){var q=(a.text||'').trim().toLowerCase();e=[].slice.call(document.querySelectorAll('button,a,[role=button],input[type=button],input[type=submit]')).find(function(x){return (x.innerText||x.getAttribute('aria-label')||x.value||'').trim().toLowerCase()===q})}if(!e)return JSON.stringify({success:false,error:'没有找到匹配的按钮或链接'});if(e.disabled||e.getAttribute('aria-disabled')==='true')return JSON.stringify({success:false,error:'目标控件已禁用'});e.click();return JSON.stringify({success:true,result:'已点击 '+(e.innerText||e.getAttribute('aria-label')||e.tagName)})}catch(e){return JSON.stringify({success:false,error:String(e)})}})(ARGS)""".replace("ARGS", args)
+            "fill" -> """(function(a){try{var e=document.querySelector(a.selector);if(!e)return JSON.stringify({success:false,error:'没有找到 '+a.selector});var p=e instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:e instanceof HTMLInputElement?HTMLInputElement.prototype:null;if(p){var d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,a.value);else e.value=a.value}else e.value=a.value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return JSON.stringify({success:true,result:'已填写 '+a.selector})}catch(e){return JSON.stringify({success:false,error:String(e)})}})(ARGS)""".replace("ARGS", args)
+            "press" -> """(function(a){try{var e=document.querySelector(a.selector);if(!e)return JSON.stringify({success:false,error:'没有找到 '+a.selector});e.focus();['keydown','keypress','keyup'].forEach(function(t){e.dispatchEvent(new KeyboardEvent(t,{key:a.key,bubbles:true,cancelable:true}))});if(a.key==='Enter'&&e.form)e.form.requestSubmit();return JSON.stringify({success:true,result:'已向 '+a.selector+' 发送按键 '+a.key})}catch(e){return JSON.stringify({success:false,error:String(e)})}})(ARGS)""".replace("ARGS", args)
+            "scroll" -> """(function(a){try{var e=a.selector?document.querySelector(a.selector):null;if(a.selector&&!e)return JSON.stringify({success:false,error:'没有找到 '+a.selector});(e||window).scrollBy({top:Number(a.deltaY)||600,behavior:'smooth'});return JSON.stringify({success:true,result:'网页已滚动'})}catch(e){return JSON.stringify({success:false,error:String(e)})}})(ARGS)""".replace("ARGS", args)
+            else -> "JSON.stringify({success:false,error:'不支持的操作'})"
+        }
+        pageView.evaluateJavascript(js) { raw ->
+            val result = runCatching {
+                val value = JSONTokener(raw ?: "null").nextValue()
+                JSONObject(value as? String ?: "{}")
+            }.getOrElse { JSONObject().put("success", false).put("error", "网页返回了无法解析的结果") }
+            if (request.action == "inspect") result.put("consoleErrors", JSONArray(browserErrors.takeLast(15).map { it.take(240) }))
+            onBrowserResult?.invoke(request.id, workspaceBrowserToolResult(result.optBoolean("success"), result.toString().take(24_000)))
+        }
     }
 
     fun openAddress() {
@@ -1073,6 +1193,10 @@ private fun workspaceBrowserUrl(value: String): String? = runCatching {
             !uri.host.isNullOrBlank() && uri.rawUserInfo == null
     }
 }.getOrNull()
+
+private fun workspaceBrowserToolResult(success: Boolean, text: String): JSONObject = JSONObject()
+    .put("success", success)
+    .put("contentItems", JSONArray().put(JSONObject().put("type", "inputText").put("text", text)))
 
 @Composable
 private fun ContextAction(title: String, detail: String, onClick: () -> Unit) {
@@ -2220,7 +2344,9 @@ private fun WorkspacePage(vm: MobileViewModel, thread: CodexThread, project: Str
                     vm.addContextReference(title, text)
                     android.widget.Toast.makeText(context, "已加入附件与引用", android.widget.Toast.LENGTH_SHORT).show()
                 }, modifier = Modifier.weight(1f),
-                    session = session, onSession = { change -> vm.updateWorkspaceUi(thread.id, cwd, change) })
+                    session = session, onSession = { change -> vm.updateWorkspaceUi(thread.id, cwd, change) },
+                    browserRequest = vm.workspaceBrowserRequests.firstOrNull { it.threadId == thread.id },
+                    onBrowserResult = { requestId, result -> vm.resolveWorkspaceBrowserRequest(requestId, result) })
                 3 -> WorkspaceMediaList(vm, thread.id, vm.messages[thread.id].orEmpty(), cwd, onOpen = { media ->
                     val target = if (media.source.startsWith("/")) workspaceFileLink(media.source) else media.source
                     onOpenLink(target, cwd)
