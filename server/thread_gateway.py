@@ -19,6 +19,8 @@ import threading
 import time
 
 from task_monitor_rpc import Rpc, RpcError
+from thread_visibility import hidden_from_thread_list
+from task_monitor_presentation import MonitorPresentation
 
 
 MAX_MESSAGE = 16 * 1024 * 1024
@@ -116,9 +118,9 @@ class Client:
 
 
 class Backend:
-    def __init__(self, session, name, path):
+    def __init__(self, session, name, path, timeout=20):
         self.session, self.name = session, name
-        self.rpc = Rpc(path, initialize_params=session.initialize_params)
+        self.rpc = Rpc(path, timeout=timeout, initialize_params=session.initialize_params)
         self.pending = {}
         self.sequence = 0
         self.lock = threading.Lock()
@@ -140,8 +142,8 @@ class Backend:
                 future.set_exception(ConnectionError("Backend unavailable"))
         return future
 
-    def call(self, method, params):
-        response = self.request(method, params).result(timeout=20)
+    def call(self, method, params, timeout=20):
+        response = self.request(method, params).result(timeout=timeout)
         if "error" in response:
             raise ConnectionError("Backend query failed")
         return response["result"]
@@ -167,6 +169,18 @@ class Backend:
                     message["id"] = self.session.server_request(self.name, message["id"])
                     self.session.client.send(message)
                 else:
+                    if message.get("method") == "thread/started":
+                        thread = message.get("params", {}).get("thread", {})
+                        if hidden_from_thread_list(thread):
+                            self.session.hidden_threads.add(thread.get("id", ""))
+                            continue
+                        message["params"] = {**message.get("params", {}), "thread": self.session.presentation.tag_thread(thread)}
+                    tid = message.get("params", {}).get("threadId", "")
+                    self.session.presentation.refresh()
+                    if (tid and message.get('method') != 'serverRequest/resolved' and tid not in self.session.explicit_threads
+                            and (tid in self.session.hidden_threads or tid in self.session.presentation.workers)):
+                        continue
+                    message = self.session.presentation.notification(message)
                     if message.get("method") == "serverRequest/resolved":
                         params = message.get("params", {})
                         mapped = self.session.resolve_server_request(self.name, params.get("requestId"))
@@ -196,10 +210,13 @@ class Backend:
 
 
 class Session:
-    def __init__(self, client, paths):
+    def __init__(self, client, paths, monitor_runtime=None):
         self.client, self.paths = client, paths
         self.backends, self.owners = {}, {}
         self.initialize_params = None
+        self.presentation = MonitorPresentation(monitor_runtime)
+        self.hidden_threads = set()
+        self.explicit_threads = set()
         self.server_requests = {}
         self.server_answered = set()
         self.server_request_lock = threading.Lock()
@@ -223,10 +240,10 @@ class Session:
                 self.server_answered.discard(key)
         return matches[-1] if matches else None
 
-    def backend(self, name):
+    def backend(self, name, timeout=20):
         backend = self.backends.get(name)
         if backend is None or backend.closed:
-            backend = Backend(self, name, self.paths[name])
+            backend = Backend(self, name, self.paths[name], timeout=timeout)
             self.backends[name] = backend
         return backend
 
@@ -264,9 +281,9 @@ class Session:
         self.client.send({"id": request_id, "error": {"code": -32001,
                           "message": "连接任务所在的服务失败；请重连后核对任务状态。请求未自动重发。"}})
 
-    def complete(self, future, request_id, backend, method):
+    def complete(self, future, request_id, backend, method, params=None):
         try:
-            response = future.result()
+            response = self.presentation.response(method, params or {}, future.result())
             if method in ("thread/start", "thread/fork", "thread/resume"):
                 tid = response.get("result", {}).get("thread", {}).get("id")
                 if tid:
@@ -277,6 +294,70 @@ class Session:
                 self.error(request_id)
             except OSError:
                 pass
+
+    def list_threads(self, request_id, params):
+        # Run on a worker: Backend.read must stay free to receive RPC replies.
+        # Keep upstream cursors; skip empty filtered pages so a first-page-only
+        # mobile refresh can still find real conversations below test records.
+        try:
+            backend = self.backend("mobile")
+            query = dict(params)
+            cursors = {query.get("cursor")}
+            while True:
+                response = backend.request("thread/list", query).result(timeout=20)
+                if "error" in response or params.get("attachedToThreadId"):
+                    break  # Explicit worker discovery keeps its original semantics.
+                page = response["result"]
+                rows = [self.presentation.tag_thread(row) for row in page["data"] if not hidden_from_thread_list(row)]
+                response = {**response, "result": {**page, "data": self.live_thread_statuses(rows)}}
+                cursor = page.get("nextCursor")
+                if rows or not cursor:
+                    break
+                if cursor in cursors:
+                    raise ValueError("Repeated thread list cursor")
+                cursors.add(cursor)
+                query = {**query, "cursor": cursor}
+            self.client.send({**response, "id": request_id})
+        except (OSError, ValueError, KeyError, RpcError, FutureTimeout):
+            try:
+                self.error(request_id)
+            except OSError:
+                pass
+
+    def live_thread_statuses(self, rows):
+        # A mobile snapshot can say notLoaded while the desktop writer is active.
+        # Read live status only; never resume, subscribe, or change writer ownership.
+        needed = {row["id"] for row in rows if row.get("status", {}).get("type") != "active" and row.get("id")}
+        active = {}
+        deadline = time.monotonic() + 2
+        for name in self.paths:
+            if name == "mobile" or not needed or time.monotonic() >= deadline:
+                continue
+            try:
+                backend = self.backend(name, timeout=max(.001, deadline - time.monotonic()))
+                cursor = None
+                seen = set()
+                while needed and time.monotonic() < deadline:
+                    page = backend.call("thread/loaded/list", {"limit": 100, "cursor": cursor},
+                                        timeout=max(.001, deadline - time.monotonic()))
+                    for tid in needed.intersection(page["data"]):
+                        if time.monotonic() >= deadline:
+                            break
+                        try:
+                            thread = backend.call("thread/read", {"threadId": tid, "includeTurns": False},
+                                                  timeout=max(.001, deadline - time.monotonic()))["thread"]
+                            if thread["status"]["type"] == "active":
+                                active[tid] = thread["status"]
+                                needed.discard(tid)
+                        except (OSError, ValueError, RpcError, FutureTimeout):
+                            continue
+                    cursor = page.get("nextCursor")
+                    if not cursor or cursor in seen:
+                        break
+                    seen.add(cursor)
+            except (OSError, ValueError, RpcError, FutureTimeout):
+                continue  # Optional backend failure must not break the existing list.
+        return [{**row, "status": active[row["id"]]} if row.get("id") in active else row for row in rows]
 
     def handle(self, message):
         method = message.get("method")
@@ -307,11 +388,20 @@ class Session:
             pass  # Each backend is initialized once by its connection.
         elif self.initialize_params is None:
             raise ValueError("Not initialized")
+        elif method == "andri/monitor/overview" and "id" in message:
+            try:
+                self.client.send({"id": message["id"], "result": self.presentation.overview(params)})
+            except (ValueError, TypeError):
+                self.client.send({"id": message["id"], "error": {"code": -32602, "message": "管家查询参数无效。"}})
+        elif method == "thread/list" and "id" in message:
+            threading.Thread(target=self.list_threads, args=(message["id"], params), daemon=True).start()
         elif "id" in message:
             try:
+                if params.get("threadId"):
+                    self.explicit_threads.add(params["threadId"])
                 backend = self.route(method, params)
                 future = backend.request(method, params)
-                future.add_done_callback(lambda f: self.complete(f, message["id"], backend, method))
+                future.add_done_callback(lambda f: self.complete(f, message["id"], backend, method, params))
             except (OSError, ValueError, RpcError, FutureTimeout):
                 self.error(message["id"])
         else:
@@ -327,7 +417,7 @@ class Handler(socketserver.BaseRequestHandler):
         session = client = None
         try:
             client = Client(self.request)
-            session = Session(client, self.server.paths)
+            session = Session(client, self.server.paths, self.server.monitor_runtime)
             while True:
                 session.handle(client.receive())
         except (OSError, ValueError, KeyError, RpcError, FutureTimeout):
@@ -342,8 +432,9 @@ class Handler(socketserver.BaseRequestHandler):
 class Gateway(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path, paths):
+    def __init__(self, path, paths, monitor_runtime=None):
         self.paths = paths
+        self.monitor_runtime = monitor_runtime
         super().__init__(str(path), Handler)
         os.chmod(path, 0o600)
 
@@ -353,6 +444,7 @@ def main():
     parser.add_argument("--listen", required=True)
     parser.add_argument("--mobile", required=True)
     parser.add_argument("--desktop", required=True)
+    parser.add_argument("--monitor-runtime", default=str(Path(__file__).resolve().parents[1] / "codex/task-monitor/runtime"))
     args = parser.parse_args()
     path = Path(args.listen)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -369,7 +461,7 @@ def main():
             raise RuntimeError("Gateway listener already active")
         finally:
             probe.close()
-    with Gateway(path, {"mobile": args.mobile, "desktop": args.desktop}) as gateway:
+    with Gateway(path, {"mobile": args.mobile, "desktop": args.desktop}, args.monitor_runtime) as gateway:
         gateway.serve_forever()
 
 

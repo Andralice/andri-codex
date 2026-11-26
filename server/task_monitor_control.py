@@ -22,9 +22,14 @@ def resolve(runtime, event_id, action, summary, next_prompt="", question=""):
     result = {"event_id": event_id, "action": action, "summary": summary,
               "next_prompt": next_prompt, "question": question}
     with sqlite3.connect(Path(runtime) / "state.sqlite3") as db:
+        # A direct user may act on a completed independent inspection of a closed
+        # event. Automatic reviewers cannot use this control tool, and execution
+        # still checks source freshness, scope, approvals and follow-up limits.
+        eligible = db.execute("SELECT 1 FROM jobs j JOIN inspections i ON i.event_id=j.id AND i.thread_id=j.thread_id AND i.source_turn=j.turn_id "
+                              "WHERE j.id=? AND j.phase='done' AND i.state='completed'", (event_id,)).fetchone() if action == 'follow_up' else None
         changed = db.execute("UPDATE jobs SET phase='decided',result=?,note='human_decision' "
-                             "WHERE id=? AND phase='needs_attention'",
-                             (json.dumps(result, ensure_ascii=False), event_id)).rowcount
+                             "WHERE id=? AND (phase='needs_attention' OR (phase='done' AND ?))",
+                             (json.dumps(result, ensure_ascii=False), event_id, bool(eligible))).rowcount
         if not changed:
             raise ValueError("Event is not waiting for a user decision; inspect current events first")
     return {"saved": True, "event_id": event_id, "action": action,

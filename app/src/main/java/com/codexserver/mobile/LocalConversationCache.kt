@@ -94,20 +94,23 @@ internal class LocalConversationCache(context: Context) {
     private fun encodeThread(thread: CodexThread) = JSONObject()
         .put("id", thread.id).put("title", thread.title).put("model", thread.model)
         .put("running", thread.running).put("turnId", thread.turnId).put("cwd", thread.cwd)
-        .put("updatedAt", thread.updatedAt)
+        .put("updatedAt", thread.updatedAt).put("serverRole", thread.serverRole)
 
     private fun decodeThread(value: JSONObject) = CodexThread(
         value.optString("id"), value.optString("title"), value.optString("model"),
         value.optBoolean("running"), value.optString("turnId"), value.optString("cwd"),
-        value.optLong("updatedAt")
+        value.optLong("updatedAt"), value.optString("serverRole")
     ).takeIf { it.id.isNotBlank() }
 
     private fun encodeLine(line: ChatLine): JSONObject = JSONObject()
         .put("role", line.role).put("text", line.text).put("id", line.id).put("turnId", line.turnId)
         .put("stage", line.stage).put("afterId", line.afterId).put("streaming", line.streaming)
         .put("status", line.status).put("phase", line.phase).put("toolType", line.toolType)
+        .put("origin", line.origin).put("originSummary", line.originSummary).put("monitorEventId", line.monitorEventId)
+        .put("answers", JSONArray(line.answers))
         .put("questions", JSONArray().apply {
-            line.questions.forEach { put(JSONObject().put("title", it.title).put("options", JSONArray(it.options))) }
+            line.questions.forEach { put(JSONObject().put("title", it.title).put("options", JSONArray(it.options))
+                .put("descriptions", JSONArray(it.descriptions)).put("secret", it.secret)) }
         })
         // Inline image data can be several megabytes; the server remains the source for images.
         .put("images", JSONArray(line.images.filterNot { it.startsWith("data:image/", ignoreCase = true) }))
@@ -117,6 +120,7 @@ internal class LocalConversationCache(context: Context) {
         val questions = value.optJSONArray("questions") ?: JSONArray()
         val images = value.optJSONArray("images") ?: JSONArray()
         val processItems = value.optJSONArray("processItems") ?: JSONArray()
+        val answers = value.optJSONArray("answers") ?: JSONArray()
         return ChatLine(
             role = value.optString("role"), text = value.optString("text"), id = value.optString("id"),
             turnId = value.optString("turnId"), stage = value.optString("stage"),
@@ -125,12 +129,16 @@ internal class LocalConversationCache(context: Context) {
                 for (index in 0 until questions.length()) {
                     val question = questions.optJSONObject(index) ?: continue
                     val options = question.optJSONArray("options") ?: JSONArray()
+                    val descriptions = question.optJSONArray("descriptions") ?: JSONArray()
                     add(ChatQuestion(question.optString("title"), buildList {
                         for (option in 0 until options.length()) add(options.optString(option))
-                    }))
+                    }, buildList { for (i in 0 until descriptions.length()) add(descriptions.optString(i)) },
+                        question.optBoolean("secret")))
                 }
             },
             status = value.optString("status"), phase = value.optString("phase"), toolType = value.optString("toolType"),
+            origin = value.optString("origin"), originSummary = value.optString("originSummary"), monitorEventId = value.optString("monitorEventId"),
+            answers = buildList { for (index in 0 until answers.length()) add(answers.optString(index)) },
             images = buildList { for (index in 0 until images.length()) add(images.optString(index)) },
             processItems = buildList {
                 for (index in 0 until processItems.length()) {

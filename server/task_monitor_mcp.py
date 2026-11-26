@@ -11,6 +11,7 @@ from task_monitor_control import resolve
 from task_monitor_preferences import save, visible, validate, PreferenceConflict, PreferenceValidationError
 from task_monitor_rpc import Rpc, RpcError
 from task_monitor_questions import MARKER
+from task_monitor_inspections import request as request_inspection, results as inspection_results
 
 
 def schema(properties=None, required=None):
@@ -22,12 +23,16 @@ TOOLS = [
     {"name": "monitor_update_preferences", "description": "仅按用户直接要求保存偏好，返回保存版本。后台审查事件不得调用。",
      "inputSchema": schema({"changes": {"type": "object"}, "expected_revision": {"type": "integer"},
                             "reason": {"type": "string"}}, ["changes", "expected_revision", "reason"])},
-    {"name": "monitor_resolve_event", "description": "按用户对指定待处理问题的直接回答保存决定；不越过原任务权限及现行偏好。",
+    {"name": "monitor_resolve_event", "description": "按用户对待处理问题或已完成独立检查的直接指令保存决定；不越过原任务权限及现行偏好。",
      "inputSchema": schema({"event_id": {"type": "string"}, "action": {"type": "string", "enum": ["done", "follow_up", "ask_user"]},
                             "summary": {"type": "string"}, "next_prompt": {"type": "string"}, "question": {"type": "string"}},
                            ["event_id", "action", "summary"])},
     {"name": "monitor_status", "description": "读取后台心跳、任务数量和已读取的偏好版本。", "inputSchema": schema()},
     {"name": "monitor_events", "description": "读取最近事件及判断，定位用户指代的待处理问题。", "inputSchema": schema()},
+    {"name": "monitor_request_inspection", "description": "按用户要求委派独立只读检查，查看实际成果及是否停滞；异步返回编号，不直接修复。",
+     "inputSchema": schema({"thread_id": {"type": "string"}, "focus": {"type": "string"}}, ["thread_id", "focus"])},
+    {"name": "monitor_inspections", "description": "读取独立检查状态、实际证据和报告；不传编号则返回最近20项。",
+     "inputSchema": schema({"inspection_id": {"type": "string"}})},
     {"name": "monitor_tasks", "description": "只读列出本服务器任务的标题、ID、项目目录及状态。", "inputSchema": schema()},
 ]
 
@@ -51,13 +56,13 @@ class ControlError(ValueError):
         super().__init__(CONTROL_ERRORS[code])
 
 
-def owner_endpoint(config):
+def owner_endpoint(config, connect=None):
     """Only live ownership authorizes reads of an in-progress turn, never a disk snapshot."""
     endpoints = list(dict.fromkeys([*config.get("sockets", []), config["monitor_socket"]]))
     owners = []
     for endpoint in endpoints:
         try:
-            with Rpc(endpoint) as rpc:
+            with (connect or Rpc)(endpoint) as rpc:
                 cursor = None
                 while True:
                     page = rpc.call("thread/loaded/list", {"limit": 100, "cursor": cursor})
@@ -139,6 +144,11 @@ def execute(runtime, name, arguments):
     shape = definition["inputSchema"]
     if set(arguments) - set(shape["properties"]) or set(shape["required"]) - set(arguments):
         raise ControlError("invalid_arguments")
+    if name == "monitor_request_inspection":
+        direct_user_only(config)
+        return request_inspection(config, arguments["thread_id"], arguments["focus"])
+    if name == "monitor_inspections":
+        return inspection_results(runtime, arguments.get("inspection_id"))
     if name == "monitor_show_preferences":
         return visible(config)
     if name == "monitor_update_preferences":

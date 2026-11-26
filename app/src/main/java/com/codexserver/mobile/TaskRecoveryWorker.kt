@@ -44,7 +44,8 @@ internal class TaskRecoveryWorker(context: Context, params: WorkerParameters) : 
             val latestStatus = latestTurn?.text("status").orEmpty()
             if (latestStatus == "inProgress") return Result.retry()
             val latestTurnId = latestTurn?.text("id").orEmpty()
-            if (latestStatus in terminalTaskStatuses) {
+            val automated = latestTurn?.optJSONObject("andriOrigin")?.text("kind").orEmpty().startsWith("monitor_")
+            if (!automated && latestStatus in terminalTaskStatuses) {
                 val row = parseThread(thread)
                 val notification = TaskNotifications.complete(applicationContext, threadId, latestTurnId, latestStatus,
                     row.title, projectNameForPath(row.cwd.ifBlank { baseDirectory }),

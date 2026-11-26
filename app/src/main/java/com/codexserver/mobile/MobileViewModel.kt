@@ -49,7 +49,7 @@ data class QueuedTask(val id: String, val clientUserMessageId: String, val promp
     val autoStartAllowed: Boolean = false)
 
 class MobileViewModel(application: Application) : AndroidViewModel(application) {
-    private data class BufferedAgentDelta(val turnId: String, val text: StringBuilder)
+    private data class BufferedAgentDelta(val turnId: String, val text: StringBuilder, var origin: JSONObject? = null)
 
     companion object {
         const val UPDATE_MANIFEST = "/home/ubuntu/codex/mobile-client/releases/latest.json"
@@ -584,6 +584,60 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private var defaultReasoningEffort by mutableStateOf(settings.getString("reasoningEffort", "medium").orEmpty().ifBlank { "medium" })
     var threadSearch by mutableStateOf("")
     var onlyRunningThreads by mutableStateOf(false)
+    internal var managerPageVisible by mutableStateOf(false)
+        private set
+    internal var managerOverview by mutableStateOf<ManagerOverview?>(null)
+        private set
+    internal var managerLoading by mutableStateOf(false)
+        private set
+    internal var managerError by mutableStateOf("")
+        private set
+    private var managerRequestGeneration = 0L
+    private var knownManagerThreadId = settings.getString("manager.threadId", "").orEmpty()
+    internal val conversationThreads: List<CodexThread> get() = threads.filter {
+        it.serverRole != "manager" && it.id != knownManagerThreadId
+    }
+    internal fun openManagerPage() { managerPageVisible = true; refreshManager() }
+    internal fun closeManagerPage() { managerPageVisible = false }
+    internal fun openManagerChat() {
+        val id = managerOverview?.threadId.orEmpty().ifBlank { knownManagerThreadId }
+        if (id.isBlank()) return
+        if (threads.none { it.id == id }) upsert(CodexThread(id, "任务管家", serverRole = "manager"))
+        managerPageVisible = false
+        openThread(id)
+    }
+    internal fun openManagerTask(event: ManagerEvent) {
+        if (threads.none { it.id == event.threadId }) upsert(CodexThread(event.threadId, event.title))
+        managerPageVisible = false
+        openThread(event.threadId)
+    }
+    internal fun refreshManager(loadMore: Boolean = false) {
+        val connection = client?.takeIf { connected } ?: run {
+            managerError = "当前离线，连接后可刷新管家记录。"; return
+        }
+        if (managerLoading) return
+        val cursor = if (loadMore) managerOverview?.nextCursor.orEmpty() else ""
+        if (loadMore && cursor.isBlank()) return
+        val generation = ++managerRequestGeneration
+        managerLoading = true; managerError = ""
+        viewModelScope.launch {
+            try {
+                val result = connection.managerOverview(cursor)
+                if (client !== connection || !connected || generation != managerRequestGeneration) return@launch
+                managerOverview = if (loadMore && result.available) result.copy(entries =
+                    (managerOverview?.entries.orEmpty() + result.entries).distinctBy { it.id }) else result
+                if (result.threadId.isNotBlank()) {
+                    knownManagerThreadId = result.threadId
+                    settings.edit().putString("manager.threadId", result.threadId).apply()
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (client === connection) managerError = "读取管家记录失败，请刷新或重新连接。"
+            } finally {
+                if (generation == managerRequestGeneration) managerLoading = false
+            }
+        }
+    }
     var activeId by mutableStateOf<String?>(null)
         private set
     var openingThreadId by mutableStateOf<String?>(null)
@@ -738,8 +792,15 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     private val recovery = ConnectionRecovery()
     private var connectionJob: Job? = null
     private var synchronizationJob: Job? = null
-    private var threadPreloadJob: Job? = null
-    private var threadPreloadConnection: SshCodexClient? = null
+    private val runningConversationRecovery = RunningConversationRecovery(
+        settings.getStringSet("sync.pendingRunningThreadIds", emptySet()).orEmpty().toSet(),
+        settings.getStringSet("sync.runningAtLeaveThreadIds", emptySet()).orEmpty().toSet()
+    ) { ids -> settings.edit().putStringSet("sync.pendingRunningThreadIds", ids).apply() }
+    private val threadPreloads = ConversationPreloadQueue<SshCodexClient>(viewModelScope,
+        isCurrent = { client === it && connected && it.isAlive() },
+        load = { connection, id -> preloadThread(connection, id) })
+    private val runningThreadDiscovery = BackgroundThreadDiscovery<SshCodexClient>(viewModelScope,
+        now = ::connectionTime, isCurrent = { client === it && connected && it.isAlive() })
     private var lastForegroundSyncAt = Long.MIN_VALUE
     private var threadOpenJob: Job? = null
     private var reconnectJob: Job? = null
@@ -776,7 +837,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             model = cached.model
             activeId = cached.lastThreadId?.takeIf { id -> cached.threads.any { it.id == id } }
             hasCachedSession = cached.threads.isNotEmpty() || cached.messages.isNotEmpty()
-            cached.threads.filter { it.running }.forEach { thread ->
+            val cachedRunning = cached.threads.filter { it.running }
+            runningConversationRecovery.remember(cachedRunning.map { it.id })
+            cachedRunning.forEach { thread ->
                 runningSince[thread.id] = System.currentTimeMillis()
                 TaskRecoveryScheduler.enqueue(application, thread.id, thread.cwd.ifBlank { cwd })
             }
@@ -830,6 +893,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             localThreadIds.remove(id)
             localEmptyThreads.remove(id)
             readyThreadIds.remove(id)
+            runningConversationRecovery.forget(id)
+            settings.edit().putStringSet("sync.runningAtLeaveThreadIds",
+                settings.getStringSet("sync.runningAtLeaveThreadIds", emptySet()).orEmpty() - id).apply()
             threads.removeAll { it.id == id }
             messages.remove(id)
             running.remove(id)
@@ -925,9 +991,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resetActions() {
-        threadPreloadJob?.cancel()
-        threadPreloadJob = null
-        threadPreloadConnection = null
+        threadPreloads.cancel()
+        runningThreadDiscovery.cancel()
         sideChatSessions.clear()
         actions.cancel()
         actions = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
@@ -1086,6 +1151,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         val restore = activeId
         val selectionGeneration = threadSelectionGeneration
         synchronizing = true
+        refreshManager()
         synchronizationJob = viewModelScope.launch {
             try {
                 // Conversation status drives the sidebar, so don't make it wait for
@@ -1158,6 +1224,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             val wasRunning = it.id in running
             val previousTurnId = running[it.id]
             if (it.running) {
+                runningConversationRecovery.remember(listOf(it.id))
                 running[it.id] = running[it.id] ?: it.turnId
                 runningSince.putIfAbsent(it.id, System.currentTimeMillis())
                 if (it.turnId.isNotBlank()) latestTurnIds[it.id] = it.turnId
@@ -1169,14 +1236,20 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun refreshThreadListInBackground(connection: SshCodexClient, skipHydration: Set<String> = emptySet()) {
-        viewModelScope.launch {
+    private fun refreshThreadListInBackground(
+        connection: SshCodexClient,
+        skipHydration: Set<String> = emptySet(),
+        force: Boolean = true
+    ) {
+        runningThreadDiscovery.request(connection, force) {
             val revisions = threadReads.snapshot()
             runCatching { connection.listThreads() }
                 .onSuccess { rows ->
                     if (client === connection && connected) {
                         replaceThreads(rows, revisions = revisions)
                         updateRunningThreads(rows, revisions)
+                        // replaceThreads retains activity newer than this list read.
+                        runningConversationRecovery.retainVisible(threads.mapTo(mutableSetOf()) { it.id })
                         scheduleThreadPreload(connection, rows, skipHydration)
                     }
                 }
@@ -1185,9 +1258,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Hydrate the newest conversations and active task windows serially. A single resume can
-     * fetch the initial turns page, so keeping this queue bounded prevents background sync from
-     * flooding the app-server while still making the newest five conversations immediately usable.
+     * Running and previously running conversations take priority over the newest five.
+     * The serial queue merges arrivals while a read is suspended instead of dropping them.
      */
     private fun scheduleThreadPreload(
         connection: SshCodexClient,
@@ -1195,48 +1267,33 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         skipHydration: Set<String> = emptySet()
     ) {
         if (client !== connection || !connected) return
-        val ids = (rows.take(RECENT_THREAD_PRELOAD_LIMIT).map { it.id } +
-            rows.asSequence().filter { it.running }.map { it.id })
-            .distinct()
+        val ids = runningConversationRecovery.candidates(rows, RECENT_THREAD_PRELOAD_LIMIT)
             .filter { id ->
                 id.isNotBlank() && id !in skipHydration && id != activeId &&
-                    id !in readyThreadIds && id != openingThreadId && !threadReads.isArchived(id)
+                    (id !in readyThreadIds || runningConversationRecovery.contains(id) && id !in running) &&
+                    id != openingThreadId && !threadReads.isArchived(id)
             }
-        if (ids.isEmpty()) return
-        if (threadPreloadJob?.isActive == true) {
-            if (threadPreloadConnection === connection) return
-            threadPreloadJob?.cancel()
-        }
-        threadPreloadConnection = connection
-        threadPreloadJob = viewModelScope.launch {
-            preloadThreads(connection, ids)
-        }.also { job ->
-            job.invokeOnCompletion {
-                if (threadPreloadJob === job) {
-                    threadPreloadJob = null
-                    threadPreloadConnection = null
-                }
-            }
-        }
+        threadPreloads.enqueue(connection, ids)
     }
 
-    private suspend fun preloadThreads(connection: SshCodexClient, ids: List<String>) {
-        ids.distinct().forEach { id ->
-            if (client !== connection || !connected || !connection.isAlive()) return
-            if (id in readyThreadIds || openingThreadId == id) return@forEach
-            try {
-                val saved = savedExecution(id)
-                val revision = threadReads.revision(id)
-                val result = connection.resumeThread(id, if (hasPendingExecution(id)) null else saved)
-                if (client !== connection || !connected || threadReads.isArchived(id)) return
-                if (id !in readyThreadIds) readyThreadIds += id
-                val fallback = saved ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
-                if (!hasPendingExecution(id)) threadExecution[id] = executionOptions(result, fallback)
-                applySnapshot(result, revision)
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                android.util.Log.w("MobileSync", "后台预加载进行中任务失败", e)
-            }
+    private suspend fun preloadThread(connection: SshCodexClient, id: String) {
+        if (client !== connection || !connected || !connection.isAlive() || threadReads.isArchived(id)) return
+        if (openingThreadId == id || activeId == id) return
+        val alreadyReady = id in readyThreadIds
+        if (alreadyReady && (!runningConversationRecovery.contains(id) || id in running)) return
+        try {
+            val saved = savedExecution(id)
+            val revision = threadReads.revision(id)
+            val result = if (alreadyReady) connection.readThread(id)
+                else connection.resumeThread(id, if (hasPendingExecution(id)) null else saved)
+            if (client !== connection || !connected || threadReads.isArchived(id)) return
+            if (id !in readyThreadIds) readyThreadIds += id
+            val fallback = saved ?: ExecutionOptions(cwd, defaultMode, defaultReasoningEffort)
+            if (!hasPendingExecution(id)) threadExecution[id] = executionOptions(result, fallback)
+            applySnapshot(result, revision)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            android.util.Log.w("MobileSync", "后台预加载进行中任务失败", e)
         }
     }
 
@@ -1269,10 +1326,13 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             handleEvent(JSONObject().put("localError", if (networkChanged) "网络已切换，正在恢复连接" else "连接已失效，正在恢复连接"))
         } else if (!connected && connectionJob?.isActive != true) {
             scheduleReconnect()
+        } else if (connected) {
+            client?.let { refreshThreadListInBackground(it, force = false) }
         }
     }
 
     fun disconnect() {
+        runningConversationRecovery.remember(running.keys.toList())
         resetActions()
         flushAllAgentDeltas()
         reconnectJob?.cancel()
@@ -1361,6 +1421,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         messages[row.id] = merged
         if (applyActivity && activeId == row.id && displayRow.turnId.isBlank()) maybeGenerateThreadTitle(row.id)
         if (applyActivity) {
+            runningConversationRecovery.hydrated(row.id, row.running)
             (history.lastOrNull { it.turnId.isNotBlank() }?.turnId
                 ?: old.lastOrNull { it.turnId.isNotBlank() }?.turnId)
                 ?.let { latestTurnIds[row.id] = it }
@@ -1532,6 +1593,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openThread(id: String) {
+        managerPageVisible = false
         if (threadReads.isArchived(id)) return
         model = settings.getString("thread.$id.nextModel", null)
             ?: threads.firstOrNull { it.id == id }?.model?.takeIf { it.isNotBlank() } ?: model
@@ -2079,6 +2141,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         if (client !== connection || !connected) return@operation
         replaceThreads(rows, revisions = revisions)
         updateRunningThreads(rows, revisions)
+        runningConversationRecovery.retainVisible(threads.mapTo(mutableSetOf()) { it.id })
+        scheduleThreadPreload(connection, rows, skipHydration = setOfNotNull(selectedId))
         selectedId?.takeIf { it in listedThreadIds }?.let {
             val revision = threadReads.revision(it)
             val result = connection.readThread(it)
@@ -2122,6 +2186,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onForeground() {
         inForeground = true
+        runningConversationRecovery.remember(settings.getStringSet("sync.runningAtLeaveThreadIds", emptySet()).orEmpty().toList())
         foregroundStartedAt = System.nanoTime()
         foregroundGeneration++
         if (connectionJob?.isActive == true) return
@@ -2194,6 +2259,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onBackground() {
         inForeground = false
+        val runningAtLeave = running.keys.toSet()
+        settings.edit().putStringSet("sync.runningAtLeaveThreadIds", runningAtLeave).apply()
+        runningConversationRecovery.remember(runningAtLeave)
+        client?.takeIf { connected && it.isAlive() }?.let { refreshThreadListInBackground(it) }
         if (!ConnectionKeepAliveService.isActive()) {
             reconnectJob?.cancel()
             reconnectJob = null
@@ -2661,15 +2730,17 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     sharedFiles.isNotEmpty() -> "请阅读我分享的文件并按内容处理。"
                     else -> "请根据我选定的上下文完成任务。"
                 }
-                val queuedPrompt = listOf(raw.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
+                val userPrompt = listOf(raw.ifBlank { fallback }, videoPath?.let { "视频附件（原画质文件）：$it" },
                     remoteImages.takeIf { it.isNotEmpty() }?.let { paths ->
                         "手机图片（已保存至项目 codex/inbox；按顺序编号，@1、@2 等引用对应图片）：\n" +
                             paths.mapIndexed { index, path -> "@${index + 1}：$path" }.joinToString("\n")
                     },
                     remoteFiles.takeIf { it.isNotEmpty() }?.let { "手机分享的文件（位于项目 codex/inbox）：\n" + it.joinToString("\n") },
-                    references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" },
-                    workspaceApplicationContext(id, baseDirectory, workspaceMailboxPrefix).optJSONObject("andri-mobile-workspace")?.text("value"))
+                    references.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { "【上下文：${it.label}】\n${it.prompt}" })
                     .filterNotNull().filter(String::isNotBlank).joinToString("\n")
+                val queuedPrompt = queuedPromptWithWorkspaceContext(userPrompt,
+                    workspaceApplicationContext(id, baseDirectory, workspaceMailboxPrefix)
+                        .optJSONObject("andri-mobile-workspace")?.text("value").orEmpty())
                 recordChatDiagnostic("composer.queue.add.request", id, "", JSONObject()
                     .put("imageCount", attachments.size).put("hasVideo", video != null)
                     .put("sharedFileCount", sharedFiles.size).put("contextCount", references.size))
@@ -2880,7 +2951,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             if (delta.text.isEmpty()) return@forEach
             val current = messages[threadId].orEmpty()
             val updated = applyChatNotification(current, "item/agentMessage/delta", JSONObject()
-                .put("itemId", itemId).put("turnId", delta.turnId).put("delta", delta.text.toString()))
+                .put("itemId", itemId).put("turnId", delta.turnId).put("delta", delta.text.toString()).apply {
+                    delta.origin?.let { put("andriOrigin", it) }
+                })
             if (updated !== current) {
                 messages[threadId] = updated
                 changed = true
@@ -2895,6 +2968,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun handleEvent(event: JSONObject) {
         if (event.has("localError")) {
+            runningConversationRecovery.remember(running.keys.toList())
             resetActions()
             flushAllAgentDeltas()
             if (!reconnectOnForeground) (running.keys.toList() + listOfNotNull(activeId)).distinct().forEach { target ->
@@ -2997,7 +3071,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 "item/permissions/requestApproval", "item/tool/requestUserInput",
                 "execCommandApproval", "applyPatchApproval" -> {
                     if (requests.none { it.get("id").toString() == event.get("id").toString() }) requests += event
-                    if (id.isNotBlank()) messages[id] = upsertChat(messages[id].orEmpty(), requestChatLine(event))
+                    if (id.isNotBlank()) {
+                        val requestLine = requestChatLine(event)
+                        val fallbackTurnId = running[id].orEmpty().ifBlank { threads.firstOrNull { it.id == id }?.turnId.orEmpty() }
+                        messages[id] = upsertChat(messages[id].orEmpty(), requestLine.copy(
+                            turnId = requestLine.turnId.ifBlank { fallbackTurnId }))
+                    }
                 }
                 "mcpServer/elicitation/request" -> {
                     reportChatError("MCP 表单暂不支持，已拒绝本次请求", "表单请求未处理", id)
@@ -3022,8 +3101,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         if (method == "item/agentMessage/delta" && id.isNotBlank() && eventItemId.isNotBlank()) {
             val pending = bufferedAgentDeltas.getOrPut(id) { linkedMapOf() }
             val delta = pending[eventItemId]
-            if (delta == null) pending[eventItemId] = BufferedAgentDelta(eventTurnId, StringBuilder(params.text("delta")))
-            else delta.text.append(params.text("delta"))
+            if (delta == null) pending[eventItemId] = BufferedAgentDelta(eventTurnId, StringBuilder(params.text("delta")), params.optJSONObject("andriOrigin"))
+            else {
+                delta.text.append(params.text("delta"))
+                params.optJSONObject("andriOrigin")?.let { delta.origin = it }
+            }
             if (agentDeltaFlushJobs[id]?.isActive != true) {
                 agentDeltaFlushJobs[id] = viewModelScope.launch {
                     delay(32)
@@ -3046,7 +3128,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val requestId = params.opt("requestId")?.toString().orEmpty()
                 requests.firstOrNull { it.get("id").toString() == requestId }?.let { request ->
                     val threadId = request.optJSONObject("params")?.text("threadId").orEmpty()
-                    if (threadId.isNotBlank()) messages[threadId] = upsertChat(messages[threadId].orEmpty(), requestChatLine(request).copy(status = "resolved"))
+                    if (threadId.isNotBlank()) {
+                        val line = requestChatLine(request)
+                        val previous = messages[threadId].orEmpty().firstOrNull { it.id == line.id }
+                        messages[threadId] = upsertChat(messages[threadId].orEmpty(), line.copy(
+                            turnId = line.turnId.ifBlank { previous?.turnId.orEmpty() }, status = "resolved"))
+                    }
                 }
                 requests.removeAll { it.get("id").toString() == requestId }
                 requestAnswers.remove(requestId)
@@ -3065,6 +3152,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 if (!hasPendingExecution(id)) threadExecution[id] = executionOptions(updated, fallback)
             }
             "thread/status/changed" -> if (params.optJSONObject("status")?.text("type") == "active") {
+                runningConversationRecovery.remember(listOf(id))
                 if (id !in running) {
                     running[id] = ""
                     runningSince.putIfAbsent(id, System.currentTimeMillis())
@@ -3081,6 +3169,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 } }
             }
             "turn/started" -> {
+                runningConversationRecovery.remember(listOf(id))
                 val turnId = params.optJSONObject("turn")?.text("id").orEmpty().ifBlank { eventTurnId }
                 val hasRequest = hasRecentMobileTurnRequest(id)
                 recordChatDiagnostic("turn.started", id, turnId)
@@ -3109,8 +3198,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val status = turn?.text("status").orEmpty()
                 val completedTurnId = turn?.text("id").orEmpty()
                 TaskRecoveryScheduler.enqueue(getApplication(), id, threads.firstOrNull { it.id == id }?.cwd ?: cwd, delaySeconds = 0)
-                if (status == "completed") maybeGenerateThreadTitle(id)
-                if (status in setOf("completed", "failed", "interrupted", "cancelled")) {
+                val automated = params.optJSONObject("andriOrigin")?.text("kind").orEmpty().startsWith("monitor_") ||
+                    messages[id].orEmpty().any { it.turnId == completedTurnId && it.isMonitorActivity }
+                if (status == "completed" && !automated) maybeGenerateThreadTitle(id)
+                if (!automated && status in setOf("completed", "failed", "interrupted", "cancelled")) {
                     val threadTitle = threads.firstOrNull { it.id == id }?.title ?: "Andri 任务"
                     val detail = turn?.optJSONObject("error")?.text("message").orEmpty().take(180)
                     val notification = TaskNotifications.complete(getApplication(), id, completedTurnId, status,
@@ -3242,13 +3333,18 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val threadId = request.optJSONObject("params")?.text("threadId").orEmpty()
                 if (threadId.isNotBlank()) {
                     val line = requestChatLine(request)
+                    val previous = messages[threadId].orEmpty().firstOrNull { it.id == line.id }
                     val summary = if (method == "item/tool/requestUserInput") {
                         val questions = request.optJSONObject("params")?.optJSONArray("questions") ?: JSONArray()
                         (0 until questions.length()).mapNotNull { i -> questions.optJSONObject(i)?.let { question ->
                             question.text("question") + "\n" + if (question.optBoolean("isSecret")) "已提交保密回答" else answers[question.text("id")].orEmpty()
                         } }.joinToString("\n\n")
                     } else line.text
-                    messages[threadId] = upsertChat(messages[threadId].orEmpty(), line.copy(text = summary,
+                    messages[threadId] = upsertChat(messages[threadId].orEmpty(), line.copy(
+                        turnId = line.turnId.ifBlank { previous?.turnId.orEmpty() }, text = summary,
+                        answers = if (method == "item/tool/requestUserInput") line.questions.mapIndexed { index, question ->
+                            if (question.secret) "已提交保密回答" else answers[lineQuestionId(request, index)].orEmpty()
+                        } else emptyList(),
                         status = if (method == "item/tool/requestUserInput") "answered" else if (approved) "approved" else "declined"))
                 }
                 requests.removeAll { it.get("id").toString() == request.get("id").toString() }
@@ -3262,6 +3358,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             } finally { if (client === connection) respondingRequests.remove(requestId) }
         }
     }
+
+    private fun lineQuestionId(request: JSONObject, index: Int): String =
+        request.optJSONObject("params")?.optJSONArray("questions")?.optJSONObject(index)?.text("id").orEmpty()
 
     fun sendQuestionAnswers(line: ChatLine, answers: List<String>, skip: Boolean = false) {
         val id = activeId ?: return
@@ -3306,6 +3405,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         reconnectJob?.cancel()
         connectionJob?.cancel()
         synchronizationJob?.cancel()
+        threadPreloads.cancel()
+        runningThreadDiscovery.cancel()
         client?.setServerMessageHandler { }
     }
 }

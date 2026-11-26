@@ -25,7 +25,7 @@ internal val ChatLine.isReasoningSummary: Boolean
 
 // Keep empty protocol items for incoming deltas, but never allocate a visible row for them.
 internal fun visibleChatLines(lines: List<ChatLine>): List<ChatLine> =
-    lines.filterNot { line ->
+    managerChatLines(lines).filterNot { line ->
         (line.isReasoningSummary && line.text.isBlank()) ||
             (line.role == "assistant" && line.text.isBlank() &&
                 line.images.isEmpty() && line.questions.isEmpty())
@@ -38,6 +38,9 @@ internal data class ProcessTimelineEntry(
 )
 
 internal data class ProcessStepGroup(val type: String, val items: List<ChatLine>)
+
+internal fun isInlineUserInputRequest(line: ChatLine): Boolean =
+    line.role == "request" && line.stage == "等待你的回答"
 
 internal fun processStepType(item: ChatLine): String {
     if (item.role == "assistant") return item.stage.ifBlank { "进度说明" }
@@ -124,7 +127,7 @@ internal fun processTimelineEntries(items: List<ChatLine>): List<ProcessTimeline
     return entries
 }
 
-/** One expanded answer per turn; preceding commentary and tools share a folded record.
+/** One expanded answer per turn; preceding commentary, tools and in-thread questions share a folded record.
  * Older servers omit phase, so their last non-commentary message is the answer. */
 internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: String?, threadRunning: Boolean): List<ChatLine> {
     val turns = lines.withIndex().filter { it.value.turnId.isNotBlank() }.groupBy { it.value.turnId }
@@ -135,7 +138,8 @@ internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: Stri
             ?: candidates.lastOrNull { it.value.phase != "commentary" })?.index
     }
     fun fold(index: Int, line: ChatLine): Boolean = line.turnId.isNotBlank() &&
-        (line.role == "tool" || line.role == "assistant" && line.questions.isEmpty() && answers[line.turnId] != index)
+        (line.role == "tool" || isInlineUserInputRequest(line) ||
+            line.role == "assistant" && line.questions.isEmpty() && answers[line.turnId] != index)
     val groups = lines.withIndex().filter { fold(it.index, it.value) }.groupBy { it.value.turnId }
     val firstIndices = groups.mapValues { (_, rows) -> rows.first().index }
     // Some server snapshots briefly report a running thread before the active turn
@@ -150,7 +154,9 @@ internal fun foldCompletedProcessLines(lines: List<ChatLine>, activeTurnId: Stri
             stage = "执行记录", status = when {
                 threadRunning && line.turnId == activeProcessTurnId -> "inProgress"
                 else -> groups.getValue(line.turnId).map { it.value.status }
-                    .firstOrNull { it in setOf("failed", "interrupted", "declined") } ?: "completed"
+                    .firstOrNull { it in setOf("failed", "interrupted", "declined") }
+                    ?: if (groups.getValue(line.turnId).any { isInlineUserInputRequest(it.value) && it.value.status == "pending" }) "pending"
+                    else "completed"
             },
             processItems = groups.getValue(line.turnId).map { it.value }
         ) else null
@@ -171,15 +177,31 @@ internal fun requestChatLine(request: JSONObject): ChatLine {
     val questions = params.optJSONArray("questions") ?: JSONArray()
     val text = if (input) (0 until questions.length()).mapNotNull { i -> questions.optJSONObject(i)?.text("question") }.joinToString("\n\n")
         else listOf(params.text("command"), params.text("reason"), params.text("cwd")).filter { it.isNotBlank() }.joinToString("\n")
+    val parsedQuestions = if (input) (0 until questions.length()).mapNotNull { i ->
+        val question = questions.optJSONObject(i) ?: return@mapNotNull null
+        val options = question.optJSONArray("options") ?: JSONArray()
+        ChatQuestion(question.text("question"),
+            (0 until options.length()).mapNotNull { options.optJSONObject(it)?.text("label") },
+            (0 until options.length()).mapNotNull { options.optJSONObject(it)?.text("description") },
+            question.optBoolean("isSecret"))
+    } else emptyList()
     return ChatLine("request", text, "request:" + request.opt("id"), params.text("turnId"),
-        stage = if (input) "等待你的回答" else "请求执行审批", status = "pending")
+        stage = if (input) "等待你的回答" else "请求执行审批", status = "pending", questions = parsedQuestions)
 }
 
 /** Shared by the live event path and regression checks; history uses parseChatItem. */
 internal fun applyChatNotification(current: List<ChatLine>, method: String, params: JSONObject): List<ChatLine> {
     val turnId = params.text("turnId")
     val itemId = params.text("itemId")
-    fun put(line: ChatLine) = upsertChat(current, line.copy(turnId = turnId))
+    fun put(line: ChatLine): List<ChatLine> {
+        val source = params.optJSONObject("andriOrigin")
+        val previous = current.firstOrNull { it.id == line.id }
+            ?: current.firstOrNull { it.turnId == turnId && it.isMonitorActivity && line.role != "user" }
+        return upsertChat(current, line.copy(turnId = turnId,
+            origin = line.origin.ifBlank { source?.text("kind").orEmpty().ifBlank { previous?.origin.orEmpty() } },
+            originSummary = line.originSummary.ifBlank { source?.text("summary").orEmpty().ifBlank { previous?.originSummary.orEmpty() } },
+            monitorEventId = line.monitorEventId.ifBlank { source?.text("eventId").orEmpty().ifBlank { previous?.monitorEventId.orEmpty() } }))
+    }
     return when (method) {
         "item/started", "item/completed" -> {
             val item = params.optJSONObject("item") ?: return current
@@ -229,8 +251,13 @@ internal fun applyChatNotification(current: List<ChatLine>, method: String, para
                 "plan:$turnId", stage = "执行计划", status = "inProgress", toolType = "plan"))
         }
         "turn/completed" -> current.map { line ->
-            if (line.turnId == params.optJSONObject("turn")?.text("id")) line.copy(streaming = false,
-                status = if (line.status == "inProgress") params.optJSONObject("turn")?.text("status").orEmpty() else line.status) else line
+            val turn = params.optJSONObject("turn")
+            val source = params.optJSONObject("andriOrigin") ?: turn?.optJSONObject("andriOrigin")
+            if (line.turnId == turn?.text("id")) line.copy(streaming = false,
+                status = if (line.status == "inProgress") turn.text("status") else line.status,
+                origin = line.origin.ifBlank { if (line.role != "user") source?.text("kind").orEmpty() else "" },
+                originSummary = line.originSummary.ifBlank { if (line.role != "user") source?.text("summary").orEmpty() else "" },
+                monitorEventId = line.monitorEventId.ifBlank { if (line.role != "user") source?.text("eventId").orEmpty() else "" }) else line
         }
         else -> current
     }

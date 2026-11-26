@@ -378,8 +378,9 @@ class MainActivity : ComponentActivity() {
                     }
                     workspacePage = true
                 }
-                BackHandler(enabled = vm.activeId != null) {
-                    if (workspacePage && workspaceTab == 5) {
+                BackHandler(enabled = vm.activeId != null || vm.managerPageVisible) {
+                    if (vm.managerPageVisible) vm.closeManagerPage()
+                    else if (workspacePage && workspaceTab == 5) {
                         if (previewSources.size > 1) previousWorkspacePreview() else closeWorkspacePreview()
                     } else if (workspacePage) workspacePage = false else vm.back()
                 }
@@ -388,12 +389,13 @@ class MainActivity : ComponentActivity() {
                         initialConversationResolved = true
                     } else if (!initialConversationResolved && vm.connected && !vm.synchronizing) {
                         initialConversationResolved = true
-                        vm.threads.maxByOrNull { it.updatedAt }?.let { vm.openThread(it.id) }
+                        vm.conversationThreads.maxByOrNull { it.updatedAt }?.let { vm.openThread(it.id) }
                     }
                 }
                 val destination = when {
                     !vm.connected && vm.connecting && vm.privateKey.isNotBlank() && vm.activeThread == null && !vm.hasCachedSession -> "connecting"
                     !vm.connected && vm.activeThread == null && !vm.hasCachedSession -> "connection"
+                    vm.managerPageVisible -> "manager"
                     vm.activeThread == null -> "empty-chat"
                     vm.openingThreadId != null || vm.threadOpenError.isNotBlank() -> "thread-loading"
                     workspacePage -> "workspace"
@@ -468,6 +470,7 @@ class MainActivity : ComponentActivity() {
                                     TextButton(vm::openHistory) { ActionLabel("history", "历史版本与恢复下载") }
                                 }
                                 screen == "connection" -> ConnectionScreen(vm, connect) { keyPicker.launch(arrayOf("*/*")) }
+                                screen == "manager" -> ManagerScreen(vm)
                                 screen == "empty-chat" -> EmptyChatScreen(vm)
                                 screen == "thread-loading" -> ThreadLoadingScreen(vm)
                                 screen == "workspace" -> chatState.SaveableStateProvider(page.key) {
@@ -500,7 +503,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 UpdateReminder(vm, enabled = destination == "chat" || destination == "empty-chat")
-                vm.requests.firstOrNull { it.get("id").toString() == vm.visibleRequestId }?.let { request -> key(request.get("id").toString()) { RequestDialog(vm, request) } }
+                vm.requests.firstOrNull { it.get("id").toString() == vm.visibleRequestId }?.let { request ->
+                    val requestParams = request.optJSONObject("params")
+                    val inlineCurrentQuestion = destination == "chat" && request.text("method") == "item/tool/requestUserInput" &&
+                        requestParams?.text("threadId") == vm.activeId
+                    if (!inlineCurrentQuestion) key(request.get("id").toString()) { RequestDialog(vm, request) }
+                }
                 val pendingWorkspaceOpen = vm.workspaceOpenRequests.firstOrNull { it.threadId != vm.activeId }
                 val pendingBrowserAction = vm.workspaceBrowserRequests.firstOrNull { it.threadId != vm.activeId }
                 if (pendingWorkspaceOpen != null || pendingBrowserAction != null) {
@@ -654,6 +662,7 @@ private fun LineIcon(name: String, modifier: Modifier = Modifier.size(20.dp), co
         "arrow-right" -> R.drawable.ic_material_arrow_forward
         "save" -> R.drawable.ic_material_save
         "copy" -> R.drawable.ic_content_copy
+        "manager" -> R.drawable.ic_manager_shield
         "bolt" -> R.drawable.ic_material_bolt
         "info" -> R.drawable.ic_material_info_outline
         else -> R.drawable.ic_material_info_outline
@@ -1546,9 +1555,9 @@ private fun ConnectionIndicator(vm: MobileViewModel, threadId: String? = null, m
 }
 
 @Composable
-private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (String) -> Unit, onNew: () -> Unit) {
+private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (String) -> Unit, onNew: () -> Unit, onManager: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
-    val matching = vm.threads.filter { thread ->
+    val matching = vm.conversationThreads.filter { thread ->
         query.isBlank() || thread.title.contains(query.trim(), ignoreCase = true) ||
             thread.model.contains(query.trim(), ignoreCase = true) ||
             vm.projectFor(thread.id).contains(query.trim(), ignoreCase = true)
@@ -1559,6 +1568,14 @@ private fun ThreadSidebar(vm: MobileViewModel, activeId: String, onSelect: (Stri
         drawerContentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Surface(onClick = onManager, color = Color.Transparent,
+                shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LineIcon("manager", Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("管家", fontSize = 14.sp)
+                }
+            }
             TextField(query, { query = it }, modifier = Modifier.fillMaxWidth().height(52.dp),
                 placeholder = { Text("搜索对话", fontSize = 13.sp) }, singleLine = true,
                 leadingIcon = { LineIcon("search", Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -1622,7 +1639,7 @@ private fun EmptyChatScreen(vm: MobileViewModel) {
                 scope.launch { drawerState.close(); vm.openThread(id) }
             }, onNew = {
                 scope.launch { drawerState.close(); vm.newThread() }
-            })
+            }, onManager = { scope.launch { drawerState.close(); vm.openManagerPage() } })
         }
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -1743,6 +1760,8 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
     val sourceMessages = vm.messages[thread.id].orEmpty()
     val visibleMessages = remember(sourceMessages) { visibleChatLines(sourceMessages) }
     val activeTurnId = vm.running[thread.id]
+    val monitorActiveTurnId = activeTurnId?.takeIf { it.isNotBlank() }
+        ?: if (running) sourceMessages.lastOrNull { it.turnId.isNotBlank() }?.turnId else null
     val messages = remember(visibleMessages, activeTurnId, running) {
         foldCompletedProcessLines(visibleMessages, activeTurnId, running)
     }
@@ -1881,7 +1900,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                         sidebarState.close()
                         vm.newThread()
                     }
-                })
+                }, onManager = { sidebarScope.launch { sidebarState.close(); vm.openManagerPage() } })
         }
     ) {
     val swipeTarget: (Float, Float, Float) -> (() -> Unit)? = { _, _, delta ->
@@ -1910,8 +1929,12 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
             AppMenu(vm, thread, enterWorkspace)
         }
         ErrorText(vm.error)
-        if (vm.requests.isNotEmpty()) TextButton({ vm.openPendingRequest() }) {
-            Text("待处理问答与审批 · ${vm.requests.size} 项", fontSize = 12.sp)
+        val requestsForDialog = vm.requests.filterNot { request ->
+            request.text("method") == "item/tool/requestUserInput" &&
+                request.optJSONObject("params")?.text("threadId") == thread.id
+        }
+        if (requestsForDialog.isNotEmpty()) TextButton({ vm.openPendingRequest(requestsForDialog.first().get("id").toString()) }) {
+            Text("待处理问答与审批 · ${requestsForDialog.size} 项", fontSize = 12.sp)
         }
         val queuedTasks = vm.queuedTasks[thread.id].orEmpty()
         var queueExpanded by rememberSaveable(thread.id) { mutableStateOf(false) }
@@ -1953,6 +1976,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                         fadeOutSpec = tween(130)).fillMaxWidth().padding(top = 24.dp)) {
                         when (line.role) {
                             "error" -> TimelineError(line)
+                            "monitor" -> MonitorFollowupRecord(line, thread, vm, running && line.turnId == monitorActiveTurnId, ::openChatLink)
                             "thought" -> TimelineOutput(line, vm, ::openChatLink)
                             "tool", "request" -> TimelineOutput(line, vm, ::openChatLink)
                             "user" -> BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -1961,8 +1985,9 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                                     Column(Modifier.padding(horizontal = 17.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         val base = thread.cwd.ifBlank { vm.cwd }
-                                        val sources = remember(line.text, line.images, base) { userMessageImageSources(line.text, line.images, base) }
-                                        if (line.text.isNotBlank()) ChatMarkdown(line.text, vm, base, ::openChatLink, excludedImages = sources.toSet())
+                                        val displayText = remember(line.text) { userMessageDisplayText(line.text) }
+                                        val sources = remember(displayText, line.images, base) { userMessageImageSources(displayText, line.images, base) }
+                                        if (displayText.isNotBlank()) ChatMarkdown(displayText, vm, base, ::openChatLink, excludedImages = sources.toSet())
                                         if (sources.isNotEmpty()) ChatImageGallery(sources, vm, base, thumbnailSize = if (sources.size == 1) 112.dp else 76.dp)
                                     }
                                 }
@@ -4129,71 +4154,86 @@ private const val MAX_LINKED_IMAGE_CACHE_BYTES = 100L * 1024 * 1024
 @Composable
 private fun TimelineOutput(line: ChatLine, vm: MobileViewModel, onOpenLink: (String) -> Unit) {
     val running = line.status == "inProgress" || line.status == "pending"
-    var expanded by rememberSaveable(line.id, running) { mutableStateOf(running) }
+    val activityItems = line.processItems.ifEmpty { listOf(line).filter(::isInlineUserInputRequest) }
+    val pendingQuestion = activityItems.any { isInlineUserInputRequest(it) && it.status == "pending" }
+    val answeredQuestion = activityItems.any { isInlineUserInputRequest(it) && it.status != "pending" }
+    var expanded by rememberSaveable(line.id) { mutableStateOf(running || pendingQuestion) }
     val processEntries = remember(line.processItems) { processTimelineEntries(line.processItems) }
     val pending = vm.requests.firstOrNull { "request:" + it.opt("id") == line.id }
     val status = when (line.status) {
-        "pending" -> "待处理"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
+        "pending" -> "等待回答"; "inProgress" -> "进行中"; "failed" -> "失败"; "declined" -> "已拒绝"
         "answered" -> "已回答"; "approved" -> "已批准"; "interrupted" -> "已中断"; "resolved" -> "已处理"; else -> "已完成"
     }
     val statusSummary = if (running && line.processItems.any { it.status == "failed" }) "$status · 有失败项" else status
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(17.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.fillMaxWidth()) {
-            Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Box(Modifier.size(27.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                        contentAlignment = Alignment.Center) {
-                        if (running) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.7.dp,
-                            color = MaterialTheme.colorScheme.primary)
-                        else LineIcon(if (line.status == "failed") "close" else if (line.status == "interrupted") "stop" else "check",
-                            Modifier.size(15.dp), if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(line.stage.takeIf { it.isNotBlank() } ?: "执行过程",
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${processEntries.sumOf { it.items.size }} 个步骤 · $statusSummary", fontSize = 12.sp,
-                            color = if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
-                        MaterialTheme.colorScheme.onSurfaceVariant)
+    val stepCount = activityItems.count { !isInlineUserInputRequest(it) }
+    val questionSummary = when {
+        pendingQuestion && line.status != "pending" -> "等待回答"
+        pendingQuestion -> null
+        answeredQuestion -> "已记录回答"
+        else -> null
+    }
+    val headerSummary = listOfNotNull("$stepCount 个步骤", questionSummary, statusSummary).joinToString(" · ")
+    LaunchedEffect(line.id, pendingQuestion) { if (pendingQuestion) expanded = true }
+    Column(Modifier.fillMaxWidth()) {
+        Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(25.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                    contentAlignment = Alignment.Center) {
+                    if (running) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.7.dp,
+                        color = MaterialTheme.colorScheme.primary)
+                    else LineIcon(if (line.status == "failed") "close" else if (line.status == "interrupted") "stop" else "check",
+                        Modifier.size(15.dp), if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
                 }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(line.stage.takeIf { it.isNotBlank() } ?: "执行过程",
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(headerSummary, fontSize = 12.sp,
+                        color = if (line.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LineIcon("chevron", Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+                    MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
-                    .padding(horizontal = 15.dp, vertical = 14.dp)) {
-                    androidx.compose.foundation.text.selection.DisableSelection {
-                        if (processEntries.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                                var commandNumber = 0
-                                processEntries.forEach { entry ->
-                                    if (entry.progress) {
-                                        TimelineProgressSegment(entry.items, vm, onOpenLink)
-                                    } else {
-                                        groupProcessSteps(entry.items).forEach { group ->
-                                            val firstNumber = commandNumber + 1
-                                            commandNumber += group.items.size
-                                            if (group.items.size > 1) {
-                                                TimelineProcessGroup(group, firstNumber, vm, onOpenLink)
-                                            } else {
-                                                TimelineProcessItem(group.items.single(), firstNumber, vm, onOpenLink, collapsible = true)
+        }
+        AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 2.dp)) {
+                androidx.compose.foundation.text.selection.DisableSelection {
+                    if (isInlineUserInputRequest(line)) {
+                        TimelineRequestOptionsCard(vm, line, pending)
+                    } else if (processEntries.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                            var commandNumber = 0
+                            processEntries.forEach { entry ->
+                                if (entry.progress) {
+                                    TimelineProgressSegment(entry.items, vm, onOpenLink)
+                                } else {
+                                    groupProcessSteps(entry.items).forEach { group ->
+                                        val firstNumber = commandNumber + 1
+                                        commandNumber += group.items.count { !isInlineUserInputRequest(it) }
+                                        if (group.items.all(::isInlineUserInputRequest)) {
+                                            group.items.forEach { question ->
+                                                TimelineRequestOptionsCard(vm, question,
+                                                    vm.requests.firstOrNull { "request:" + it.opt("id") == question.id })
                                             }
+                                        } else if (group.items.size > 1) {
+                                            TimelineProcessGroup(group, firstNumber, vm, onOpenLink)
+                                        } else {
+                                            TimelineProcessItem(group.items.single(), firstNumber, vm, onOpenLink, collapsible = true)
                                         }
                                     }
                                 }
                             }
-                        } else if (line.text.isNotBlank()) {
-                            if (line.isReasoningSummary) MarkdownMessage(line.text, onOpenLink, selectable = false)
-                            else Text(truncateChatText(line.text) +
-                                if (line.text.codePointCount(0, line.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
-                                Modifier.fillMaxWidth(), fontSize = 12.sp, lineHeight = 20.sp,
-                                fontFamily = if (line.role == "tool") FontFamily.Monospace else FontFamily.Default)
                         }
+                    } else if (line.text.isNotBlank()) {
+                        if (line.isReasoningSummary) MarkdownMessage(line.text, onOpenLink, selectable = false)
+                        else Text(truncateChatText(line.text) +
+                            if (line.text.codePointCount(0, line.text.length) > MAX_MARKDOWN_RENDER_CHARS) "\r\n\r\n…内容过长，已截断显示。" else "",
+                            Modifier.fillMaxWidth(), fontSize = 12.sp, lineHeight = 20.sp,
+                            fontFamily = if (line.role == "tool") FontFamily.Monospace else FontFamily.Default)
                     }
-                    if (pending != null) TextButton({ vm.openPendingRequest(pending.get("id").toString()) }) {
-                        Text("处理此问答或审批", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-                    }
+                }
+                if (pending != null && !isInlineUserInputRequest(line)) TextButton({ vm.openPendingRequest(pending.get("id").toString()) }) {
+                    Text("处理此问答或审批", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 }
             }
         }
@@ -4415,6 +4455,122 @@ private fun QuestionFields(title: String, options: List<Pair<String, String>>, v
                 shape = RoundedCornerShape(12.dp), textStyle = MaterialTheme.typography.bodyMedium,
                 minLines = 1, maxLines = 4,
                 visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
+        }
+    }
+}
+
+@Composable
+private fun TimelineRequestOptionsCard(vm: MobileViewModel, line: ChatLine, request: JSONObject?) {
+    val answered = line.status != "pending"
+    val requestId = request?.opt("id")?.toString().orEmpty()
+    val params = request?.optJSONObject("params")
+    val requestQuestions = params?.optJSONArray("questions")
+    val count = requestQuestions?.length() ?: line.questions.size
+    val answers = vm.requestAnswers[requestId].orEmpty()
+    val responding = requestId in vm.respondingRequests
+    val canAnswer = request != null && !answered && !responding
+    val complete = count > 0 && (0 until count).all { index ->
+        val question = requestQuestions?.optJSONObject(index)
+        val questionId = question?.text("id").orEmpty().ifBlank { "question:$index" }
+        answers[questionId].orEmpty().isNotBlank()
+    }
+    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 17.dp),
+            verticalArrangement = Arrangement.spacedBy(15.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                if (answered) {
+                    Box(Modifier.size(29.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center) {
+                        LineIcon("check", Modifier.size(16.dp), MaterialTheme.colorScheme.secondary)
+                    }
+                } else {
+                    Box(Modifier.size(9.dp).background(MaterialTheme.colorScheme.secondary, CircleShape))
+                }
+                Text(if (answered) "已回答" else "请选择或填写", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f))
+                if (responding) SmallProgress("正在提交")
+            }
+            for (index in 0 until count) {
+                val requestQuestion = requestQuestions?.optJSONObject(index)
+                val savedQuestion = line.questions.getOrNull(index)
+                val questionId = requestQuestion?.text("id").orEmpty().ifBlank { "question:$index" }
+                val title = requestQuestion?.text("question").orEmpty().ifBlank { savedQuestion?.title.orEmpty() }
+                val secret = requestQuestion?.optBoolean("isSecret") ?: (savedQuestion?.secret == true)
+                val requestOptions = requestQuestion?.optJSONArray("options")
+                val options = if (requestOptions != null) buildList {
+                    for (optionIndex in 0 until requestOptions.length()) {
+                        val option = requestOptions.optJSONObject(optionIndex) ?: continue
+                        add(option.text("label") to option.text("description"))
+                    }
+                } else savedQuestion?.options.orEmpty().mapIndexed { optionIndex, label ->
+                    label to savedQuestion?.descriptions?.getOrNull(optionIndex).orEmpty()
+                }
+                val value = if (request != null && !answered) answers[questionId].orEmpty()
+                    else line.answers.getOrNull(index).orEmpty()
+                val selectedOption = options.indexOfFirst { it.first == value }
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text(title, fontSize = 15.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)
+                    options.forEachIndexed { optionIndex, (label, description) ->
+                        val selected = optionIndex == selectedOption
+                        Surface(onClick = { if (canAnswer) vm.setRequestAnswer(requestId, questionId, label) },
+                            enabled = canAnswer, shape = RoundedCornerShape(16.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                                else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                                else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp)
+                                .padding(horizontal = 13.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Box(Modifier.size(30.dp).background(
+                                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                    else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
+                                    if (selected) LineIcon("check", Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
+                                    else Text((optionIndex + 1).toString(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(label, fontSize = 14.sp, lineHeight = 20.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+                                    if (description.isNotBlank()) Text(description, fontSize = 12.sp, lineHeight = 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    if (answered) {
+                        when {
+                            secret && value.isNotBlank() -> Text("已提交保密回答", fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            value.isNotBlank() && selectedOption < 0 -> Surface(shape = RoundedCornerShape(13.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f), modifier = Modifier.fillMaxWidth()) {
+                                Text("你的回答\n$value", Modifier.padding(13.dp), fontSize = 13.sp, lineHeight = 19.sp)
+                            }
+                            value.isBlank() -> Text("未提供回答", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        val custom = value.takeIf { candidate -> options.none { it.first == candidate } }.orEmpty()
+                        OutlinedTextField(value = custom,
+                            onValueChange = { vm.setRequestAnswer(requestId, questionId, it) },
+                            enabled = canAnswer, modifier = Modifier.fillMaxWidth(),
+                            label = { Text(if (options.isEmpty()) "填写回答" else "输入其他答案") },
+                            shape = RoundedCornerShape(14.dp), minLines = 1, maxLines = 3,
+                            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
+                    }
+                }
+            }
+            ErrorText(if (requestId.isBlank()) "" else vm.requestErrors[requestId].orEmpty())
+            if (!answered) {
+                if (request == null) Text("该请求已离线，重新连接后才能提交。", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { request?.let { vm.respond(it, approved = true, answers = answers) } },
+                    enabled = canAnswer && complete, modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary)) {
+                    ActionLabel("send", "提交回答")
+                }
+            }
         }
     }
 }
@@ -4771,4 +4927,175 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
             }
         }
     )
+}
+
+@Composable
+private fun ManagerScreen(vm: MobileViewModel) {
+    val overview = vm.managerOverview
+    var filter by rememberSaveable { mutableStateOf("全部") }
+    LaunchedEffect(vm.connected) {
+        if (vm.connected) vm.refreshManager()
+        while (vm.connected) {
+            kotlinx.coroutines.delay(20_000)
+            if (vm.managerOverview?.entries.orEmpty().size <= 40) vm.refreshManager()
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(vm::closeManagerPage, Modifier.semantics { contentDescription = "返回对话" }) { LineIcon("back") }
+            Text("任务管家", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            IconButton({ vm.refreshManager() }, enabled = vm.connected && !vm.managerLoading,
+                modifier = Modifier.semantics { contentDescription = "刷新管家记录" }) {
+                if (vm.managerLoading) SmallProgress("正在刷新") else LineIcon("refresh")
+            }
+            TextButton(vm::openManagerChat, enabled = vm.connected && !overview?.threadId.isNullOrBlank()) {
+                ActionLabel("chat", "询问管家")
+            }
+        }
+        if (vm.managerError.isNotBlank()) Text(vm.managerError, Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+        if (overview?.available != true) {
+            Column(Modifier.fillMaxWidth().padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                LineIcon("manager", Modifier.size(36.dp), MaterialTheme.colorScheme.primary)
+                Text(if (vm.managerLoading) "正在读取管家记录…" else overview?.message?.ifBlank { "连接后可查看管家的工作记录。" }
+                    ?: "连接后可查看管家的工作记录。", fontSize = 14.sp)
+            }
+        } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item("manager-overview") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LineIcon("manager", Modifier.size(23.dp), MaterialTheme.colorScheme.primary)
+                        Text(when {
+                            !vm.connected -> "离线 · 显示上次读取的记录"
+                            overview.heartbeatAge > 120 -> "状态更新延迟"
+                            overview.enabled -> "正在关注服务器任务"
+                            else -> "自动监控已暂停"
+                        }, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        listOf("检查记录" to overview.recordCount, "已发起跟进" to overview.followupCount, "待处理" to overview.attentionCount).forEach { (label, count) ->
+                            Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(count.toString(), fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    Text("日常检查记录在这里。需要你决定的事项仍会提问，你也可以随时询问管家。", fontSize = 12.sp,
+                        lineHeight = 19.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("全部", "已跟进", "待处理").forEach { name ->
+                            FilterChip(selected = filter == name, onClick = { filter = name }, label = { Text(name, fontSize = 12.sp) })
+                        }
+                    }
+                }
+            }
+            val entries = overview.entries.filter { when (filter) {
+                "已跟进" -> it.phase == "followed_up"
+                "待处理" -> it.phase == "needs_attention"
+                else -> true
+            } }
+            items(entries, key = { "manager-event:${it.id}" }) { event -> ManagerEventCard(vm, event) }
+            if (entries.isEmpty()) item("manager-empty") {
+                Text(if (overview.entries.isEmpty()) "暂时没有工作记录。" else "当前已加载的记录中没有此类事项。",
+                    Modifier.padding(vertical = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            if (overview.nextCursor.isNotBlank()) item("manager-more") {
+                TextButton({ vm.refreshManager(loadMore = true) }, enabled = vm.connected && !vm.managerLoading,
+                    modifier = Modifier.fillMaxWidth()) { Text(if (vm.managerLoading) "正在读取…" else "查看更早记录") }
+            }
+            item("manager-boundary") {
+                Text("“本轮已关闭”表示管家结束了这次检查，不代表所有需求都已独立验收。",
+                    Modifier.padding(bottom = 20.dp), fontSize = 11.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagerEventCard(vm: MobileViewModel, event: ManagerEvent) {
+    var expanded by rememberSaveable(event.id) { mutableStateOf(false) }
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LineIcon(if (event.phase == "needs_attention") "info" else "manager", Modifier.size(17.dp), MaterialTheme.colorScheme.primary)
+                Text(monitorPhaseLabel(event.phase), Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                Text(remember(event.created) { java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(java.util.Date(event.created)) },
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(event.title.ifBlank { "未命名任务" }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(event.summary.ifBlank { "等待管家完成判断。" }, fontSize = 13.sp, lineHeight = 21.sp,
+                maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
+            if (event.outcome.isNotBlank()) Text("后续情况：${event.outcome}", fontSize = 12.sp, lineHeight = 20.sp,
+                maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
+            if (event.question.isNotBlank()) Text(event.question, fontSize = 13.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.primary)
+            AnimatedVisibility(expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (event.followup.isNotBlank()) {
+                        Text("跟进要求", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(event.followup, fontSize = 12.sp, lineHeight = 20.sp)
+                    }
+                    if (event.inspectionSummary.isNotBlank()) {
+                        Text("独立检查", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(event.inspectionSummary, fontSize = 12.sp, lineHeight = 20.sp)
+                        event.inspectionLimitations.forEach { Text(it, fontSize = 11.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    Text(if (event.evidenceLevel == "tool_observed") "依据包含工具执行记录，仍需区分实际验收范围。" else "现有结论主要依据任务汇报，尚不代表独立验收。",
+                        fontSize = 11.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton({ expanded = !expanded }, contentPadding = PaddingValues(end = 12.dp)) {
+                    ActionLabel(if (expanded) "chevron-up" else "chevron", if (expanded) "收起详情" else "查看详情", fontSize = 12.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton({ vm.openManagerTask(event) }) { Text("打开任务", fontSize = 12.sp) }
+                if (event.question.isNotBlank()) TextButton(vm::openManagerChat, enabled = vm.connected) { Text("前往处理", fontSize = 12.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonitorFollowupRecord(line: ChatLine, thread: CodexThread, vm: MobileViewModel, active: Boolean, onOpenLink: (String) -> Unit) {
+    var expanded by rememberSaveable(line.id) { mutableStateOf(false) }
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(15.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth()) {
+            Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
+                Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LineIcon("manager", Modifier.size(23.dp), MaterialTheme.colorScheme.primary)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("管家跟进", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            if (active) SmallProgress("进行中")
+                            else Text(when (line.status) { "failed" -> "遇到问题"; "interrupted" -> "已中断"; else -> "跟进记录" },
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(line.text, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 12.sp,
+                            lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    LineIcon(if (expanded) "chevron-up" else "chevron", Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            AnimatedVisibility(expanded) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    foldCompletedProcessLines(line.processItems, vm.running[thread.id], active).forEach { item ->
+                        when (item.role) {
+                            "user" -> {
+                                Text("跟进要求", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                ChatMarkdown(monitorFollowupText(item.text), vm, thread.cwd, onOpenLink)
+                            }
+                            "thought", "tool" -> TimelineOutput(item, vm, onOpenLink)
+                            else -> SmoothAssistantMessage(item, vm, onOpenLink, canCopy = !active && item.phase != "commentary")
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

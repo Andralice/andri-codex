@@ -25,10 +25,11 @@ import android.util.Base64
 data class CodexThread(
     val id: String, val title: String, val model: String = "",
     val running: Boolean = false, val turnId: String = "", val cwd: String = "",
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L, val serverRole: String = ""
 )
 data class CodexModel(val id: String, val reasoningEfforts: List<String>)
-data class ChatQuestion(val title: String, val options: List<String> = emptyList())
+data class ChatQuestion(val title: String, val options: List<String> = emptyList(),
+    val descriptions: List<String> = emptyList(), val secret: Boolean = false)
 data class QueuedSubmission(val id: String, val clientUserMessageId: String, val text: String)
 data class ImageUpload(val dataUrl: String, val label: String)
 internal const val MAX_CHAT_LINES_PER_PAGE = 500
@@ -58,7 +59,9 @@ internal suspend fun awaitWorkspaceSettingsConfirmation(updated: Deferred<JSONOb
 data class ChatLine(val role: String, val text: String, val id: String = "", val turnId: String = "",
     val stage: String = "", val afterId: String = "", val streaming: Boolean = false,
     val questions: List<ChatQuestion> = emptyList(), val status: String = "", val images: List<String> = emptyList(),
-    val processItems: List<ChatLine> = emptyList(), val phase: String = "", val toolType: String = "")
+    val processItems: List<ChatLine> = emptyList(), val phase: String = "", val toolType: String = "",
+    val origin: String = "", val originSummary: String = "", val monitorEventId: String = "",
+    val answers: List<String> = emptyList())
 // turn/start accepts UserInput, not the model provider's ContentItem wire format.
 internal fun userInput(
     prompt: String,
@@ -121,7 +124,7 @@ internal fun parseThread(row: JSONObject, model: String = ""): CodexThread {
         model,
         row.optJSONObject("status")?.text("type") == "active" || active != null,
         active?.text("id").orEmpty(), row.text("cwd"),
-        threadTimestamp(row.opt("updatedAt") ?: row.opt("updated_at"))
+        threadTimestamp(row.opt("updatedAt") ?: row.opt("updated_at")), row.text("andriRole")
     )
 }
 
@@ -183,7 +186,10 @@ internal fun parseChatItem(item: JSONObject): ChatLine? {
         val question = questions.optJSONObject(index) ?: return@mapNotNull null
         val options = question.optJSONArray("options") ?: JSONArray()
         ChatQuestion(question.text("title"), (0 until options.length()).map { options.optString(it) })
-    }, images = imageValues, phase = item.text("phase"))
+    }, images = imageValues, phase = item.text("phase"),
+        origin = item.optJSONObject("andriOrigin")?.text("kind").orEmpty(),
+        originSummary = item.optJSONObject("andriOrigin")?.text("summary").orEmpty(),
+        monitorEventId = item.optJSONObject("andriOrigin")?.text("eventId").orEmpty())
 }
 
 internal fun toolChatLine(item: JSONObject, output: String = "", completed: Boolean = true): ChatLine? {
@@ -220,7 +226,9 @@ internal fun toolChatLine(item: JSONObject, output: String = "", completed: Bool
             formatted("output"), output).filter { it.isNotBlank() }.joinToString("\n")
     }
     val status = item.text("status").ifBlank { if (completed) "completed" else "inProgress" }
-    return ChatLine("tool", detail, "tool:$id", stage = title, status = status, toolType = type)
+    return ChatLine("tool", detail, "tool:$id", stage = title, status = status, toolType = type, origin = item.optJSONObject("andriOrigin")?.text("kind").orEmpty(),
+        originSummary = item.optJSONObject("andriOrigin")?.text("summary").orEmpty(),
+        monitorEventId = item.optJSONObject("andriOrigin")?.text("eventId").orEmpty())
 }
 
 internal fun parseMessages(thread: JSONObject): List<ChatLine> {
@@ -240,7 +248,10 @@ internal fun parseMessages(thread: JSONObject): List<ChatLine> {
             for (j in items.length() - 1 downTo 0) {
                 if (newestFirst.size >= MAX_CHAT_LINES_PER_PAGE) { truncated = true; break@loop }
                 items.optJSONObject(j)?.let { item ->
-                    parseChatItem(item)?.let { if (it.text.isNotBlank() || it.images.isNotEmpty() || it.questions.isNotEmpty() || it.role == "tool") newestFirst.add(it.copy(turnId = turn.text("id"))) }
+                    parseChatItem(item)?.let { if (it.text.isNotBlank() || it.images.isNotEmpty() || it.questions.isNotEmpty() || it.role == "tool") newestFirst.add(it.copy(turnId = turn.text("id"),
+                        origin = it.origin.ifBlank { if (it.role != "user") turn.optJSONObject("andriOrigin")?.text("kind").orEmpty() else "" },
+                        originSummary = it.originSummary.ifBlank { if (it.role != "user") turn.optJSONObject("andriOrigin")?.text("summary").orEmpty() else "" },
+                        monitorEventId = it.monitorEventId.ifBlank { if (it.role != "user") turn.optJSONObject("andriOrigin")?.text("eventId").orEmpty() else "" })) }
                 }
             }
     }
@@ -457,6 +468,11 @@ class SshCodexClient(
             throw error
         }
     }
+
+    internal suspend fun managerOverview(cursor: String = ""): ManagerOverview =
+        parseManagerOverview(request("andri/monitor/overview", JSONObject().put("limit", 40).apply {
+            if (cursor.isNotBlank()) put("cursor", cursor)
+        }))
 
     suspend fun listThreads(firstPageOnly: Boolean = false): List<CodexThread> {
         val rows = mutableListOf<CodexThread>()
@@ -1556,7 +1572,7 @@ internal fun isSupportedImageBytes(bytes: ByteArray): Boolean =
             isSvgImage(bytes)
     )
 
-private fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
+internal fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
     val input = value.optJSONArray("input") ?: JSONArray()
     val text = (0 until input.length()).mapNotNull { i -> input.optJSONObject(i)?.takeIf { it.text("type") == "text" }?.text("text") }
         .joinToString("\n")
@@ -1565,7 +1581,7 @@ private fun parseQueuedSubmission(value: JSONObject): QueuedSubmission {
         type == "image" || type == "localImage"
     }
     return QueuedSubmission(value.text("id"), value.text("clientUserMessageId"),
-        text + if (hasImage) "  ·  图片" else "")
+        userMessageDisplayText(text) + if (hasImage) "  ·  图片" else "")
 }
 
 internal fun chronologicalTurns(page: JSONObject): JSONArray {

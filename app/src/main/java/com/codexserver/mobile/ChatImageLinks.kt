@@ -120,13 +120,18 @@ internal fun distinctChatImageSources(sources: List<String>, baseDirectory: Stri
 internal fun userMessageImageSources(text: String, attachments: List<String>, baseDirectory: String): List<String> =
     distinctChatImageSources(attachments + markdownImageDestinations(text) + plainWorkspaceImagePaths(text, baseDirectory), baseDirectory)
 
-private val uploadedImageNotice = Regex("""(?m)^[ \t]*(?:手机)?图片\s*[（(]已保存至项目\s*codex/inbox[)）][ \t]*[：:]?[ \t]*(?:\r?\n|$)""")
+private val uploadedImageNotice = Regex("""(?m)^[ \t]*(?:手机)?图片\s*[（(]已保存至项目\s*codex/inbox(?:；按顺序编号，@1、@2 等引用对应图片)?[)）][ \t]*[：:]?[ \t]*(?:\r?\n|$)""")
 
 /** Hide generated transport details in the view without changing the message sent to the model. */
 internal fun removePlainWorkspaceImagePaths(markdown: String, paths: List<String>, baseDirectory: String): String {
     if (paths.isEmpty()) return markdown
-    val withoutPaths = bareWorkspaceImagePath.replace(markdown) { match ->
-        if (isInsideMarkdownCode(markdown, match.range.first) || isUrlPathSuffix(markdown, match.range.first)) return@replace match.value
+    val numberedRows = Regex("""(?m)^[ \t]*@[1-9][0-9]*[：:][ \t]*(\S+)[ \t]*(?:\r?\n|$)""")
+    val withoutNumberedRows = numberedRows.replace(markdown) { match ->
+        val path = (chatLinkTarget(match.groupValues[1], baseDirectory) as? ChatLinkTarget.Workspace)?.path
+        if (path in paths && !isInsideMarkdownCode(markdown, match.range.first)) "" else match.value
+    }
+    val withoutPaths = bareWorkspaceImagePath.replace(withoutNumberedRows) { match ->
+        if (isInsideMarkdownCode(withoutNumberedRows, match.range.first) || isUrlPathSuffix(withoutNumberedRows, match.range.first)) return@replace match.value
         val raw = match.groupValues[1]
         val trimmed = raw.trimEnd('.', ',', ';', ':', '。', '，', '；', '：', ')', ']', '}')
         val path = (chatLinkTarget(trimmed, baseDirectory) as? ChatLinkTarget.Workspace)?.path
