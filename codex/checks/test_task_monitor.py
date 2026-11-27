@@ -81,6 +81,11 @@ class Connection:
             return {}
         if method == "turn/start":
             value = json.loads(m.review)
+            value.setdefault("remaining_work", [] if value["action"] == "done" else [{
+                "task": "完成原请求", "state": "blocked" if value["action"] == "ask_user" else "actionable",
+                "reason": "缺少用户确认的验收标准" if value["action"] == "ask_user" else "已知的最后一步尚未执行",
+                "authorization": "原用户要求完成工作",
+            }])
             event_id = params["input"][0]["text"].split("监控事件编号：", 1)[1].split("\n", 1)[0]
             value["event_id"] = event_id
             reviewed = turn("review-turn", text=json.dumps(value))
@@ -254,6 +259,58 @@ class MonitorChecks(unittest.TestCase):
             self.monitor.store.db.execute("INSERT INTO continuations VALUES('source','source-turn',2)")
         self.monitor.work()
         self.assertEqual(self.job()["note"], "followup_chain_limit")
+
+    def test_uncapped_followups_pass_old_chain_and_daily_limits(self):
+        self.monitor.config.update(max_followups_per_chain=None, max_followups_per_day=None)
+        self.review_and_decide()
+        with self.monitor.store.db:
+            self.monitor.store.db.execute("INSERT INTO continuations VALUES('source','source-turn',25)")
+            for i in range(205):
+                self.monitor.store.db.execute("INSERT INTO jobs(id,thread_id,turn_id,endpoint,title,payload,phase,created,sent,followup_turn) VALUES(?,?,?,?,?,?,'followed_up',?,?,?)",
+                    (f'old-{i}','other',f'turn-{i}','other','old','{}',time.time(),time.time(),f'continued-{i}'))
+        self.monitor.work()
+        self.assertEqual(self.job()["phase"], "followup_queued")
+        self.monitor.work()
+        self.assertEqual(self.job()["phase"], "followed_up")
+        self.assertEqual(self.monitor.store.db.execute("SELECT depth FROM continuations WHERE turn_id='followup-turn'").fetchone()[0],26)
+
+    def test_uncapped_reviews_can_continue_beyond_daily_review_limit(self):
+        self.monitor.config['max_reviews_per_day']=None
+        with self.monitor.store.db:
+            self.monitor.store.db.executemany('INSERT INTO review_runs VALUES(?,?)',
+                [(f'prior-{i}',time.time()) for i in range(1001)])
+        self.monitor.scan();self.monitor.work()
+        self.assertEqual(self.job()['phase'],'reviewing')
+
+    def test_uncapped_mode_still_stops_completed_tasks(self):
+        self.monitor.config.update(max_followups_per_chain=None,max_followups_per_day=None,max_reviews_per_day=None)
+        value=json.loads(self.model.review)
+        value.update(action='done',next_prompt='')
+        self.model.review=json.dumps(value)
+        self.review_and_decide()
+        self.monitor.work();self.monitor.work();self.monitor.scan();self.monitor.work()
+        self.assertEqual(self.job()['phase'],'done')
+        self.assertEqual(self.model.queue,[])
+        self.assertFalse(any(p.get('threadId')=='source' and method in {'turn/start','thread/queue/add'}
+                             for _,method,p in self.model.calls))
+
+    def test_zero_still_disables_followups_instead_of_meaning_unlimited(self):
+        self.monitor.config['max_followups_per_chain']=0
+        self.review_and_decide();self.monitor.work()
+        self.assertEqual(self.job()['note'],'followup_chain_limit')
+        self.assertEqual(self.model.queue,[])
+
+    def test_nullable_limits_persist_without_changing_other_preferences(self):
+        save(self.directory.name,{'ask_before':['deploy'],'decision_guidelines':'完成就停止'},expected_revision=0)
+        limits={key:None for key in ('max_reviews_per_day','max_followups_per_day','max_followups_per_chain')}
+        save(self.directory.name,limits,expected_revision=1)
+        config=visible(self.config)
+        self.assertEqual(config['revision'],2)
+        self.assertTrue(all(config['preferences'][key] is None for key in limits))
+        self.assertEqual(config['preferences']['ask_before'],['deploy'])
+        self.assertEqual(config['preferences']['decision_guidelines'],'完成就停止')
+        for invalid in ({'poll_seconds':None},{'max_followups_per_chain':True},{'max_followups_per_chain':-1}):
+            with self.assertRaises(ValueError):save(self.directory.name,invalid,expected_revision=2)
 
     def test_intermediate_commentary_is_not_treated_as_final(self):
         self.assertEqual(final_text({"items": [{"type": "agentMessage", "phase": "commentary", "text": "完成了"}]}), "")

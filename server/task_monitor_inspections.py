@@ -54,7 +54,15 @@ def row(runtime, inspection_id):
     return r
 
 
-def request(config, thread_id, focus, event_id=None):
+class InspectionLimitReached(ValueError):
+    pass
+
+
+class InspectionSourceChanged(ValueError):
+    pass
+
+
+def request(config, thread_id, focus, event_id=None, expected_source_turn=None):
     if not isinstance(thread_id, str) or not isinstance(focus, str) or not 1 <= len(focus.strip()) <= 4000:
         raise ValueError('Invalid inspection request')
     runtime = Path(config['runtime'])
@@ -65,12 +73,15 @@ def request(config, thread_id, focus, event_id=None):
         if not context:
             raise ValueError('Task has not been observed on this server')
         payload = json.loads(context[0])
-        if thread_id in {config['monitor_thread'], *config.get('excluded_threads', [])} or not in_scope(effective(config), thread_id, payload.get('cwd')):
+        policy=effective(config)
+        if thread_id in {config['monitor_thread'], *config.get('excluded_threads', [])} or not in_scope(policy, thread_id, payload.get('cwd')):
             raise ValueError('Task outside scope')
         turns = payload.get('history_excerpt', [])
         if not turns or turns[-1].get('status') not in ('completed','failed','interrupted'):
             raise ValueError('Inspection requires a terminal source turn')
         source = turns[-1]['turn_id']
+        if expected_source_turn is not None and source != expected_source_turn:
+            raise InspectionSourceChanged('Source changed before inspection request')
         previous = db.execute("SELECT id,state,source_turn FROM inspections WHERE thread_id=? AND (state IN ('pending','creating','starting','running') OR (source_turn=? AND focus=?)) ORDER BY created DESC LIMIT 1", (thread_id, source, focus.strip())).fetchone()
         if previous:
             if previous['source_turn'] != source:
@@ -78,8 +89,9 @@ def request(config, thread_id, focus, event_id=None):
             if event_id:
                 db.execute('UPDATE inspections SET event_id=COALESCE(event_id,?) WHERE id=?', (event_id, previous['id']))
             return {'requested': True, 'inspection_id': previous['id'], 'state': previous['state'], 'deduplicated': True}
-        if db.execute('SELECT COUNT(*) FROM inspections WHERE created>?', (time.time()-86400,)).fetchone()[0] >= config.get('max_inspections_per_day', 20):
-            raise ValueError('Daily inspection limit reached')
+        daily_limit=policy.get('max_inspections_per_day',20)
+        if daily_limit is not None and db.execute('SELECT COUNT(*) FROM inspections WHERE created>?', (time.time()-86400,)).fetchone()[0] >= daily_limit:
+            raise InspectionLimitReached('Daily inspection limit reached')
         root = Path(payload.get('cwd') or '')
         if not root.is_absolute() or not root.is_dir() or root.resolve() in (Path('/'), Path.home()):
             raise ValueError('Task workspace unavailable')

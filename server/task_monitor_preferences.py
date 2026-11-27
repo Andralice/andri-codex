@@ -10,7 +10,9 @@ import time
 
 BOOL_KEYS = {"enabled", "allow_followups"}
 LIMITS = {"poll_seconds": (5, 3600), "max_reviews_per_day": (1, 1000),
-          "max_followups_per_day": (0, 200), "max_followups_per_chain": (0, 20)}
+          "max_followups_per_day": (0, 200), "max_followups_per_chain": (0, 20),
+          "max_inspections_per_day": (0, 1000)}
+OPTIONAL_LIMITS = {"max_reviews_per_day", "max_followups_per_day", "max_followups_per_chain", "max_inspections_per_day"}
 LIST_KEYS = {"included_projects", "excluded_projects", "ignored_threads", "ask_before"}
 TEXT_KEYS = {"decision_guidelines", "communication_style"}
 ALLOWED = BOOL_KEYS | set(LIMITS) | LIST_KEYS | TEXT_KEYS
@@ -34,7 +36,7 @@ def validate(changes):
             raise PreferenceValidationError("Preference must be boolean: " + key)
         if key in LIMITS:
             low, high = LIMITS[key]
-            if type(value) is not int or not low <= value <= high:
+            if not (key in OPTIONAL_LIMITS and value is None) and (type(value) is not int or not low <= value <= high):
                 raise PreferenceValidationError("Preference outside supported range: " + key)
         if key in LIST_KEYS:
             if not isinstance(value, list) or len(value) > 200 or not all(isinstance(v, str) and 0 < len(v) <= 1000 for v in value):
@@ -103,14 +105,20 @@ def save(runtime, changes, reason="", expected_revision=None):
 
 def effective(config):
     preferences = load(config["runtime"])
-    return {**config, **preferences["values"], "preference_revision": preferences["revision"]}
+    result = {**config, **preferences["values"], "preference_revision": preferences["revision"]}
+    # Older, still-loaded MCPs require a numeric installation fallback while a
+    # native question is pending. New services honor the uncapped policy; an
+    # explicit subsequent user preference always overrides this compatibility flag.
+    if config.get("auto_inspections_uncapped") is True and "max_inspections_per_day" not in preferences["values"]:
+        result["max_inspections_per_day"] = None
+    return result
 
 
 def visible(config):
     result = effective(config)
     defaults = {"enabled": True, "allow_followups": False, "poll_seconds": 20,
                 "max_reviews_per_day": 100, "max_followups_per_day": 20,
-                "max_followups_per_chain": 2, "included_projects": [], "excluded_projects": [],
+                "max_followups_per_chain": 2, "max_inspections_per_day": 20, "included_projects": [], "excluded_projects": [],
                 "ignored_threads": [], "ask_before": [], "decision_guidelines": "",
                 "communication_style": "中文，简洁、具体，如实说明判断依据和不确定性。"}
     return {"revision": result["preference_revision"],

@@ -38,6 +38,7 @@ internal fun monitorFollowupText(text: String): String {
 internal fun monitorPhaseLabel(phase: String): String = when (phase) {
     "pending", "review_sending" -> "等待检查"
     "reviewing" -> "检查中"
+    "retry_wait" -> "等待自动恢复"
     "inspecting" -> "独立检查中"
     "decided" -> "正在处理"
     "followup_sending", "followup_queued", "followup_starting" -> "跟进待启动"
@@ -59,8 +60,60 @@ internal data class ManagerEvent(
 internal data class ManagerOverview(
     val available: Boolean, val message: String = "", val threadId: String = "", val enabled: Boolean = false,
     val heartbeatAge: Long = 0, val generatedAt: Long = 0, val recordCount: Int = 0, val followupCount: Int = 0,
-    val attentionCount: Int = 0, val entries: List<ManagerEvent> = emptyList(), val nextCursor: String = ""
+    val attentionCount: Int = 0, val entries: List<ManagerEvent> = emptyList(), val nextCursor: String = "",
+    val inbox: ManagerInbox? = null
 )
+
+internal data class ManagerInboxItem(
+    val id: String, val eventId: String, val threadId: String, val title: String, val created: Long,
+    val kind: String, val message: String, val detail: String, val delivery: String, val status: String
+)
+
+internal data class ManagerInbox(
+    val questions: List<ManagerInboxItem>, val notifications: List<ManagerInboxItem>,
+    val questionsCount: Int, val notificationsCount: Int, val questionsNextCursor: String,
+    val notificationsNextCursor: String, val pendingQuestionIds: Set<String>
+)
+
+private fun parseManagerInbox(value: JSONObject): ManagerInbox {
+    fun rows(name: String): List<ManagerInboxItem> = buildList {
+        val list = value.optJSONArray(name)
+        for (i in 0 until (list?.length() ?: 0)) {
+            val row = list?.optJSONObject(i) ?: continue
+            add(ManagerInboxItem(row.text("id"), row.text("eventId"), row.text("threadId"), row.text("title"),
+                (row.optDouble("created", 0.0) * 1000).toLong(), row.text("kind"), row.text("message"),
+                row.text("detail"), row.text("delivery"), row.text("status")))
+        }
+    }
+    val ids = value.optJSONArray("pendingQuestionIds")
+    return ManagerInbox(rows("questions"), rows("notifications"), value.optInt("questionsCount"),
+        value.optInt("notificationsCount"), value.text("questionsNextCursor"), value.text("notificationsNextCursor"),
+        buildSet { for (i in 0 until (ids?.length() ?: 0)) add(ids!!.getString(i)) })
+}
+
+/** Refresh the inbox even after paging history, removing answers from older loaded pages. */
+internal fun mergeManagerOverview(previous: ManagerOverview?, fresh: ManagerOverview, section: String): ManagerOverview {
+    if (previous == null || !fresh.available || section.isBlank()) return fresh
+    val old = previous.inbox
+    val updated = fresh.inbox
+    val inbox = if (old == null || updated == null) updated else updated.copy(
+        questions = (if (section == "questions") old.questions + updated.questions else updated.questions + old.questions)
+            .distinctBy { it.id }.filter { it.id in updated.pendingQuestionIds },
+        notifications = (if (section == "notifications") old.notifications + updated.notifications else updated.notifications + old.notifications)
+            .distinctBy { it.id },
+        questionsNextCursor = if (section == "questions") updated.questionsNextCursor else old.questionsNextCursor,
+        notificationsNextCursor = if (section == "notifications") updated.notificationsNextCursor else old.notificationsNextCursor)
+    return fresh.copy(
+        entries = (if (section == "records") previous.entries + fresh.entries else fresh.entries + previous.entries).distinctBy { it.id },
+        nextCursor = if (section == "records") fresh.nextCursor else previous.nextCursor, inbox = inbox)
+}
+
+internal fun managerQuestionDeliveryLabel(delivery: String): String = when (delivery) {
+    "shown" -> "可前往管家回答"
+    "sending", "queued", "starting" -> "问答正在准备中，也可前往管家说明决定"
+    "failed", "unknown" -> "问答卡未确认送达，请前往管家说明决定"
+    else -> "等待你的决定，可前往管家说明"
+}
 
 internal fun parseManagerOverview(value: JSONObject): ManagerOverview {
     val counts = value.optJSONObject("counts") ?: JSONObject()
@@ -80,5 +133,5 @@ internal fun parseManagerOverview(value: JSONObject): ManagerOverview {
                     r.text("evidenceLevel"), report?.text("summary").orEmpty(),
                     buildList { for (j in 0 until (limits?.length() ?: 0)) add(limits?.optString(j).orEmpty()) }))
             }
-        }, value.text("nextCursor"))
+        }, value.text("nextCursor"), value.optJSONObject("inbox")?.let(::parseManagerInbox))
 }

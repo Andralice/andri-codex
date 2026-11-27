@@ -608,25 +608,44 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         openThread(id)
     }
     internal fun openManagerTask(event: ManagerEvent) {
-        if (threads.none { it.id == event.threadId }) upsert(CodexThread(event.threadId, event.title))
-        managerPageVisible = false
-        openThread(event.threadId)
+        openManagerTask(event.threadId, event.title)
     }
-    internal fun refreshManager(loadMore: Boolean = false) {
+    internal fun openManagerTask(threadId: String, title: String) {
+        if (threadId.isBlank()) return
+        if (threads.none { it.id == threadId }) upsert(CodexThread(threadId, title))
+        managerPageVisible = false
+        openThread(threadId)
+    }
+    internal fun openManagerQuestion(item: ManagerInboxItem) {
+        val request = requests.firstOrNull { request ->
+            val params = request.optJSONObject("params")
+            params != null && params.text("threadId") == managerOverview?.threadId &&
+                params.optJSONArray("questions")?.let { questions ->
+                    (0 until questions.length()).any { questions.optJSONObject(it)?.text("id") == "monitor_" + item.eventId }
+                } == true
+        }
+        openManagerChat()
+        if (request != null) openPendingRequest(request.get("id").toString())
+    }
+    internal fun refreshManager(loadMore: Boolean = false, inboxSection: String = "", automatic: Boolean = false) {
         val connection = client?.takeIf { connected } ?: run {
             managerError = "当前离线，连接后可刷新管家记录。"; return
         }
         if (managerLoading) return
-        val cursor = if (loadMore) managerOverview?.nextCursor.orEmpty() else ""
+        val cursor = if (loadMore) when (inboxSection) {
+            "questions" -> managerOverview?.inbox?.questionsNextCursor.orEmpty()
+            "notifications" -> managerOverview?.inbox?.notificationsNextCursor.orEmpty()
+            else -> managerOverview?.nextCursor.orEmpty()
+        } else ""
         if (loadMore && cursor.isBlank()) return
         val generation = ++managerRequestGeneration
         managerLoading = true; managerError = ""
         viewModelScope.launch {
             try {
-                val result = connection.managerOverview(cursor)
+                val result = connection.managerOverview(cursor, inboxSection)
                 if (client !== connection || !connected || generation != managerRequestGeneration) return@launch
-                managerOverview = if (loadMore && result.available) result.copy(entries =
-                    (managerOverview?.entries.orEmpty() + result.entries).distinctBy { it.id }) else result
+                managerOverview = mergeManagerOverview(managerOverview, result,
+                    if (loadMore) inboxSection.ifBlank { "records" } else if (automatic) "refresh" else "")
                 if (result.threadId.isNotBlank()) {
                     knownManagerThreadId = result.threadId
                     settings.edit().putString("manager.threadId", result.threadId).apply()

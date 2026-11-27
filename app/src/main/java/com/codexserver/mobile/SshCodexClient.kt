@@ -469,9 +469,9 @@ class SshCodexClient(
         }
     }
 
-    internal suspend fun managerOverview(cursor: String = ""): ManagerOverview =
+    internal suspend fun managerOverview(cursor: String = "", inboxSection: String = ""): ManagerOverview =
         parseManagerOverview(request("andri/monitor/overview", JSONObject().put("limit", 40).apply {
-            if (cursor.isNotBlank()) put("cursor", cursor)
+            if (cursor.isNotBlank()) put(if (inboxSection in setOf("questions", "notifications")) inboxSection + "Cursor" else "cursor", cursor)
         }))
 
     suspend fun listThreads(firstPageOnly: Boolean = false): List<CodexThread> {

@@ -72,7 +72,19 @@ class Handler(BaseHTTPRequestHandler):
             text = json.dumps({"event_id": event_id, "action": "ask_user" if ask else ("done" if complete else "follow_up"),
                                "summary": "原任务已完成" if complete else "还有已授权步骤未完成",
                                "next_prompt": "" if complete else "请完成原来已授权但未完成的最后一步，并如实报告。",
-                               "question": "这项工作的验收范围需要补充哪一条？" if ask else ""}, ensure_ascii=False)
+                               "question": "这项工作的验收范围需要补充哪一条？" if ask else "",
+                               "remaining_work": [] if complete else [{
+                                   "task": "本机fixture剩余步骤", "state": "blocked" if ask else "actionable",
+                                   "reason": "必须先确定验收范围" if ask else "原已授权最后一步尚未执行",
+                                   "authorization": "用户明确要求完成fixture全部步骤",
+                               }]}, ensure_ascii=False)
+            if 'MIXED_DEPENDENCIES_FIXTURE' in payload['history_excerpt'][-1]['user'] and not payload.get('review_recovery'):
+                invalid = json.loads(text)
+                invalid.update(action='ask_user', question='请补充人员证明', next_prompt='')
+                invalid['remaining_work'].append({'task':'人员证明','state':'blocked','reason':'现有资料无证明','authorization':''})
+                text = json.dumps(invalid)
+            if 'RECOVERY_FIXTURE' in payload['history_excerpt'][-1]['user'] and not payload.get('review_recovery'):
+                invalid=json.loads(text);invalid['event_id']='invalid_fixture_event';text=json.dumps(invalid)
         elif "【任务管家自动跟进" in prompt:
             text = "已完成全部任务。这里仅为本机 fixture，不代表实际产品功能。"
         elif "QUESTION_FIXTURE" in prompt:
@@ -110,6 +122,14 @@ def main():
     process = monitor = None
     temporary = tempfile.TemporaryDirectory(prefix="monitor-live-", dir=REPO / "codex")
     root = Path(temporary.name)
+    from fixture_runtime import isolated_codex_env
+    fixture_env = isolated_codex_env(root)
+    from functools import partial
+    from unittest.mock import patch
+    from task_monitor_questions import native_question
+    # The in-process monitor must read the isolated server's authoritative logs.
+    session_reader = patch("task_monitor_questions.native_question", partial(
+        native_question, session_root=Path(fixture_env["CODEX_HOME"]) / "sessions"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     path = root / "api.sock"
@@ -124,8 +144,9 @@ def main():
                    if isinstance(value, dict) else json.dumps(value))
         command.extend(["-c", key + "=" + literal])
     try:
+        session_reader.start()
         with (root / "server.log").open("w") as log:
-            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, env=fixture_env)
         deadline = time.monotonic() + 15
         while not path.exists():
             if time.monotonic() > deadline or process.poll() is not None:
@@ -184,6 +205,60 @@ def main():
             assert monitor.reviewer not in {t["id"] for t in listed}, "Internal reviewer polluted sidebar"
             threads.append(monitor.reviewer)
             results["durable_reviewer_hidden_from_normal_chat_list"] = True
+
+            recovering=new_thread()
+            monitor.base_config['thread_ids'].append(recovering)
+            rpc.call('turn/start',{'threadId':recovering,'input':[{'type':'text','text':'RECOVERY_FIXTURE 完成原已授权步骤。'}]})
+            deadline=time.monotonic()+25
+            failed_job=None
+            while time.monotonic()<deadline:
+                monitor.tick()
+                failed_job=monitor.store.db.execute("SELECT * FROM jobs WHERE thread_id=? AND phase='retry_wait'",(recovering,)).fetchone()
+                if failed_job:break
+                time.sleep(.15)
+            assert failed_job and failed_job['note']=='invalid_review_output','Invalid review did not enter recovery'
+            failed_turn=failed_job['review_turn'];event=failed_job['id']
+            monitor.store.db.close();monitor=Monitor(monitor_config)
+            before=len(requests);monitor.tick()
+            assert len(requests)==before,'Restart bypassed backoff'
+            assert monitor.store.db.execute('SELECT attempts FROM review_recovery WHERE event_id=?',(event,)).fetchone()[0]==1
+            with monitor.store.db:monitor.store.db.execute('UPDATE review_recovery SET retry_at=0 WHERE event_id=?',(event,))
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline:
+                monitor.tick()
+                states=[r[0] for r in monitor.store.db.execute('SELECT phase FROM jobs WHERE thread_id=? ORDER BY created',(recovering,))]
+                if states==['followed_up','done']:break
+                time.sleep(.15)
+            assert states==['followed_up','done'],states
+            recovered=monitor.store.db.execute('SELECT * FROM jobs WHERE id=?',(event,)).fetchone()
+            assert recovered['review_turn']!=failed_turn,'Retry reused the failed review instead of a fresh dispatch'
+            source_turns=rpc.call('thread/turns/list',{'threadId':recovering,'limit':8,'itemsView':'full','sortDirection':'desc'})['data']
+            assert len(source_turns)==2,'Recovery duplicated original followup'
+            results['invalid_review_recovers_after_restart_backoff_and_closes_without_duplicate_followup']=True
+
+            mixed=new_thread()
+            monitor.base_config['thread_ids'].append(mixed)
+            rpc.call('turn/start',{'threadId':mixed,'input':[{'type':'text','text':'MIXED_DEPENDENCIES_FIXTURE 核对现有原件；人员证明缺失时保留待确认，不猜填。'}]})
+            deadline=time.monotonic()+25
+            invalid_job=None
+            while time.monotonic()<deadline:
+                monitor.tick()
+                invalid_job=monitor.store.db.execute("SELECT * FROM jobs WHERE thread_id=? AND phase='retry_wait'",(mixed,)).fetchone()
+                if invalid_job:break
+                time.sleep(.15)
+            assert invalid_job and invalid_job['note']=='invalid_review_output','Mixed blocker closed task instead of corrective review'
+            assert monitor.store.db.execute('SELECT COUNT(*) FROM questions').fetchone()[0]==0,'Inconsistent blocker was delivered to user'
+            with monitor.store.db:monitor.store.db.execute('UPDATE review_recovery SET retry_at=0 WHERE event_id=?',(invalid_job['id'],))
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline:
+                monitor.tick()
+                states=[r[0] for r in monitor.store.db.execute('SELECT phase FROM jobs WHERE thread_id=? ORDER BY created',(mixed,))]
+                if states==['followed_up','done']:break
+                time.sleep(.15)
+            assert states==['followed_up','done'],states
+            source_turns=rpc.call('thread/turns/list',{'threadId':mixed,'limit':8,'itemsView':'full','sortDirection':'desc'})['data']
+            assert len(source_turns)==2,'Corrective review duplicated original execution'
+            results['mixed_blocker_rejected_then_independent_work_continues_once']=True
 
             asking = new_thread()
             monitor.base_config["thread_ids"].append(asking)
@@ -258,7 +333,7 @@ def main():
             rpc.call("thread/resume", {"threadId": supervisor, "excludeTurns": True})
             inventory = rpc.call("mcpServerStatus/list", {"threadId": supervisor,
                                  "serverName": "andri_monitor", "detail": "toolsAndAuthOnly", "limit": 10})
-            assert any(s.get("name") == "andri_monitor" and len(s.get("tools", {})) == 6
+            assert any(s.get("name") == "andri_monitor" and len(s.get("tools", {})) == 8
                        for s in inventory["data"]), "Plain resume lost manager tools"
             results["plain_client_resume_preserves_private_management_tools"] = True
 
@@ -298,6 +373,7 @@ def main():
             release.set()
         print(json.dumps(results, ensure_ascii=False, indent=2))
     finally:
+        session_reader.stop()
         release.set()
         if monitor:
             monitor.store.db.close()

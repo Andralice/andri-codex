@@ -3,6 +3,7 @@
 Original Codex history is never deleted or rewritten. Added fields only affect UI.
 """
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -20,6 +21,15 @@ def user_text(item):
 def _json(value, default=None):
     try:return json.loads(value) if value else default
     except (ValueError,TypeError):return default
+
+
+def _page_boundary(cursor):
+    if not cursor:return '', []
+    boundary, identity = cursor.split(':', 1)
+    boundary = float(boundary)
+    if not math.isfinite(boundary) or not identity:
+        raise ValueError('Invalid inbox cursor')
+    return ' WHERE (created<? OR (created=? AND id<?))', [boundary, boundary, identity]
 
 
 class MonitorPresentation:
@@ -156,6 +166,62 @@ class MonitorPresentation:
             if item.get('type')=='userMessage' and 'andriOrigin' not in item:updated.pop('andriOrigin',None)
         return {**message,'params':updated}
 
+    def inbox(self, db, params, has_inspections):
+        limit=params.get('inboxLimit',20)
+        if type(limit) is not int or not 1<=limit<=80:raise ValueError('Invalid inbox limit')
+        question_sql="""SELECT j.id,j.id AS eventId,j.thread_id AS threadId,j.title,j.created,
+            'question' AS kind,json_extract(j.result,'$.question') AS message,
+            json_extract(j.result,'$.summary') AS detail,COALESCE(q.state,'pending') AS delivery,
+            j.phase AS status FROM jobs j LEFT JOIN questions q ON q.event_id=j.id
+            WHERE j.phase='needs_attention' AND json_extract(j.result,'$.action')='ask_user'
+            AND COALESCE(json_extract(j.result,'$.question'),'')!=''
+            AND COALESCE(q.state,'') NOT IN ('answered','retracted')"""
+        notices_sql="""SELECT 'event:'||j.id AS id,j.id AS eventId,j.thread_id AS threadId,j.title,j.created,
+            CASE WHEN j.phase='needs_attention' THEN 'blocked' ELSE 'followup_closed' END AS kind,
+            COALESCE(json_extract(j.result,'$.summary'),'') AS message,
+            CASE WHEN j.phase='needs_attention' THEN '自动跟进暂未继续，可打开任务查看原因；通知本身不代表新的授权。'
+                 ELSE '管家已结束这轮跟进检查；仍需结合原任务证据判断需求是否通过验收。' END AS detail,
+            '' AS delivery,j.phase AS status FROM jobs j
+            WHERE (j.phase='needs_attention' AND COALESCE(json_extract(j.result,'$.action'),'')!='ask_user')
+               OR (j.phase='done' AND EXISTS(SELECT 1 FROM jobs parent
+                   WHERE parent.thread_id=j.thread_id AND parent.followup_turn=j.turn_id))"""
+        if has_inspections:
+            notices_sql += """ UNION ALL SELECT 'inspection:'||i.id AS id,COALESCE(i.event_id,'') AS eventId,
+                i.thread_id AS threadId,COALESCE(j.title,json_extract(i.payload,'$.title'),'未命名任务') AS title,
+                i.updated AS created,'inspection' AS kind,
+                COALESCE(json_extract(i.report,'$.summary'),
+                    CASE WHEN i.state='stale' THEN '原任务有更新，这次独立检查已过期。'
+                         ELSE '独立检查未能完成，暂时没有可靠结论。' END) AS message,
+                '独立检查报告不等于完整验收；打开详情查看证据和限制。' AS detail,
+                '' AS delivery,i.state AS status FROM inspections i LEFT JOIN jobs j ON j.id=i.event_id
+                WHERE i.state IN ('completed','failed','stale','unknown')"""
+        result={}
+        for name,query in [('questions',question_sql),('notifications',notices_sql)]:
+            cursor=params.get(name+'Cursor')
+            if cursor is not None and not isinstance(cursor,str):raise ValueError('Invalid inbox cursor')
+            where,args=_page_boundary(cursor)
+            rows=db.execute('SELECT * FROM ('+query+')'+where+' ORDER BY created DESC,id DESC LIMIT ?',(*args,limit+1)).fetchall()
+            result[name]=[dict(r) for r in rows[:limit]]
+            for item in result[name]:
+                if item['kind']=='inspection':
+                    inspection=db.execute('SELECT report,source_turn FROM inspections WHERE id=?',(item['id'].split(':',1)[1],)).fetchone()
+                    report=_json(inspection['report'],{}) or {}
+                    detail=[item['detail']]
+                    for key,label in [('findings','发现'),('evidence','依据'),('limitations','验证边界')]:
+                        values=report.get(key,[])
+                        if values:detail.append(label+'：\n'+'\n'.join(values))
+                    context=db.execute('SELECT payload FROM contexts WHERE thread_id=?',(item['threadId'],)).fetchone()
+                    turns=(_json(context[0],{}) or {}).get('history_excerpt',[]) if context else []
+                    if not turns or turns[-1].get('turn_id')!=inspection['source_turn']:
+                        detail.append('原任务上下文已变化或无法核对，这份报告不能代表当前进度。')
+                    item['detail']='\n\n'.join(detail)
+            result[name+'Count']=db.execute('SELECT COUNT(*) FROM ('+query+')').fetchone()[0]
+            more=rows[limit-1] if len(rows)>limit else None
+            result[name+'NextCursor']=str(more['created'])+':'+more['id'] if more else None
+        # IDs let automatic refresh remove resolved questions from previously loaded pages.
+        result['pendingQuestionIds']=[r[0] for r in db.execute('SELECT id FROM ('+question_sql+')')]
+        return result
+
     def overview(self, params):
         if not self.runtime:return {'available':False,'message':'此连接尚未配置管家模块。'}
         limit=params.get('limit',40);cursor=params.get('cursor')
@@ -174,13 +240,14 @@ class MonitorPresentation:
                 rows=db.execute('SELECT j.*,child.result AS outcome,child.phase AS outcome_phase FROM jobs j LEFT JOIN jobs child ON child.thread_id=j.thread_id AND child.turn_id=j.followup_turn'+where+' ORDER BY j.created DESC,j.id DESC LIMIT ?',(*args,limit+1)).fetchall()
                 entries=[]
                 has_inspections=bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inspections'").fetchone())
+                inbox=self.inbox(db,params,has_inspections)
                 for r in rows[:limit]:
                     result=_json(r['result'],{}) or {};payload=_json(r['payload'],{}) or {};outcome=_json(r['outcome'],{}) or {}
                     inspection=db.execute('SELECT id,state,report FROM inspections WHERE thread_id=? AND source_turn=? ORDER BY created DESC LIMIT 1',(r['thread_id'],r['turn_id'])).fetchone() if has_inspections else None
                     question=db.execute('SELECT state FROM questions WHERE event_id=?',(r['id'],)).fetchone()
                     entries.append({'id':r['id'],'threadId':r['thread_id'],'title':r['title'],'created':r['created'],'phase':r['phase'],
                         'action':result.get('action',''),'summary':result.get('summary',''),'followup':result.get('next_prompt',''),
-                        'question':result.get('question','') if r['phase']=='needs_attention' and result.get('action')=='ask_user' else '',
+                        'question':result.get('question','') if r['phase']=='needs_attention' and result.get('action')=='ask_user' and (not question or question[0] not in ('answered','retracted')) else '',
                         'questionDelivery':question[0] if question else '',
                         'followupStarted':r['phase']=='followed_up','outcome':outcome.get('summary',''),'outcomePhase':r['outcome_phase'] or '',
                         'evidenceLevel':payload.get('verification',{}).get('level','reported_only'),
@@ -188,7 +255,7 @@ class MonitorPresentation:
                 more=rows[limit-1] if len(rows)>limit else None
             return {'available':True,'managerThreadId':self.manager,'heartbeatAgeSeconds':max(0,time.time()-status['updated_at']),
                 'enabled':status.get('enabled',False),'counts':counts,'followupsStarted':counts.get('followed_up',0),
-                'inspections':status.get('inspections',{}),'entries':entries,
+                'inspections':status.get('inspections',{}),'entries':entries,'inbox':inbox,
                 'nextCursor':str(more['created'])+':'+more['id'] if more else None,'generatedAt':time.time()}
         except (OSError,KeyError,sqlite3.Error):
             return {'available':False,'message':'管家记录暂时不可读取，请稍后刷新。'}

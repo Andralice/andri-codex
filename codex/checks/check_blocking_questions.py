@@ -25,6 +25,8 @@ RESULTS = REPO / 'codex/question-policy-checks'
 RESULTS.mkdir(exist_ok=True)
 workspace = tempfile.TemporaryDirectory(prefix='question-policy-', dir=REPO / 'codex')
 ROOT = pathlib.Path(workspace.name)
+from fixture_runtime import isolated_codex_env
+fixture_env = isolated_codex_env(ROOT)
 spec = importlib.util.spec_from_file_location('policy', REPO / 'server/question_policy.py')
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
@@ -72,7 +74,7 @@ args = [args_cli.codex, 'app-server', '--listen', 'unix://' + str(sock),
 if not args_cli.live_socket:
     args = [sys.executable, '-B', str(REPO / 'server/question_policy.py'), '--codex', args_cli.codex,
             '--catalog', str(ROOT / 'catalog-blocking.json'), '--run', *args[1:]]
-process = None if args_cli.live_socket else subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=(ROOT / 'reconnect-stderr.log').open('w'), start_new_session=True)
+process = None if args_cli.live_socket else subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=(ROOT / 'reconnect-stderr.log').open('w'), start_new_session=True, env=fixture_env)
 connection = None
 thread_id = None
 summary = {}

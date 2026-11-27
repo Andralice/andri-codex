@@ -1,6 +1,29 @@
 package com.codexserver.mobile
 
+import androidx.compose.ui.text.AnnotatedString
 import org.json.JSONObject
+
+internal data class ExecutionRecordHighlight(val text: AnnotatedString, val failure: Throwable? = null)
+
+/** Coloring is optional: a broken rule must never prevent opening the actual output.
+ * Kept outside WorkspaceSyntaxHighlighting so its failed class initialization is caught too.
+ */
+internal fun highlightExecutionRecord(
+    source: String,
+    command: String,
+    toolType: String,
+    highlighter: (String, String, String) -> AnnotatedString = { text, stage, type ->
+        highlightTimelineContent(text, stage, type)
+    }
+): ExecutionRecordHighlight = try {
+    ExecutionRecordHighlight(highlighter(source, command, toolType))
+} catch (error: RuntimeException) {
+    ExecutionRecordHighlight(AnnotatedString(source), error)
+} catch (error: ExceptionInInitializerError) {
+    ExecutionRecordHighlight(AnnotatedString(source), error)
+} catch (error: NoClassDefFoundError) {
+    ExecutionRecordHighlight(AnnotatedString(source), error)
+}
 
 /** Keep protocol placeholders in storage, but do not turn them into empty steps. */
 internal fun visibleProcessItems(items: List<ChatLine>): List<ChatLine> = items.filterNot { item ->

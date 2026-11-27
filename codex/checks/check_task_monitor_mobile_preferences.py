@@ -83,6 +83,8 @@ def main():
     report.parent.mkdir(parents=True, exist_ok=True)
     temporary = tempfile.TemporaryDirectory(prefix='monitor-mobile-pref-', dir=REPO / 'codex')
     root = Path(temporary.name)
+    from fixture_runtime import isolated_codex_env
+    fixture_env = isolated_codex_env(root)
     http = ThreadingHTTPServer(('127.0.0.1', 0), Model)
     threading.Thread(target=http.serve_forever, daemon=True).start()
     paths = {k: str(root / (k + '.sock')) for k in ('desktop', 'mobile')}
@@ -98,7 +100,7 @@ def main():
                 literal = '{' + ','.join(k + '=' + json.dumps(v) for k,v in setting.items()) + '}' if isinstance(setting, dict) else json.dumps(setting)
                 args.extend(['-c', key + '=' + literal])
             with (root / (name + '.log')).open('w') as log:
-                processes.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=log, start_new_session=True))
+                processes.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, env=fixture_env))
         deadline = time.monotonic() + 15
         while not all(Path(p).exists() for p in paths.values()):
             assert time.monotonic() < deadline, 'Fixture servers failed to start';time.sleep(.05)

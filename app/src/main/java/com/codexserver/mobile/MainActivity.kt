@@ -4392,6 +4392,16 @@ private fun TimelineProcessBody(item: ChatLine, vm: MobileViewModel, onOpenLink:
 private fun TimelineOutputBlock(source: String, command: String, toolType: String) {
     val scroll = rememberScrollState()
     val palette = MaterialTheme.colorScheme
+    val highlighted = remember(source, command, toolType) {
+        highlightExecutionRecord(source, command, toolType)
+    }
+    LaunchedEffect(highlighted.failure) {
+        highlighted.failure?.let { failure ->
+            // Record the failure class without including commands or file contents in logs.
+            android.util.Log.w("ExecutionRecord", "Highlighting unavailable; showing original output: " +
+                failure.javaClass.simpleName)
+        }
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(11.dp),
@@ -4399,7 +4409,7 @@ private fun TimelineOutputBlock(source: String, command: String, toolType: Strin
         border = BorderStroke(1.dp, palette.outlineVariant.copy(alpha = 0.7f))
     ) {
         Text(
-            text = remember(source, command, toolType) { highlightTimelineContent(source, command, toolType) },
+            text = highlighted.text,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 248.dp)
@@ -4954,11 +4964,13 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
 private fun ManagerScreen(vm: MobileViewModel) {
     val overview = vm.managerOverview
     var filter by rememberSaveable { mutableStateOf("全部") }
+    var questionsExpanded by rememberSaveable { mutableStateOf(true) }
+    var notificationsExpanded by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(vm.connected) {
         if (vm.connected) vm.refreshManager()
         while (vm.connected) {
             kotlinx.coroutines.delay(20_000)
-            if (vm.managerOverview?.entries.orEmpty().size <= 40) vm.refreshManager()
+            vm.refreshManager(automatic = true)
         }
     }
     Column(Modifier.fillMaxSize()) {
@@ -5004,8 +5016,47 @@ private fun ManagerScreen(vm: MobileViewModel) {
                             }
                         }
                     }
-                    Text("日常检查记录在这里。需要你决定的事项仍会提问，你也可以随时询问管家。", fontSize = 12.sp,
+                    Text("需要你回答的问题和管家通知集中在下方，你也可以随时询问管家。", fontSize = 12.sp,
                         lineHeight = 19.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            val inbox = overview.inbox
+            if (inbox == null) item("manager-inbox-unavailable") {
+                Text("当前服务器尚未提供提问与通知汇总，请先在管家对话中查看。", fontSize = 12.sp,
+                    lineHeight = 19.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                item("manager-questions-heading") {
+                    ManagerInboxHeading("待你回答", inbox.questionsCount, questionsExpanded) { questionsExpanded = !questionsExpanded }
+                }
+                if (questionsExpanded) {
+                    if (inbox.questions.isEmpty()) item("manager-questions-empty") {
+                        Text("目前没有待你回答的问题。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    items(inbox.questions, key = { "manager-question:${it.id}" }) { item -> ManagerInboxCard(vm, item) }
+                    if (inbox.questionsNextCursor.isNotBlank()) item("manager-questions-more") {
+                        TextButton({ vm.refreshManager(loadMore = true, inboxSection = "questions") }, enabled = vm.connected && !vm.managerLoading) {
+                            Text("查看更多待回答事项", fontSize = 12.sp)
+                        }
+                    }
+                }
+                item("manager-notifications-heading") {
+                    ManagerInboxHeading("通知", inbox.notificationsCount, notificationsExpanded) { notificationsExpanded = !notificationsExpanded }
+                }
+                if (notificationsExpanded) {
+                    if (inbox.notifications.isEmpty()) item("manager-notifications-empty") {
+                        Text("目前没有需要通知的事项。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    items(inbox.notifications, key = { "manager-notification:${it.id}" }) { item -> ManagerInboxCard(vm, item) }
+                    if (inbox.notificationsNextCursor.isNotBlank()) item("manager-notifications-more") {
+                        TextButton({ vm.refreshManager(loadMore = true, inboxSection = "notifications") }, enabled = vm.connected && !vm.managerLoading) {
+                            Text("查看更早通知", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+            item("manager-history-heading") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("工作记录", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("全部", "已跟进", "待处理").forEach { name ->
                             FilterChip(selected = filter == name, onClick = { filter = name }, label = { Text(name, fontSize = 12.sp) })
@@ -5030,6 +5081,56 @@ private fun ManagerScreen(vm: MobileViewModel) {
             item("manager-boundary") {
                 Text("“本轮已关闭”表示管家结束了这次检查，不代表所有需求都已独立验收。",
                     Modifier.padding(bottom = 20.dp), fontSize = 11.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagerInboxHeading(title: String, count: Int, expanded: Boolean, onToggle: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text("  $count", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.weight(1f))
+        TextButton(onToggle) { Text(if (expanded) "收起" else "展开", fontSize = 12.sp) }
+    }
+}
+
+@Composable
+private fun ManagerInboxCard(vm: MobileViewModel, item: ManagerInboxItem) {
+    val question = item.kind == "question"
+    var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, if (question) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LineIcon(if (question || item.kind == "blocked") "info" else "manager", Modifier.size(17.dp), MaterialTheme.colorScheme.primary)
+                Text(when (item.kind) {
+                    "question" -> "需要你的决定"
+                    "blocked" -> "跟进受阻记录"
+                    "inspection" -> when (item.status) { "completed" -> "独立检查已返回"; "stale" -> "独立检查已过期"; else -> "独立检查未完成" }
+                    else -> "本轮跟进检查已结束"
+                }, Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                Text(remember(item.created) { java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(java.util.Date(item.created)) },
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(item.title.ifBlank { "未命名任务" }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            SelectionContainer {
+                Text(item.message.ifBlank { "管家暂未返回详细说明，请打开原任务核对。" }, fontSize = 13.sp, lineHeight = 21.sp,
+                    maxLines = if (question || expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
+            }
+            if (question) Text(managerQuestionDeliveryLabel(item.delivery), fontSize = 11.sp, lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (expanded && item.detail.isNotBlank()) SelectionContainer {
+                Text(item.detail, fontSize = 12.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton({ expanded = !expanded }, contentPadding = PaddingValues(end = 10.dp)) {
+                    Text(if (expanded) "收起详情" else "查看详情", fontSize = 12.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton({ vm.openManagerTask(item.threadId, item.title) }) { Text("打开任务", fontSize = 12.sp) }
+                if (question) TextButton({ vm.openManagerQuestion(item) }, enabled = vm.connected) { Text("前往回答", fontSize = 12.sp) }
             }
         }
     }

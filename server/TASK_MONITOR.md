@@ -125,6 +125,27 @@ python3 -B server/task_monitor_control.py --runtime codex/task-monitor/runtime s
 不要把不同服务器上未核验的 socket、凭据或任意网络地址加入配置。
 `thread_ids` 可选，仅用于指定任务范围；省略时扫描所有符合条件的服务器任务。
 
+持续跟进可将 `max_reviews_per_day`、`max_followups_per_day`、`max_followups_per_chain`、`max_inspections_per_day`
+保存为 JSON `null`，表示取消对应次数上限。默认仍保留上述有限值，跟进上限的 `0` 仍表示禁止。
+取消次数上限不增加权限：原请求已完成或用户暂停/停止则结束，普通问答不派工；
+遇到审批、缺少必要信息或无法自动解决的阻塞时等待用户，重复失败先核对证据并改变办法。
+独立检查默认每日20次，可单独设为 `null` 取消次数限制；单次读取、运行时间和每事件只委派一次的边界仍保留。
+
+内部只读审查失败或返回无效结构时持久化为 `retry_wait`，按60秒起、最长30分钟的退避间隔重试。
+服务重启保留恢复计数与下次时间；等待恢复的事件不占用审查通道。达到10分钟的内部独立审查
+仅中断其匹配的隐藏回合，观察终态后再重试，不中断管家聊天或原任务。
+恢复前重查当前源回合、范围和用户问答等待状态；过期事件转为 `superseded`，已完成事件不重开。
+重复 `inspect` 改为等待正在执行的检查或携带已有报告重新审查，不重复派工；
+源回合绑定在检查请求写入前再次核对，旧事件不会绑定到新回合的检查。
+只自动迁移已知的内部审查错误；原任务审批、原任务失败以及执行发送/启动结果不明的事件不自动重放。
+`status.json.review_recovery` 记录等待数及最早恢复时间。重试不保证外部模型或网络永不故障。
+
+滚动升级时，已有管家问答可能仍持有旧版 MCP Python 进程，不能为换工具而中断用户提问。
+可将 null 上限放入安装配置、保留偏好中的其他字段，以兼容旧版偏好校验；
+旧版独立检查代码要求数字时，可设置 `auto_inspections_uncapped=true` 和数值型的
+`max_inspections_per_day` 作为旧工具的备用额度。新版后台将前者解释为取消独立检查次数上限；
+后续用户明确保存的 `max_inspections_per_day` 偏好优先于该兼容开关。旧连接的手动检查仍受备用额度限制。
+
 ```sh
 python3 -B server/task_monitor.py --config codex/task-monitor/runtime/config.json --once
 python3 -B server/task_monitor.py --config codex/task-monitor/runtime/config.json
@@ -169,6 +190,13 @@ MCP 工具：桌面卸载后由手机入口接管同一会话，保存已确认�
 `codex/task-monitor/mobile-preferences-check-result.json`。这属于手机入口协议联调，不是安卓真机点击验收。
 
 ## 独立成果检查
+
+自动审查同时登记逐项 `remaining_work`：可独立继续的已授权工作(actionable)、确实依赖用户的工作(blocked)、
+以及尚未查清依赖关系的工作(unknown)，各项记录原因和授权依据。不能把一项缺材料当成整个目标都阻塞；
+有 actionable 时继续独立部分并保留缺项，有 unknown 时先核实。已有原生问题或审批仍等待用户，不能代答或绕过。
+新审查必须返回清单；等待/结束与清单冲突时，仅退避重做内部只读审查，不发送问题或原任务执行指令。
+最近几轮的清单随源回合传入后续审查，提醒模型核销或保留旧待办；旧决定、在途旧审查和用户直接决定继续兼容。
+清单及依赖判断来自模型，结构和矛盾校验不能证明它已发现全部待办或正确理解全部依赖关系。
 
 用户可在管家说“检查这个任务的实际成果，看看是否在兜圈子”。管家先用 `monitor_tasks` 定位，
 再调用 `monitor_request_inspection(thread_id, focus)`，用 `monitor_inspections(inspection_id)` 查询异步状态及报告。

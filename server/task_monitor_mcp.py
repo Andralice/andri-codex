@@ -171,7 +171,8 @@ def execute(runtime, name, arguments):
                 "preferences": visible(config), "applied_revision": status.get("preference_revision", 0),
                 "questions": status.get("questions", {}),
                 "question_delivery_error": status.get("question_delivery_error", False),
-                "reviewer_available": status.get("reviewer_available", False)}
+                "reviewer_available": status.get("reviewer_available", False),
+                "review_recovery": status.get("review_recovery", {})}
     if name == "monitor_events":
         with sqlite3.connect(runtime / "state.sqlite3") as db:
             db.row_factory = sqlite3.Row
