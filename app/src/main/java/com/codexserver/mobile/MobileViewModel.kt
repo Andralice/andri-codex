@@ -593,6 +593,12 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         private set
     internal var managerError by mutableStateOf("")
         private set
+    internal var scheduledTasks by mutableStateOf<List<ScheduledTask>>(emptyList())
+        private set
+    internal var scheduleError by mutableStateOf("")
+        private set
+    internal var scheduleBusy by mutableStateOf(false)
+        private set
     private var managerRequestGeneration = 0L
     private var knownManagerThreadId = settings.getString("manager.threadId", "").orEmpty()
     internal val conversationThreads: List<CodexThread> get() = threads.filter {
@@ -646,6 +652,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 if (client !== connection || !connected || generation != managerRequestGeneration) return@launch
                 managerOverview = mergeManagerOverview(managerOverview, result,
                     if (loadMore) inboxSection.ifBlank { "records" } else if (automatic) "refresh" else "")
+                runCatching { connection.scheduledTasks() }
+                    .onSuccess { scheduledTasks = it; scheduleError = "" }
+                    .onFailure { scheduleError = "定时任务服务尚未启用或暂不可用。" }
                 if (result.threadId.isNotBlank()) {
                     knownManagerThreadId = result.threadId
                     settings.edit().putString("manager.threadId", result.threadId).apply()
@@ -656,6 +665,37 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 if (generation == managerRequestGeneration) managerLoading = false
             }
+        }
+    }
+    internal fun createScheduledTask(threadId: String, prompt: String, runAt: Long,
+        timezone: String, repeatDaily: Boolean, title: String) {
+        val connection = client?.takeIf { connected } ?: return
+        if (scheduleBusy) return
+        scheduleBusy = true
+        scheduleError = ""
+        viewModelScope.launch {
+            try {
+                connection.createScheduledTask(threadId, prompt, runAt, timezone, repeatDaily, title)
+                scheduledTasks = connection.scheduledTasks()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                scheduleError = e.message?.takeIf { it.isNotBlank() } ?: "创建定时任务失败，请刷新后重试。"
+            } finally { if (client === connection) scheduleBusy = false }
+        }
+    }
+    internal fun cancelScheduledTask(id: String) {
+        val connection = client?.takeIf { connected } ?: return
+        if (scheduleBusy) return
+        scheduleBusy = true
+        scheduleError = ""
+        viewModelScope.launch {
+            try {
+                connection.cancelScheduledTask(id)
+                scheduledTasks = connection.scheduledTasks()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                scheduleError = e.message?.takeIf { it.isNotBlank() } ?: "取消定时任务失败，请刷新后重试。"
+            } finally { if (client === connection) scheduleBusy = false }
         }
     }
     var activeId by mutableStateOf<String?>(null)
@@ -674,7 +714,7 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun dismissPendingRequest() { visibleRequestId = null }
     fun setRequestAnswer(requestId: String, questionId: String, value: String) {
-        requestAnswers[requestId] = requestAnswers[requestId].orEmpty() + (questionId to value)
+        requestAnswers[requestId] = updateRequestAnswer(requestAnswers[requestId].orEmpty(), questionId, value)
     }
     val threads = mutableStateListOf<CodexThread>()
     val syncingThreadIds = mutableStateListOf<String>()
@@ -3106,8 +3146,8 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     if (id.isNotBlank()) {
                         val requestLine = requestChatLine(event)
                         val fallbackTurnId = running[id].orEmpty().ifBlank { threads.firstOrNull { it.id == id }?.turnId.orEmpty() }
-                        messages[id] = upsertChat(messages[id].orEmpty(), requestLine.copy(
-                            turnId = requestLine.turnId.ifBlank { fallbackTurnId }))
+                        messages[id] = upsertChat(messages[id].orEmpty(),
+                            anchorChatRequest(requestLine, messages[id].orEmpty(), fallbackTurnId))
                     }
                 }
                 "mcpServer/elicitation/request" -> {
@@ -3163,8 +3203,9 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                     if (threadId.isNotBlank()) {
                         val line = requestChatLine(request)
                         val previous = messages[threadId].orEmpty().firstOrNull { it.id == line.id }
-                        messages[threadId] = upsertChat(messages[threadId].orEmpty(), line.copy(
-                            turnId = line.turnId.ifBlank { previous?.turnId.orEmpty() }, status = "resolved"))
+                        messages[threadId] = upsertChat(messages[threadId].orEmpty(),
+                            anchorChatRequest(previous ?: line, messages[threadId].orEmpty()).copy(
+                                status = if (previous?.status == "answered") "answered" else "resolved"))
                     }
                 }
                 requests.removeAll { it.get("id").toString() == requestId }
@@ -3349,12 +3390,11 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
         respondingRequests += requestId
         requestErrors.remove(requestId)
         actions.launch {
-            try {
+            val outcome = submitServerRequest(requestId, respondingRequests, requestErrors) {
                 val method = request.text("method")
                 val result = when (method) {
-                    "item/tool/requestUserInput" -> JSONObject().put("answers", JSONObject().apply {
-                        answers.forEach { (id, value) -> put(id, JSONObject().put("answers", JSONArray().put(value))) }
-                    })
+                    "item/tool/requestUserInput" -> requestAnswersResult(
+                        request.optJSONObject("params")?.optJSONArray("questions"), answers)
                     "item/permissions/requestApproval" -> JSONObject().put("scope", "turn")
                         .put("permissions", if (approved) request.getJSONObject("params").getJSONObject("permissions") else JSONObject())
                     "execCommandApproval", "applyPatchApproval" -> JSONObject().put("decision", if (approved) "approved" else "denied")
@@ -3365,15 +3405,14 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 val threadId = request.optJSONObject("params")?.text("threadId").orEmpty()
                 if (threadId.isNotBlank()) {
                     val line = requestChatLine(request)
-                    val previous = messages[threadId].orEmpty().firstOrNull { it.id == line.id }
                     val summary = if (method == "item/tool/requestUserInput") {
                         val questions = request.optJSONObject("params")?.optJSONArray("questions") ?: JSONArray()
                         (0 until questions.length()).mapNotNull { i -> questions.optJSONObject(i)?.let { question ->
                             question.text("question") + "\n" + if (question.optBoolean("isSecret")) "已提交保密回答" else answers[question.text("id")].orEmpty()
                         } }.joinToString("\n\n")
                     } else line.text
-                    messages[threadId] = upsertChat(messages[threadId].orEmpty(), line.copy(
-                        turnId = line.turnId.ifBlank { previous?.turnId.orEmpty() }, text = summary,
+                    messages[threadId] = upsertChat(messages[threadId].orEmpty(),
+                        anchorChatRequest(line, messages[threadId].orEmpty()).copy(text = summary,
                         answers = if (method == "item/tool/requestUserInput") line.questions.mapIndexed { index, question ->
                             if (question.secret) "已提交保密回答" else answers[lineQuestionId(request, index)].orEmpty()
                         } else emptyList(),
@@ -3383,11 +3422,10 @@ class MobileViewModel(application: Application) : AndroidViewModel(application) 
                 requestAnswers.remove(requestId)
                 requestErrors.remove(requestId)
                 if (visibleRequestId == requestId) visibleRequestId = null
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                requestErrors[requestId] = "回复服务器请求失败：" + e.message
-                reportChatError(e.message.orEmpty(), "回复审批失败", request.optJSONObject("params")?.text("threadId"))
-            } finally { if (client === connection) respondingRequests.remove(requestId) }
+            }
+            outcome.exceptionOrNull()?.let { error ->
+                reportChatError(error.message.orEmpty(), "回复审批失败", request.optJSONObject("params")?.text("threadId"))
+            }
         }
     }
 
@@ -3489,7 +3527,7 @@ internal fun mergeHistory(
     }
     val remaining = current.drop(if (firstOverlap < 0) 0 else firstOverlap)
         .filter { live -> live.id !in historyIds }
-    if (!latestPage) return prefix + merged + remaining
+    if (!latestPage) return restoreQuestionPositions(prefix + merged + remaining, current)
 
     // A latest-page response can omit older cached turns. Appending every
     // unmatched cached line after the page moves old messages to the bottom.
@@ -3518,7 +3556,7 @@ internal fun mergeHistory(
             if (lastIndexByTurn[line.turnId] == index) addAll(additionsByTurn[line.turnId].orEmpty())
         }
     }
-    return prefix + omittedOlderLines + orderedHistory + liveTail
+    return restoreQuestionPositions(prefix + omittedOlderLines + orderedHistory + liveTail, current)
 }
 
 internal fun chatFailure(current: List<ChatLine>, details: String, stage: String, turnId: String = "", eventId: String = ""): ChatLine {

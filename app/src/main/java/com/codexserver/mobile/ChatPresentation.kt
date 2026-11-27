@@ -38,6 +38,100 @@ internal data class ProcessStepGroup(val type: String, val items: List<ChatLine>
 internal fun isInlineUserInputRequest(line: ChatLine): Boolean =
     line.role == "request" && line.stage == "等待你的回答"
 
+internal fun nextRequestQuestionIndex(current: Int, count: Int, delta: Int): Int =
+    if (count <= 0) 0 else (current + delta).coerceIn(0, count - 1)
+
+internal fun updateRequestAnswer(answers: Map<String, String>, questionId: String, value: String): Map<String, String> =
+    answers + (questionId to value)
+
+internal fun requestQuestionsComplete(questions: JSONArray?, answers: Map<String, String>): Boolean {
+    val count = questions?.length() ?: 0
+    return count > 0 && (0 until count).all { index ->
+        val id = questions?.optJSONObject(index)?.text("id").orEmpty()
+        id.isNotBlank() && !answers[id].isNullOrBlank()
+    }
+}
+
+internal fun requestAnswersResult(questions: JSONArray?, answers: Map<String, String>): JSONObject =
+    JSONObject().put("answers", JSONObject().apply {
+        val count = questions?.length() ?: 0
+        for (index in 0 until count) {
+            val id = questions?.optJSONObject(index)?.text("id").orEmpty()
+            if (id.isNotBlank()) put(id, JSONObject().put("answers", JSONArray().put(answers[id].orEmpty())))
+        }
+    })
+
+internal suspend fun <T> submitServerRequest(
+    requestId: String,
+    responding: MutableCollection<String>,
+    errors: MutableMap<String, String>,
+    action: suspend () -> T
+): Result<T> {
+    if (requestId !in responding) responding.add(requestId)
+    errors.remove(requestId)
+    return try {
+        Result.success(action())
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        errors[requestId] = "回复服务器请求失败：" + error.message
+        Result.failure(error)
+    } finally {
+        while (responding.remove(requestId)) Unit
+    }
+}
+
+/** Save the position when a request arrives, before a history refresh can omit it. */
+internal fun anchorChatRequest(line: ChatLine, current: List<ChatLine>, fallbackTurnId: String = ""): ChatLine {
+    val previous = current.firstOrNull { it.id == line.id }
+    val anchorId = previous?.afterId?.takeIf(String::isNotBlank) ?: line.afterId
+    val anchor = current.firstOrNull { it.id == anchorId && anchorId.isNotBlank() }
+    val turnId = line.turnId.ifBlank { previous?.turnId.orEmpty() }
+        .ifBlank { anchor?.turnId.orEmpty() }.ifBlank { fallbackTurnId }
+    return line.copy(turnId = turnId, afterId = anchorId.ifBlank {
+        current.lastOrNull { it.id != line.id && it.turnId == turnId && turnId.isNotBlank() }?.id.orEmpty()
+    })
+}
+
+/** Native requests are local rows, absent from thread/read. Keep their execution anchors
+ * instead of appending them after all the tools returned by a refreshed history page. */
+internal fun restoreQuestionPositions(merged: List<ChatLine>, previous: List<ChatLine>): List<ChatLine> {
+    val questions = merged.filter(::isInlineUserInputRequest)
+    if (questions.isEmpty()) return merged
+    val byId = merged.filter { it.id.isNotBlank() }.associateBy { it.id }
+    val previousAnchors = mutableMapOf<String, String>()
+    val lastByTurn = mutableMapOf<String, String>()
+    previous.forEach { line ->
+        if (line.turnId.isNotBlank()) {
+            if (isInlineUserInputRequest(line)) previousAnchors[line.id] = lastByTurn[line.turnId].orEmpty()
+            if (line.id.isNotBlank()) lastByTurn[line.turnId] = line.id
+        }
+    }
+    val placed = mutableMapOf<String, MutableList<ChatLine>>()
+    val moved = mutableSetOf<String>()
+    questions.forEach { question ->
+        val anchorId = question.afterId.ifBlank { previousAnchors[question.id].orEmpty() }
+        val anchor = byId[anchorId]
+        if (anchor != null && anchor.id != question.id && anchor.turnId.isNotBlank() &&
+            (question.turnId.isBlank() || question.turnId == anchor.turnId)) {
+            placed.getOrPut(anchorId) { mutableListOf() }.add(question.copy(
+                turnId = anchor.turnId, afterId = anchorId))
+            moved += question.id
+        }
+    }
+    // Guard malformed/self-referential cached anchors: every row must remain visible once.
+    val emitted = mutableSetOf<String>()
+    return buildList {
+        fun emit(line: ChatLine) {
+            if (line.id.isNotBlank() && !emitted.add(line.id)) return
+            add(line)
+            placed[line.id].orEmpty().forEach(::emit)
+        }
+        merged.filter { it.id !in moved }.forEach(::emit)
+        questions.filter { it.id !in emitted }.forEach(::emit)
+    }
+}
+
 internal fun processStepType(item: ChatLine): String {
     if (item.role == "assistant") return item.stage.ifBlank { "进度说明" }
     if (item.role != "tool") return item.stage.ifBlank { "执行步骤" }
@@ -201,6 +295,7 @@ internal fun requestChatLine(request: JSONObject): ChatLine {
             question.optBoolean("isSecret"))
     } else emptyList()
     return ChatLine("request", text, "request:" + request.opt("id"), params.text("turnId"),
+        afterId = params.text("itemId").takeIf(String::isNotBlank)?.let { "tool:$it" }.orEmpty(),
         stage = if (input) "等待你的回答" else "请求执行审批", status = "pending", questions = parsedQuestions)
 }
 

@@ -21,6 +21,7 @@ import time
 from task_monitor_rpc import Rpc, RpcError
 from thread_visibility import hidden_from_thread_list
 from task_monitor_presentation import MonitorPresentation
+from scheduled_tasks import ScheduleError, api as scheduled_task_api
 
 
 MAX_MESSAGE = 16 * 1024 * 1024
@@ -393,6 +394,35 @@ class Session:
                 self.client.send({"id": message["id"], "result": self.presentation.overview(params)})
             except (ValueError, TypeError):
                 self.client.send({"id": message["id"], "error": {"code": -32602, "message": "管家查询参数无效。"}})
+        elif method.startswith("andri/schedules/") and "id" in message:
+            try:
+                if not self.monitor_runtime:
+                    raise ScheduleError("scheduler_unavailable")
+                config_path = Path(self.monitor_runtime) / "config.json"
+                config = json.loads(config_path.read_text())
+                result = scheduled_task_api(self.monitor_runtime, config, method, params)
+                self.client.send({"id": message["id"], "result": result})
+            except ScheduleError as error:
+                messages = {
+                    "scheduler_unavailable": "定时任务服务尚未配置或暂不可用。",
+                    "invalid_thread": "请选择一个持久会话。",
+                    "thread_unavailable": "找不到这个会话，或当前服务无法访问它。",
+                    "ephemeral_unsupported": "临时会话不能创建定时任务，请选择持久会话。",
+                    "invalid_prompt": "任务内容不能为空且不能超过 12000 字。",
+                    "invalid_time": "执行时间无效，至少需要提前一分钟。",
+                    "invalid_timezone": "时区无效，请刷新后重试。",
+                    "invalid_repeat": "重复方式无效。",
+                    "invalid_title": "任务标题无效。",
+                    "schedule_missing": "定时任务不存在或已取消。",
+                    "owner_ambiguous": "这个会话同时由多个服务持有，无法安全操作。",
+                    "unknown_method": "不支持的定时任务操作。",
+                }
+                code = -32020 if error.code == "scheduler_unavailable" else -32602
+                self.client.send({"id": message["id"], "error": {"code": code,
+                                  "message": messages.get(error.code, "定时任务操作失败，请刷新后重试。")}})
+            except (OSError, ValueError, KeyError, TypeError):
+                self.client.send({"id": message["id"], "error": {"code": -32020,
+                                  "message": "定时任务服务暂不可用；没有重复提交请求。"}})
         elif method == "thread/list" and "id" in message:
             threading.Thread(target=self.list_threads, args=(message["id"], params), daemon=True).start()
         elif "id" in message:

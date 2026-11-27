@@ -64,6 +64,35 @@ internal data class ManagerOverview(
     val inbox: ManagerInbox? = null
 )
 
+internal data class ScheduledTask(
+    val id: String, val threadId: String, val title: String, val prompt: String,
+    val timezone: String, val repeatDaily: Boolean, val nextRunAt: Long, val state: String,
+    val detail: String, val lastRunAt: Long
+)
+
+internal fun parseScheduledTasks(value: JSONObject): List<ScheduledTask> = buildList {
+    val rows = value.optJSONArray("items") ?: return@buildList
+    for (index in 0 until rows.length()) {
+        val row = rows.optJSONObject(index) ?: continue
+        add(ScheduledTask(row.text("id"), row.text("thread_id"), row.text("title"), row.text("prompt"),
+            row.text("timezone"), row.optInt("repeat_daily") != 0, (row.optDouble("next_run_at") * 1000).toLong(),
+            row.text("state"), row.text("detail"), (row.optDouble("last_run_at") * 1000).toLong()))
+    }
+}
+
+internal fun scheduledTaskStateLabel(state: String): String = when (state) {
+    "scheduled" -> "待执行"
+    "dispatching", "queue_sending" -> "正在提交"
+    "queued" -> "等待当前任务完成"
+    "running" -> "执行中"
+    "completed" -> "已完成"
+    "needs_attention" -> "需要检查"
+    "delivery_unknown" -> "发送状态待核实"
+    "unsupported" -> "会话不支持"
+    "cancelled" -> "已取消"
+    else -> "状态待核对"
+}
+
 internal data class ManagerInboxItem(
     val id: String, val eventId: String, val threadId: String, val title: String, val created: Long,
     val kind: String, val message: String, val detail: String, val delivery: String, val status: String

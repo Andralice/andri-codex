@@ -31,8 +31,8 @@ android {
         applicationId = "com.codexserver.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 97
-        versionName = "0.1.96"
+        versionCode = 98
+        versionName = "0.1.97"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

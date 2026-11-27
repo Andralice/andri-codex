@@ -474,6 +474,19 @@ class SshCodexClient(
             if (cursor.isNotBlank()) put(if (inboxSection in setOf("questions", "notifications")) inboxSection + "Cursor" else "cursor", cursor)
         }))
 
+    internal suspend fun scheduledTasks(): List<ScheduledTask> =
+        parseScheduledTasks(request("andri/schedules/list", JSONObject()))
+
+    internal suspend fun createScheduledTask(threadId: String, prompt: String, runAt: Long,
+        timezone: String, repeatDaily: Boolean, title: String) {
+        request("andri/schedules/create", JSONObject().put("threadId", threadId).put("prompt", prompt)
+            .put("runAt", runAt).put("timezone", timezone).put("repeatDaily", repeatDaily).put("title", title))
+    }
+
+    internal suspend fun cancelScheduledTask(id: String) {
+        request("andri/schedules/cancel", JSONObject().put("id", id))
+    }
+
     suspend fun listThreads(firstPageOnly: Boolean = false): List<CodexThread> {
         val rows = mutableListOf<CodexThread>()
         var cursor = ""

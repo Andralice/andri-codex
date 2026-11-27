@@ -188,7 +188,7 @@ class MainActivity : ComponentActivity() {
         )
         notificationThreadId = intent?.getStringExtra("threadId")
         setContent {
-            MaterialTheme(colorScheme = LightColors) {
+            AppTheme(colorScheme = LightColors) {
                 Box(Modifier.fillMaxSize()) {
                 val connectAfterNotificationPrompt = remember { mutableStateOf(false) }
                 var notificationPermissionRequested by rememberSaveable { mutableStateOf(false) }
@@ -616,7 +616,7 @@ private fun BrandMark(size: Int = 40) {
     Box(Modifier.size(size.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape((size / 2.4f).dp)),
         contentAlignment = Alignment.Center) {
         Text("A", color = MaterialTheme.colorScheme.onPrimary, fontSize = (size * 0.5f).sp,
-            fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif)
+            fontWeight = FontWeight.Bold, fontFamily = LocalAppFont.current.headingFontFamily)
     }
 }
 
@@ -725,7 +725,7 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
             Spacer(Modifier.weight(1f))
         }
         Spacer(Modifier.height(12.dp))
-        Text("工作，随你而行。", fontSize = 30.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.8).sp, fontFamily = FontFamily.Serif)
+        Text("工作，随你而行。", fontSize = 30.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.8).sp, fontFamily = LocalAppFont.current.headingFontFamily)
         Text("从手机继续对话，让任务在服务器上运行。", color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 14.sp, lineHeight = 22.sp)
         Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -764,6 +764,7 @@ private fun ConnectionScreen(vm: MobileViewModel, connect: () -> Unit, importKey
         if (vm.connecting) TextButton(vm::cancelConnection) { ActionLabel("close", "取消连接") }
         TextButton(vm::openHistory) { ActionLabel("history", "历史版本与恢复下载 · v" + BuildConfig.VERSION_NAME) }
         BackgroundConnectionSettingsButton()
+        FontSettingsButton()
         MutedText("连接前验证服务器身份 · 中转密钥留在服务器")
         ErrorText(vm.error)
 
@@ -790,6 +791,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null, openWorksp
     var workspaceDialog by remember { mutableStateOf(false) }
     var globalInstructionsDialog by remember { mutableStateOf(false) }
     var backgroundConnectionDialog by remember { mutableStateOf(false) }
+    var fontSettingsDialog by rememberSaveable { mutableStateOf(false) }
     var renameDialog by remember(thread?.id) { mutableStateOf(false) }
     var titleDraft by remember(thread?.id) { mutableStateOf(thread?.title.orEmpty()) }
     Box {
@@ -808,6 +810,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null, openWorksp
             DropdownMenuItem(leadingIcon = { LineIcon("refresh") }, text = { Text("刷新") }, enabled = vm.connected && !vm.operationPending("刷新对话", null), onClick = { expanded = false; vm.refresh() })
             DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("工作区与权限") }, enabled = true, onClick = { expanded = false; workspaceDialog = true })
             DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("后台连接设置") }, onClick = { expanded = false; backgroundConnectionDialog = true })
+            DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("字体设置") }, onClick = { expanded = false; fontSettingsDialog = true })
             DropdownMenuItem(leadingIcon = { LineIcon("settings") }, text = { Text("任务通知设置") }, onClick = {
                 expanded = false
                 runCatching { context.startActivity(TaskNotifications.settingsIntent(context)) }
@@ -840,6 +843,7 @@ private fun AppMenu(vm: MobileViewModel, thread: CodexThread? = null, openWorksp
     )
     if (workspaceDialog) ExecutionSettingsDialog(vm) { workspaceDialog = false }
     if (backgroundConnectionDialog) BackgroundConnectionSettingsDialog { backgroundConnectionDialog = false }
+    if (fontSettingsDialog) FontSettingsDialog { fontSettingsDialog = false }
     if (globalInstructionsDialog) GlobalInstructionsDialog(vm) { globalInstructionsDialog = false }
 }
 
@@ -1662,7 +1666,7 @@ private fun EmptyChatScreen(vm: MobileViewModel) {
                         }
                     } else {
                         Text("开始新对话", fontSize = 23.sp, lineHeight = 32.sp,
-                            fontWeight = FontWeight.Medium, fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium, fontFamily = LocalAppFont.current.headingFontFamily,
                             color = MaterialTheme.colorScheme.onSurface)
                         Button(onClick = vm::newThread,
                             enabled = vm.connected && !vm.operationPending("新建对话", null),
@@ -2022,7 +2026,7 @@ private fun ChatScreen(vm: MobileViewModel, thread: CodexThread, isActive: Boole
                         Column(Modifier.padding(top = 40.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             BrandMark(44)
                             Text("把想法，\r\n变成下一步。", fontSize = 30.sp, lineHeight = 42.sp, fontWeight = FontWeight.SemiBold,
-                                letterSpacing = (-0.8).sp, fontFamily = FontFamily.Serif)
+                                letterSpacing = (-0.8).sp, fontFamily = LocalAppFont.current.headingFontFamily)
                             Text("写下你想完成的事。\r\nAndri 会在服务器上与你一起处理。", fontSize = 14.sp, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -4493,6 +4497,39 @@ private fun QuestionFields(title: String, options: List<Pair<String, String>>, v
 @Composable
 private fun TimelineRequestOptionsCard(vm: MobileViewModel, line: ChatLine, request: JSONObject?) {
     val answered = line.status != "pending"
+    var detailsExpanded by rememberSaveable("answered-request:${line.id}") { mutableStateOf(false) }
+    if (answered) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 13.dp)) {
+            Surface(onClick = { detailsExpanded = !detailsExpanded }, color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Box(Modifier.size(9.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape))
+                    Text(if (line.status == "answered" || line.answers.any(String::isNotBlank)) "已回答" else "问答已处理",
+                        fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
+                    LineIcon("chevron", Modifier.size(15.dp).graphicsLayer {
+                        rotationZ = if (detailsExpanded) 90f else 0f
+                    }, MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (!detailsExpanded) Column(Modifier.fillMaxWidth().padding(start = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                line.questions.forEachIndexed { index, question ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(question.title, fontSize = 12.sp, lineHeight = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val value = line.answers.getOrNull(index).orEmpty()
+                        Text(if (question.secret && value.isNotBlank()) "已提交保密回答"
+                            else value.ifBlank { "回答已处理，未保存具体内容" },
+                            fontSize = 13.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+        }
+        if (!detailsExpanded) return
+    }
     val requestId = request?.opt("id")?.toString().orEmpty()
     val params = request?.optJSONObject("params")
     val requestQuestions = params?.optJSONArray("questions")
@@ -4643,8 +4680,11 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit, selecta
     val codeFg = MaterialTheme.colorScheme.primary
     val currentOpenLink by rememberUpdatedState(onOpenLink)
     val navigationTarget by rememberUpdatedState(LocalMessageNavigation.current)
-    val markwon = remember(context, codeBg, codeFg) {
-        val serif = android.graphics.Typeface.create("serif", android.graphics.Typeface.BOLD)
+    val font = LocalAppFont.current
+    val resolver = androidx.compose.ui.platform.LocalFontFamilyResolver.current
+    val bodyTypeface = resolver.resolve(font.fontFamily).value as android.graphics.Typeface
+    val headingTypeface = resolver.resolve(font.headingFontFamily, FontWeight.Bold).value as android.graphics.Typeface
+    val markwon = remember(context, codeBg, codeFg, headingTypeface) {
         Markwon.builder(context)
             .usePlugin(TablePlugin.create(context))
             .usePlugin(StrikethroughPlugin.create())
@@ -4656,7 +4696,8 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit, selecta
                 }
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder
-                        .headingTypeface(serif)
+                        .headingTypeface(headingTypeface)
+                        .codeTypeface(android.graphics.Typeface.MONOSPACE)
                         .headingBreakHeight(0)
                         .blockQuoteColor(Color(0xFFE3D5C7).toArgb())
                         .blockQuoteWidth(2)
@@ -4668,6 +4709,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit, selecta
     }
     AndroidView(
         factory = { viewContext -> TextView(viewContext).apply {
+            typeface = bodyTypeface
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSizePx)
             setTextColor(color.toArgb())
             setLineSpacing(0f, 1.45f)
@@ -4678,6 +4720,7 @@ private fun MarkdownMessage(value: String, onOpenLink: (String) -> Unit, selecta
             setOnTouchListener(MessageNavigationTouch { start, width, delta -> navigationTarget?.invoke(start, width, delta) })
         } },
         update = { textView ->
+            textView.typeface = bodyTypeface
             if (textView.isTextSelectable != selectable) {
                 textView.setTextIsSelectable(selectable)
                 textView.movementMethod = LinkMovementMethod.getInstance()
@@ -4883,6 +4926,7 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
     val responding = requestId in vm.respondingRequests
     val questions = params.optJSONArray("questions")
     val count = questions?.length() ?: 0
+    var currentQuestionIndex by rememberSaveable(requestId) { mutableIntStateOf(0) }
     val decisions = params.optJSONArray("availableDecisions")
     val canApprove = decisions == null || (0 until decisions.length()).any { decisions.opt(it) == "accept" }
     AlertDialog(
@@ -4898,7 +4942,12 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ErrorText(vm.requestErrors[requestId].orEmpty())
                 if (userInput) {
-                    for (i in 0 until count) {
+                    if (count > 1) {
+                        Text("第 ${currentQuestionIndex + 1} 题，共 $count 题",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (count > 0) {
+                        val i = currentQuestionIndex.coerceIn(0, count - 1)
                         val question = questions!!.getJSONObject(i)
                         val id = question.text("id")
                         val options = question.optJSONArray("options") ?: org.json.JSONArray()
@@ -4906,6 +4955,14 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
                             val option = options.getJSONObject(j)
                             option.text("label") to option.text("description")
                         }, answers[id].orEmpty(), !responding, question.optBoolean("isSecret")) { vm.setRequestAnswer(requestId, id, it) }
+                    }
+                    if (count > 1) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { currentQuestionIndex = nextRequestQuestionIndex(currentQuestionIndex, count, -1) },
+                                enabled = currentQuestionIndex > 0 && !responding) { Text("上一题") }
+                            TextButton(onClick = { currentQuestionIndex = nextRequestQuestionIndex(currentQuestionIndex, count, 1) },
+                                enabled = currentQuestionIndex < count - 1 && !responding) { Text("下一题") }
+                        }
                     }
                 } else {
                     params.text("command").ifBlank { params.text("cwd").ifBlank { null } }?.let { command ->
@@ -4943,7 +5000,7 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
         },
         confirmButton = {
             Button(
-                enabled = !responding && if (userInput) (0 until count).all { !answers[questions!!.getJSONObject(it).text("id")].isNullOrBlank() } else canApprove,
+                enabled = !responding && if (userInput) requestQuestionsComplete(questions, answers) else canApprove,
                 onClick = { vm.respond(request, approved = true, answers = answers.toMap()) },
                 shape = RoundedCornerShape(11.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary,
@@ -4963,6 +5020,7 @@ private fun RequestDialog(vm: MobileViewModel, request: JSONObject) {
 @Composable
 private fun ManagerScreen(vm: MobileViewModel) {
     val overview = vm.managerOverview
+    var createSchedule by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf("全部") }
     var questionsExpanded by rememberSaveable { mutableStateOf(true) }
     var notificationsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -4977,6 +5035,9 @@ private fun ManagerScreen(vm: MobileViewModel) {
         Row(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(vm::closeManagerPage, Modifier.semantics { contentDescription = "返回对话" }) { LineIcon("back") }
             Text("任务管家", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            TextButton({ createSchedule = true }, enabled = vm.connected && !vm.scheduleBusy) {
+                ActionLabel("plus", "定时任务", fontSize = 12.sp)
+            }
             IconButton({ vm.refreshManager() }, enabled = vm.connected && !vm.managerLoading,
                 modifier = Modifier.semantics { contentDescription = "刷新管家记录" }) {
                 if (vm.managerLoading) SmallProgress("正在刷新") else LineIcon("refresh")
@@ -5019,6 +5080,30 @@ private fun ManagerScreen(vm: MobileViewModel) {
                     Text("需要你回答的问题和管家通知集中在下方，你也可以随时询问管家。", fontSize = 12.sp,
                         lineHeight = 19.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            item("manager-schedules-heading") {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("定时任务", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("由项目服务按时提交到选定的持久会话。", fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton({ createSchedule = true }, enabled = vm.connected && !vm.scheduleBusy) {
+                        ActionLabel("plus", "新建", fontSize = 12.sp)
+                    }
+                }
+            }
+            if (vm.scheduleError.isNotBlank()) item("schedule-error") {
+                Text(vm.scheduleError, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+            if (vm.scheduledTasks.isEmpty()) item("schedule-empty") {
+                Text(if (vm.scheduleError.isBlank()) "还没有定时任务。" else "连接定时任务服务后可管理计划。",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            items(vm.scheduledTasks, key = { "scheduled-task:${it.id}" }) { task ->
+                val threadTitle = vm.conversationThreads.firstOrNull { it.id == task.threadId }?.title
+                    ?: "会话 ${task.threadId.take(8)}"
+                ManagerScheduledTaskCard(task, threadTitle, vm.scheduleBusy, vm::cancelScheduledTask)
             }
             val inbox = overview.inbox
             if (inbox == null) item("manager-inbox-unavailable") {
@@ -5084,6 +5169,106 @@ private fun ManagerScreen(vm: MobileViewModel) {
             }
         }
     }
+    if (createSchedule) CreateScheduledTaskDialog(vm) { createSchedule = false }
+}
+
+@Composable
+private fun ManagerScheduledTaskCard(task: ScheduledTask, threadTitle: String, busy: Boolean,
+    onCancel: (String) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(task.title, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(scheduledTaskStateLabel(task.state), fontSize = 11.sp,
+                    color = if (task.state in setOf("needs_attention", "delivery_unknown", "unsupported"))
+                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+            }
+            Text("目标会话：$threadTitle", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("下次执行：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                .format(java.util.Date(task.nextRunAt))}${if (task.repeatDaily) " · 每日" else ""}",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(task.prompt, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (task.detail.isNotBlank()) Text(task.detail, fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (task.state !in setOf("completed", "cancelled") &&
+                !(task.state == "running" && !task.repeatDaily)) {
+                TextButton({ onCancel(task.id) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text(if (task.state == "running" && task.repeatDaily) "取消后续计划" else "取消计划", fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateScheduledTaskDialog(vm: MobileViewModel, onDismiss: () -> Unit) {
+    val threads = vm.conversationThreads
+    val formatter = remember { java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT) }
+    var selectedThreadId by rememberSaveable { mutableStateOf(threads.firstOrNull()?.id.orEmpty()) }
+    var prompt by rememberSaveable { mutableStateOf("") }
+    var runAtText by rememberSaveable {
+        mutableStateOf(java.time.LocalDateTime.now().plusMinutes(30).withSecond(0).withNano(0).format(formatter))
+    }
+    var repeatDaily by rememberSaveable { mutableStateOf(false) }
+    var targetMenu by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val selectedThread = threads.firstOrNull { it.id == selectedThreadId }
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("新建定时任务") },
+        text = {
+            Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("选择持久会话。临时会话不能作为定时任务目标。", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box {
+                    OutlinedButton(onClick = { targetMenu = true }, enabled = threads.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(selectedThread?.title ?: "没有可用的持久会话", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    DropdownMenu(expanded = targetMenu, onDismissRequest = { targetMenu = false }) {
+                        threads.take(100).forEach { thread ->
+                            DropdownMenuItem(text = { Text(thread.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                onClick = { selectedThreadId = thread.id; targetMenu = false })
+                        }
+                    }
+                }
+                OutlinedTextField(value = runAtText, onValueChange = { runAtText = it; error = "" },
+                    modifier = Modifier.fillMaxWidth(), label = { Text("执行时间（本地时区）") },
+                    supportingText = { Text("格式：yyyy-MM-dd HH:mm，例如 2026-11-28 09:30") }, singleLine = true)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = repeatDaily, onCheckedChange = { repeatDaily = it })
+                    Text("每天重复", fontSize = 13.sp)
+                }
+                OutlinedTextField(value = prompt, onValueChange = { prompt = it; error = "" },
+                    modifier = Modifier.fillMaxWidth(), label = { Text("到时要执行的内容") }, minLines = 3, maxLines = 6)
+                if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                try {
+                    val thread = checkNotNull(threads.firstOrNull { it.id == selectedThreadId }) {
+                        "请选择一个持久会话。"
+                    }
+                    val local = java.time.LocalDateTime.parse(runAtText.trim(), formatter)
+                    val zone = java.time.ZoneId.systemDefault()
+                    val instant = local.atZone(zone).toInstant().epochSecond
+                    require(instant >= System.currentTimeMillis() / 1000 + 60) { "执行时间至少要晚于当前时间一分钟。" }
+                    require(prompt.isNotBlank()) { "请填写到时要执行的内容。" }
+                    vm.createScheduledTask(thread.id, prompt.trim(), instant, zone.id, repeatDaily,
+                        prompt.trim().lineSequence().first().take(160))
+                    onDismiss()
+                } catch (e: Exception) {
+                    error = e.message?.ifBlank { "时间格式无效，请按示例填写。" } ?: "时间格式无效，请按示例填写。"
+                }
+            }, enabled = vm.connected && !vm.scheduleBusy && threads.isNotEmpty() && prompt.isNotBlank()) {
+                if (vm.scheduleBusy) SmallProgress("正在保存") else Text("保存计划")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
 }
 
 @Composable

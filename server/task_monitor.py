@@ -19,6 +19,7 @@ from task_monitor_evidence import tool_evidence, evidence, plain_conversation, r
 from task_monitor_questions import Questions, MARKER
 from task_monitor_inspections import (init as init_inspections, request as request_inspection,
     Service as InspectionService, InspectionLimitReached, InspectionSourceChanged)
+from scheduled_tasks import ScheduledTaskRunner
 
 
 TERMINAL = {"completed", "failed", "interrupted"}
@@ -319,6 +320,7 @@ class Monitor(Questions):
         self.chat_signature = None
         self.reviewer = self.store.get("reviewer_thread")
         self.review_endpoint = self.store.get("reviewer_endpoint", self.config["monitor_socket"])
+        self.schedule_runner = ScheduledTaskRunner(self.config, self.connect)
 
     def prepare_chat_workspace(self):
         # thread/resume overrides do not survive a plain client-side reload.
@@ -940,6 +942,12 @@ class Monitor(Questions):
 
     def tick(self):
         self.config = effective(self.base_config)
+        # User schedules remain active when review/follow-up monitoring is paused.
+        self.schedule_runner.config = self.base_config
+        try:
+            self.schedule_runner.tick()
+        except (OSError, ValueError, KeyError, RpcError, sqlite3.Error):
+            pass
         try:
             self.refresh_chat()
         except (OSError, ValueError, RpcError):
@@ -1001,7 +1009,7 @@ def main():
                 monitor.base_config = updated
                 try:
                     monitor.tick()
-                except (OSError, ValueError, KeyError, RpcError) as error:
+                except (OSError, ValueError, KeyError, RpcError, sqlite3.Error) as error:
                     # Keep detailed task content and upstream error strings out of journald.
                     atomic_json(runtime / "error.json", {"at": time.time(), "type": type(error).__name__})
                 if args.once:
